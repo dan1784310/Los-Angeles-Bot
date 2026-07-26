@@ -667,7 +667,8 @@ async def on_interaction(interaction: discord.Interaction):
         return
 
     if custom_id.startswith("dselect_"):
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
 
         card_id = custom_id.replace("dselect_", "")
         options = active_dropdowns.get(card_id)
@@ -915,7 +916,8 @@ async def feedback_give(
     feedback: str
 ):
     try:
-        await interaction.response.defer(ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
 
         target_channel = interaction.guild.get_channel(FEEDBACK_CHANNEL_ID)
         if not target_channel:
@@ -961,7 +963,7 @@ async def feedback_give(
                 await interaction.response.send_message(f"❌ An error occurred: {e}", ephemeral=True)
         except Exception:
             pass
-        
+
 bot.tree.add_command(feedback_group)
 
 
@@ -1056,5 +1058,5 @@ def run_web():
 # ==========================================
 
 if __name__ == "__main__":
-    threading.Thread(target=run_web).start()
+    threading.Thread(target=run_web, daemon=True).start()
     bot.run(TOKEN)
