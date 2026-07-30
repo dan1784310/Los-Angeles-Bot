@@ -773,52 +773,64 @@ class GiveawaySystem(commands.Cog):
                 ephemeral=True
             )
             return
-        
-        # Create classic View with select menu
-        class RemoveParticipantsView(discord.ui.View):
-            def __init__(self, giveaway_id: str, cog):
-                super().__init__(timeout=None)
-                self.giveaway_id = giveaway_id
-                self.cog = cog
-            
-            @discord.ui.select(
-                placeholder="Select participants to remove...",
-                min_values=1,
-                max_values=len(select_options[:25]),
-                options=select_options[:25]
-            )
-            async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-                selected_ids = [int(value) for value in select.values]
-                
-                giveaway = db.get_giveaway(self.giveaway_id)
-                if not giveaway:
-                    await interaction.response.send_message(
-                        "❌ This giveaway no longer exists.",
-                        ephemeral=True
-                    )
-                    return
-                
-                for user_id in selected_ids:
-                    db.remove_participant(self.giveaway_id, user_id)
-                
-                await self.cog._update_giveaway_entry_count(giveaway['message_id'])
-                
-                embed = discord.Embed(
-                    title="✅ Participants Removed",
-                    description=f"Successfully removed {len(selected_ids)} participant(s) from the giveaway.",
-                    color=discord.Color.from_rgb(37, 37, 41)
-                )
-                await interaction.response.edit_message(embed=embed, view=None)
-        
-        view = RemoveParticipantsView(giveaway_id, self)
-        
-        embed = discord.Embed(
-            title="Remove Participants",
-            description="Select participants to remove from the giveaway:",
-            color=discord.Color.from_rgb(37, 37, 41)
+
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        container.add_item(discord.ui.TextDisplay("Remove Participants"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay("Select participants to remove from the giveaway:"))
+        container.add_item(discord.ui.Separator())
+
+        # Create select menu inside components V2
+        select_menu = discord.ui.Select(
+            placeholder="Select participants to remove...",
+            min_values=1,
+            max_values=min(len(select_options), 25),
+            options=select_options[:25]
+        )
+
+        async def select_callback(select_interaction: discord.Interaction):
+            selected_ids = [int(value) for value in select_menu.values]
+            
+            curr_giveaway = db.get_giveaway(giveaway_id)
+            if not curr_giveaway:
+                await select_interaction.response.send_message(
+                    "❌ This giveaway no longer exists.",
+                    ephemeral=True
+                )
+                return
+            
+            for user_id in selected_ids:
+                db.remove_participant(giveaway_id, user_id)
+            
+            await self._update_giveaway_entry_count(curr_giveaway['message_id'])
+            
+            # Response container confirming deletion
+            result_view = discord.ui.LayoutView(timeout=None)
+            result_container = discord.ui.Container(
+                accent_colour=discord.Color.from_rgb(37, 37, 41)
+            )
+            result_container.add_item(discord.ui.TextDisplay("✅ Participants Removed"))
+            result_container.add_item(discord.ui.Separator())
+            result_container.add_item(
+                discord.ui.TextDisplay(f"Successfully removed {len(selected_ids)} participant(s) from the giveaway.")
+            )
+            result_view.add_item(result_container)
+
+            await select_interaction.response.edit_message(view=result_view)
+
+        select_menu.callback = select_callback
+
+        action_row = discord.ui.ActionRow()
+        action_row.add_item(select_menu)
+        container.add_item(action_row)
+
+        view.add_item(container)
+        
+        await interaction.response.send_message(view=view, ephemeral=True)
 
     async def _handle_add_participants(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the add participants button click."""
@@ -853,55 +865,67 @@ class GiveawaySystem(commands.Cog):
                 ephemeral=True
             )
             return
-        
-        # Create classic View with select menu
-        class AddParticipantsView(discord.ui.View):
-            def __init__(self, giveaway_id: str, cog):
-                super().__init__(timeout=None)
-                self.giveaway_id = giveaway_id
-                self.cog = cog
-            
-            @discord.ui.select(
-                placeholder="Select members to add...",
-                min_values=1,
-                max_values=len(select_options[:25]),
-                options=select_options[:25]
-            )
-            async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-                selected_ids = [int(value) for value in select.values]
-                
-                giveaway = db.get_giveaway(self.giveaway_id)
-                if not giveaway:
-                    await interaction.response.send_message(
-                        "❌ This giveaway no longer exists.",
-                        ephemeral=True
-                    )
-                    return
-                
-                added_count = 0
-                for user_id in selected_ids:
-                    if not db.has_participant(self.giveaway_id, user_id):
-                        db.add_participant(self.giveaway_id, user_id)
-                        added_count += 1
-                
-                await self.cog._update_giveaway_entry_count(giveaway['message_id'])
-                
-                embed = discord.Embed(
-                    title="✅ Members Added",
-                    description=f"Successfully added {added_count} member(s) to the giveaway.",
-                    color=discord.Color.from_rgb(37, 37, 41)
-                )
-                await interaction.response.edit_message(embed=embed, view=None)
-        
-        view = AddParticipantsView(giveaway_id, self)
-        
-        embed = discord.Embed(
-            title="Add Participants",
-            description="Select members to add to the giveaway:",
-            color=discord.Color.from_rgb(37, 37, 41)
+
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        container.add_item(discord.ui.TextDisplay("Add Participants"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay("Select members to add to the giveaway:"))
+        container.add_item(discord.ui.Separator())
+
+        # Create dropdown
+        select_menu = discord.ui.Select(
+            placeholder="Select members to add...",
+            min_values=1,
+            max_values=min(len(select_options), 25),
+            options=select_options[:25]
+        )
+
+        async def select_callback(select_interaction: discord.Interaction):
+            selected_ids = [int(value) for value in select_menu.values]
+            
+            curr_giveaway = db.get_giveaway(giveaway_id)
+            if not curr_giveaway:
+                await select_interaction.response.send_message(
+                    "❌ This giveaway no longer exists.",
+                    ephemeral=True
+                )
+                return
+            
+            added_count = 0
+            for user_id in selected_ids:
+                if not db.has_participant(giveaway_id, user_id):
+                    db.add_participant(giveaway_id, user_id)
+                    added_count += 1
+            
+            await self._update_giveaway_entry_count(curr_giveaway['message_id'])
+            
+            # Response layout
+            result_view = discord.ui.LayoutView(timeout=None)
+            result_container = discord.ui.Container(
+                accent_colour=discord.Color.from_rgb(37, 37, 41)
+            )
+            result_container.add_item(discord.ui.TextDisplay("✅ Members Added"))
+            result_container.add_item(discord.ui.Separator())
+            result_container.add_item(
+                discord.ui.TextDisplay(f"Successfully added {added_count} member(s) to the giveaway.")
+            )
+            result_view.add_item(result_container)
+
+            await select_interaction.response.edit_message(view=result_view)
+
+        select_menu.callback = select_callback
+
+        action_row = discord.ui.ActionRow()
+        action_row.add_item(select_menu)
+        container.add_item(action_row)
+
+        view.add_item(container)
+        
+        await interaction.response.send_message(view=view, ephemeral=True)
 
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
