@@ -420,9 +420,15 @@ class GiveawaySystem(commands.Cog):
         elif custom_id.startswith("giveaway_remove_participants_"):
             giveaway_id = custom_id.replace("giveaway_remove_participants_", "")
             await self._handle_remove_participants(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_add_participants_"):
+            giveaway_id = custom_id.replace("giveaway_add_participants_", "")
+            await self._handle_add_participants(interaction, giveaway_id)
         elif custom_id.startswith("giveaway_remove_select_"):
             giveaway_id = custom_id.replace("giveaway_remove_select_", "")
             await self._handle_remove_participants_select(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_add_select_"):
+            giveaway_id = custom_id.replace("giveaway_add_select_", "")
+            await self._handle_add_participants_select(interaction, giveaway_id)
     
     # ==========================================
     # HELPER METHODS
@@ -673,10 +679,17 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(participants_text))
         
-        # Add remove participant button if user has permission
+        # Add remove/add participant buttons if user has permission
         if can_remove_participants(interaction.user):
             container.add_item(discord.ui.Separator())
             button_row = discord.ui.ActionRow()
+            button_row.add_item(
+                discord.ui.Button(
+                    label="Add Participants",
+                    style=discord.ButtonStyle.green,
+                    custom_id=f"giveaway_add_participants_{giveaway_id}"
+                )
+            )
             button_row.add_item(
                 discord.ui.Button(
                     label="Remove Participants",
@@ -818,6 +831,96 @@ class GiveawaySystem(commands.Cog):
         )
         
         container.add_item(discord.ui.TextDisplay(f"✅ Removed {len(selected_ids)} participant(s) from the giveaway."))
+        
+        view.add_item(container)
+        
+        await interaction.response.edit_message(view=view)
+
+    async def _handle_add_participants(self, interaction: discord.Interaction, giveaway_id: str):
+        """Handle the add participants button click."""
+        if not can_remove_participants(interaction.user):
+            await interaction.response.send_message(
+                "❌ You don't have permission to add participants.",
+                ephemeral=True
+            )
+            return
+        
+        giveaway = db.get_giveaway(giveaway_id)
+        if not giveaway:
+            await interaction.response.send_message(
+                "❌ This giveaway no longer exists.",
+                ephemeral=True
+            )
+            return
+        
+        # Create select options for all guild members
+        select_options = []
+        for member in interaction.guild.members:
+            if not member.bot:
+                label = f"{member.name} ({member.id})"
+                value = str(member.id)
+                select_options.append(
+                    discord.SelectOption(label=label, value=value)
+                )
+        
+        if not select_options:
+            await interaction.response.send_message(
+                "No members available to add.",
+                ephemeral=True
+            )
+            return
+        
+        # Create Components V2 view with select menu
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        container.add_item(discord.ui.TextDisplay("Select members to add:"))
+        container.add_item(discord.ui.Separator())
+        
+        select_row = discord.ui.ActionRow()
+        select = discord.ui.Select(
+            placeholder="Select members to add...",
+            min_values=1,
+            max_values=len(select_options[:25]),
+            options=select_options[:25],
+            custom_id=f"giveaway_add_select_{giveaway_id}"
+        )
+        select_row.add_item(select)
+        container.add_item(select_row)
+        
+        view.add_item(container)
+        
+        await interaction.response.edit_message(view=view)
+
+    async def _handle_add_participants_select(self, interaction: discord.Interaction, giveaway_id: str):
+        """Handle the select menu for adding participants."""
+        selected_values = interaction.data.get("values", [])
+        selected_ids = [int(value) for value in selected_values]
+        
+        giveaway = db.get_giveaway(giveaway_id)
+        if not giveaway:
+            await interaction.response.send_message(
+                "❌ This giveaway no longer exists.",
+                ephemeral=True
+            )
+            return
+        
+        added_count = 0
+        for user_id in selected_ids:
+            if not db.has_participant(giveaway_id, user_id):
+                db.add_participant(giveaway_id, user_id)
+                added_count += 1
+        
+        await self._update_giveaway_entry_count(giveaway['message_id'])
+        
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        container.add_item(discord.ui.TextDisplay(f"✅ Added {added_count} member(s) to the giveaway."))
         
         view.add_item(container)
         
