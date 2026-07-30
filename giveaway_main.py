@@ -818,7 +818,7 @@ class GiveawaySystem(commands.Cog):
             color=discord.Color.from_rgb(37, 37, 41)
         )
         
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def _handle_add_participants(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the add participants button click."""
@@ -901,7 +901,7 @@ class GiveawaySystem(commands.Cog):
             color=discord.Color.from_rgb(37, 37, 41)
         )
         
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
