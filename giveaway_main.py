@@ -423,9 +423,6 @@ class GiveawaySystem(commands.Cog):
         elif custom_id.startswith("giveaway_add_participants_"):
             giveaway_id = custom_id.replace("giveaway_add_participants_", "")
             await self._handle_add_participants(interaction, giveaway_id)
-        elif custom_id.startswith("giveaway_remove_select_"):
-            giveaway_id = custom_id.replace("giveaway_remove_select_", "")
-            await self._handle_remove_participants_select(interaction, giveaway_id)
     
     # ==========================================
     # HELPER METHODS
@@ -667,34 +664,38 @@ class GiveawaySystem(commands.Cog):
         
         participants_text = "\n".join(participant_mentions)
         
-        # Create classic View with buttons
-        class ParticipantsView(discord.ui.View):
-            def __init__(self, giveaway_id: str, cog):
-                super().__init__(timeout=None)
-                self.giveaway_id = giveaway_id
-                self.cog = cog
-            
-            @discord.ui.button(label="Add Participants", style=discord.ButtonStyle.green, custom_id=f"giveaway_add_participants_{giveaway_id}")
-            async def add_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-                await self.cog._handle_add_participants(interaction, self.giveaway_id)
-            
-            @discord.ui.button(label="Remove Participants", style=discord.ButtonStyle.danger, custom_id=f"giveaway_remove_participants_{giveaway_id}")
-            async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-                await self.cog._handle_remove_participants(interaction, self.giveaway_id)
-        
-        view = ParticipantsView(giveaway_id, self)
-        
-        # Only show buttons if user has permission
-        if not can_remove_participants(interaction.user):
-            view = None
-        
-        embed = discord.Embed(
-            title=f"Giveaway Participants ({len(participants)})",
-            description=participants_text,
-            color=discord.Color.from_rgb(37, 37, 41)
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        container.add_item(discord.ui.TextDisplay(f"Giveaway Participants ({len(participants)})"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(participants_text))
+        
+        # Add remove/add participant buttons if user has permission
+        if can_remove_participants(interaction.user):
+            container.add_item(discord.ui.Separator())
+            button_row = discord.ui.ActionRow()
+            button_row.add_item(
+                discord.ui.Button(
+                    label="Add Participants",
+                    style=discord.ButtonStyle.green,
+                    custom_id=f"giveaway_add_participants_{giveaway_id}"
+                )
+            )
+            button_row.add_item(
+                discord.ui.Button(
+                    label="Remove Participants",
+                    style=discord.ButtonStyle.danger,
+                    custom_id=f"giveaway_remove_participants_{giveaway_id}"
+                )
+            )
+            container.add_item(button_row)
+        
+        view.add_item(container)
+        
+        await interaction.response.send_message(view=view, ephemeral=True)
 
     async def _handle_leave_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the leave giveaway button click."""
@@ -773,61 +774,51 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Store the giveaway ID for the select callback
-        self._pending_remove_giveaway = giveaway_id
-        
-        # Create Components V2 view with select menu
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
-        )
-        
-        container.add_item(discord.ui.TextDisplay("Select participants to remove:"))
-        container.add_item(discord.ui.Separator())
-        
-        select_row = discord.ui.ActionRow()
-        select = discord.ui.Select(
-            placeholder="Select participants to remove...",
-            min_values=1,
-            max_values=len(select_options[:25]),
-            options=select_options[:25],
-            custom_id=f"giveaway_remove_select_{giveaway_id}"
-        )
-        select_row.add_item(select)
-        container.add_item(select_row)
-        
-        view.add_item(container)
-        
-        await interaction.response.edit_message(view=view)
-
-    async def _handle_remove_participants_select(self, interaction: discord.Interaction, giveaway_id: str):
-        """Handle the select menu for removing participants."""
-        selected_values = interaction.data.get("values", [])
-        selected_ids = [int(value) for value in selected_values]
-        
-        giveaway = db.get_giveaway(giveaway_id)
-        if not giveaway:
-            await interaction.response.send_message(
-                "❌ This giveaway no longer exists.",
-                ephemeral=True
+        # Create classic View with select menu
+        class RemoveParticipantsView(discord.ui.View):
+            def __init__(self, giveaway_id: str, cog):
+                super().__init__(timeout=None)
+                self.giveaway_id = giveaway_id
+                self.cog = cog
+            
+            @discord.ui.select(
+                placeholder="Select participants to remove...",
+                min_values=1,
+                max_values=len(select_options[:25]),
+                options=select_options[:25]
             )
-            return
+            async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+                selected_ids = [int(value) for value in select.values]
+                
+                giveaway = db.get_giveaway(self.giveaway_id)
+                if not giveaway:
+                    await interaction.response.send_message(
+                        "❌ This giveaway no longer exists.",
+                        ephemeral=True
+                    )
+                    return
+                
+                for user_id in selected_ids:
+                    db.remove_participant(self.giveaway_id, user_id)
+                
+                await self.cog._update_giveaway_entry_count(giveaway['message_id'])
+                
+                embed = discord.Embed(
+                    title="✅ Participants Removed",
+                    description=f"Successfully removed {len(selected_ids)} participant(s) from the giveaway.",
+                    color=discord.Color.from_rgb(37, 37, 41)
+                )
+                await interaction.response.edit_message(embed=embed, view=None)
         
-        for user_id in selected_ids:
-            db.remove_participant(giveaway_id, user_id)
+        view = RemoveParticipantsView(giveaway_id, self)
         
-        await self._update_giveaway_entry_count(giveaway['message_id'])
-        
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        embed = discord.Embed(
+            title="Remove Participants",
+            description="Select participants to remove from the giveaway:",
+            color=discord.Color.from_rgb(37, 37, 41)
         )
         
-        container.add_item(discord.ui.TextDisplay(f"✅ Removed {len(selected_ids)} participant(s) from the giveaway."))
-        
-        view.add_item(container)
-        
-        await interaction.response.edit_message(view=view)
+        await interaction.response.edit_message(embed=embed, view=view)
 
     async def _handle_add_participants(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the add participants button click."""
