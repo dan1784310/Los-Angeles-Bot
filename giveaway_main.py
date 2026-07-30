@@ -756,24 +756,6 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Create select options for participants
-        select_options = []
-        for participant_id in participants:
-            member = interaction.guild.get_member(participant_id)
-            if member:
-                label = f"{member.name} ({member.id})"
-                value = str(participant_id)
-                select_options.append(
-                    discord.SelectOption(label=label, value=value)
-                )
-        
-        if not select_options:
-            await interaction.response.send_message(
-                "No valid participants to remove.",
-                ephemeral=True
-            )
-            return
-
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
             accent_colour=discord.Color.from_rgb(37, 37, 41)
@@ -784,16 +766,16 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay("Select participants to remove from the giveaway:"))
         container.add_item(discord.ui.Separator())
 
-        # Create select menu inside components V2
-        select_menu = discord.ui.Select(
+        # Native User Picker Dropdown
+        user_select = discord.ui.UserSelect(
             placeholder="Select participants to remove...",
             min_values=1,
-            max_values=min(len(select_options), 25),
-            options=select_options[:25]
+            max_values=min(len(participants), 25)
         )
 
         async def select_callback(select_interaction: discord.Interaction):
-            selected_ids = [int(value) for value in select_menu.values]
+            # user_select.values returns User/Member objects directly
+            selected_users = user_select.values
             
             curr_giveaway = db.get_giveaway(giveaway_id)
             if not curr_giveaway:
@@ -803,8 +785,11 @@ class GiveawaySystem(commands.Cog):
                 )
                 return
             
-            for user_id in selected_ids:
-                db.remove_participant(giveaway_id, user_id)
+            removed_count = 0
+            for user in selected_users:
+                if db.has_participant(giveaway_id, user.id):
+                    db.remove_participant(giveaway_id, user.id)
+                    removed_count += 1
             
             await self._update_giveaway_entry_count(curr_giveaway['message_id'])
             
@@ -849,23 +834,6 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Create select options for all guild members using display names
-        select_options = []
-        for member in interaction.guild.members:
-            if not member.bot:
-                label = member.display_name
-                value = str(member.id)
-                select_options.append(
-                    discord.SelectOption(label=label, value=value)
-                )
-        
-        if not select_options:
-            await interaction.response.send_message(
-                "No members available to add.",
-                ephemeral=True
-            )
-            return
-
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
             accent_colour=discord.Color.from_rgb(37, 37, 41)
@@ -876,16 +844,16 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay("Select members to add to the giveaway:"))
         container.add_item(discord.ui.Separator())
 
-        # Create dropdown
-        select_menu = discord.ui.Select(
+        # Native User Picker Dropdown
+        user_select = discord.ui.UserSelect(
             placeholder="Select members to add...",
             min_values=1,
-            max_values=min(len(select_options), 25),
-            options=select_options[:25]
+            max_values=25
         )
 
         async def select_callback(select_interaction: discord.Interaction):
-            selected_ids = [int(value) for value in select_menu.values]
+            # user_select.values returns User/Member objects directly
+            selected_users = user_select.values
             
             curr_giveaway = db.get_giveaway(giveaway_id)
             if not curr_giveaway:
@@ -896,9 +864,9 @@ class GiveawaySystem(commands.Cog):
                 return
             
             added_count = 0
-            for user_id in selected_ids:
-                if not db.has_participant(giveaway_id, user_id):
-                    db.add_participant(giveaway_id, user_id)
+            for user in selected_users:
+                if not user.bot and not db.has_participant(giveaway_id, user.id):
+                    db.add_participant(giveaway_id, user.id)
                     added_count += 1
             
             await self._update_giveaway_entry_count(curr_giveaway['message_id'])
