@@ -479,22 +479,19 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay("🎟️ Entries: 0"))
         container.add_item(discord.ui.Separator())
         
-        button_row = discord.ui.ActionRow()
-        button_row.add_item(
-            discord.ui.Button(
-                label="🎉 Enter",
-                style=discord.ButtonStyle.green,
-                custom_id=f"giveaway_enter_{giveaway_id}"
-            )
+        enter_button = discord.ui.Button(
+            label="🎉 Enter",
+            style=discord.ButtonStyle.green,
+            custom_id=f"giveaway_enter_{giveaway_id}"
         )
-        button_row.add_item(
-            discord.ui.Button(
-                label="Participants",
-                style=discord.ButtonStyle.secondary,
-                custom_id=f"giveaway_participants_{giveaway_id}"
-            )
+        container.add_item(enter_button)
+        
+        participants_button = discord.ui.Button(
+            label="Participants",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"giveaway_participants_{giveaway_id}"
         )
-        container.add_item(button_row)
+        container.add_item(participants_button)
         view.add_item(container)
         
         return await channel.send(view=view)
@@ -541,22 +538,19 @@ class GiveawaySystem(commands.Cog):
             container.add_item(discord.ui.TextDisplay(f"🎟️ Entries: {entry_count}"))
             container.add_item(discord.ui.Separator())
             
-            button_row = discord.ui.ActionRow()
-            button_row.add_item(
-                discord.ui.Button(
-                    label="🎉 Enter",
-                    style=discord.ButtonStyle.green,
-                    custom_id=f"giveaway_enter_{giveaway['giveaway_id']}"
-                )
+            enter_button = discord.ui.Button(
+                label="🎉 Enter",
+                style=discord.ButtonStyle.green,
+                custom_id=f"giveaway_enter_{giveaway['giveaway_id']}"
             )
-            button_row.add_item(
-                discord.ui.Button(
-                    label="Participants",
-                    style=discord.ButtonStyle.secondary,
-                    custom_id=f"giveaway_participants_{giveaway['giveaway_id']}"
-                )
+            container.add_item(enter_button)
+            
+            participants_button = discord.ui.Button(
+                label="Participants",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"giveaway_participants_{giveaway['giveaway_id']}"
             )
-            container.add_item(button_row)
+            container.add_item(participants_button)
             
             view.add_item(container)
             
@@ -896,7 +890,7 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.Separator())
         
         winners_text = "\n".join(winner_mentions)
-        container.add_item(discord.ui.TextDisplay(f"🏆 Winners:{winners_text}"))
+        container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners_text}"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
         
