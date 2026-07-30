@@ -57,10 +57,12 @@ class GiveawaySystem(commands.Cog):
         self.active_timers = {}  # giveaway_id -> task
     
     # ==========================================
-    # GIVEAWAY CREATE COMMAND
+    # GIVEAWAY COMMAND GROUP
     # ==========================================
     
-    @app_commands.command(name="giveaway_create", description="Create a new giveaway")
+    giveaway = app_commands.Group(name="giveaway", description="Giveaway commands")
+
+    @giveaway.command(name="create", description="Create a new giveaway")
     @app_commands.describe(
         prize="The prize for the giveaway",
         ends="Duration (e.g., 10m, 2h, 3d, 1w)",
@@ -176,7 +178,7 @@ class GiveawaySystem(commands.Cog):
     # GIVEAWAY REROLL COMMAND
     # ==========================================
     
-    @app_commands.command(name="giveaway_reroll", description="Reroll giveaway winners")
+    @giveaway.command(name="reroll", description="Reroll giveaway winners")
     @app_commands.describe(message_id="The message ID of the giveaway")
     async def reroll_giveaway(self, interaction: discord.Interaction, message_id: str):
         """Reroll giveaway winners."""
@@ -280,7 +282,7 @@ class GiveawaySystem(commands.Cog):
     # GIVEAWAY END COMMAND
     # ==========================================
     
-    @app_commands.command(name="giveaway_end", description="End a giveaway early")
+    @giveaway.command(name="end", description="End a giveaway early")
     @app_commands.describe(message_id="The message ID of the giveaway")
     async def end_giveaway(self, interaction: discord.Interaction, message_id: str):
         """End a giveaway early."""
@@ -339,7 +341,7 @@ class GiveawaySystem(commands.Cog):
     # GIVEAWAY DELETE COMMAND
     # ==========================================
     
-    @app_commands.command(name="giveaway_delete", description="Delete a giveaway")
+    @giveaway.command(name="delete", description="Delete a giveaway")
     @app_commands.describe(message_id="The message ID of the giveaway")
     async def delete_giveaway(self, interaction: discord.Interaction, message_id: str):
         """Delete a giveaway."""
