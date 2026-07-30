@@ -428,10 +428,10 @@ class GiveawaySystem(commands.Cog):
         
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(139, 92, 246)
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        container.add_item(discord.ui.TextDisplay(f"{prize}", size=discord.ui.TextDisplaySize.large))
+        container.add_item(discord.ui.TextDisplay(f"{prize}"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
         container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners}"))
@@ -480,10 +480,10 @@ class GiveawaySystem(commands.Cog):
             # Rebuild the message with updated entry count
             view = discord.ui.LayoutView(timeout=None)
             container = discord.ui.Container(
-                accent_colour=discord.Color.from_rgb(139, 92, 246)
+                accent_colour=discord.Color.from_rgb(37, 37, 41)
             )
             
-            container.add_item(discord.ui.TextDisplay(f"{giveaway['prize']}", size=discord.ui.TextDisplaySize.large))
+            container.add_item(discord.ui.TextDisplay(f"{giveaway['prize']}"))
             container.add_item(discord.ui.Separator())
             container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
             container.add_item(discord.ui.TextDisplay(f"Winners: {giveaway['winners_amount']}"))
