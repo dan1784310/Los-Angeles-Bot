@@ -520,7 +520,7 @@ class GiveawaySystem(commands.Cog):
                 accent_colour=discord.Color.from_rgb(37, 37, 41)
             )
             
-            container.add_item(discord.ui.TextDisplay(f"**{giveaway['prize']}**"))
+            container.add_item(discord.ui.TextDisplay(f"## {giveaway['prize']}"))
             container.add_item(discord.ui.Separator())
             
             if giveaway['host_id']:
