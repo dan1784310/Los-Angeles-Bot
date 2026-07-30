@@ -667,38 +667,34 @@ class GiveawaySystem(commands.Cog):
         
         participants_text = "\n".join(participant_mentions)
         
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        # Create classic View with buttons
+        class ParticipantsView(discord.ui.View):
+            def __init__(self, giveaway_id: str, cog):
+                super().__init__(timeout=None)
+                self.giveaway_id = giveaway_id
+                self.cog = cog
+            
+            @discord.ui.button(label="Add Participants", style=discord.ButtonStyle.green, custom_id=f"giveaway_add_participants_{giveaway_id}")
+            async def add_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await self.cog._handle_add_participants(interaction, self.giveaway_id)
+            
+            @discord.ui.button(label="Remove Participants", style=discord.ButtonStyle.danger, custom_id=f"giveaway_remove_participants_{giveaway_id}")
+            async def remove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await self.cog._handle_remove_participants(interaction, self.giveaway_id)
+        
+        view = ParticipantsView(giveaway_id, self)
+        
+        # Only show buttons if user has permission
+        if not can_remove_participants(interaction.user):
+            view = None
+        
+        embed = discord.Embed(
+            title=f"Giveaway Participants ({len(participants)})",
+            description=participants_text,
+            color=discord.Color.from_rgb(37, 37, 41)
         )
         
-        container.add_item(discord.ui.TextDisplay(f"Giveaway Participants ({len(participants)})"))
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(participants_text))
-        
-        # Add remove/add participant buttons if user has permission
-        if can_remove_participants(interaction.user):
-            container.add_item(discord.ui.Separator())
-            button_row = discord.ui.ActionRow()
-            button_row.add_item(
-                discord.ui.Button(
-                    label="Add Participants",
-                    style=discord.ButtonStyle.green,
-                    custom_id=f"giveaway_add_participants_{giveaway_id}"
-                )
-            )
-            button_row.add_item(
-                discord.ui.Button(
-                    label="Remove Participants",
-                    style=discord.ButtonStyle.danger,
-                    custom_id=f"giveaway_remove_participants_{giveaway_id}"
-                )
-            )
-            container.add_item(button_row)
-        
-        view.add_item(container)
-        
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     async def _handle_leave_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the leave giveaway button click."""
