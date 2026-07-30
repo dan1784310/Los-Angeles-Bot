@@ -19,6 +19,9 @@ from ticket_creation import TicketCreation
 # Import session panel module
 from session_panel import setup_session_commands, SessionPanelView
 
+# Import giveaway system modules
+from giveaway_main import setup as setup_giveaway
+
 # ==========================================
 # COMMAND ROLE PERMISSIONS CONFIGURATION
 # Format: "command_name": REQUIRED_ROLE_ID
@@ -127,6 +130,16 @@ async def on_ready():
         print("Ticket system loaded successfully")
     except Exception as e:
         print(f"Error loading ticket system: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # Load giveaway system
+    try:
+        print("Loading Giveaway system...")
+        await setup_giveaway(bot)
+        print("Giveaway system loaded successfully")
+    except Exception as e:
+        print(f"Error loading giveaway system: {e}")
         import traceback
         traceback.print_exc()
 
