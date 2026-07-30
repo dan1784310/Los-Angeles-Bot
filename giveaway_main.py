@@ -487,7 +487,7 @@ class GiveawaySystem(commands.Cog):
             container.add_item(discord.ui.Separator())
             container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
             container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {giveaway['winners_amount']}"))
-            container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{giveaway['end_timestamp']}:R>"))
+            container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{int(float(giveaway['end_timestamp']))}:R>"))
             
             if giveaway['giveaway_message']:
                 container.add_item(discord.ui.Separator())
