@@ -571,61 +571,81 @@ class GiveawaySystem(commands.Cog):
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
         delay = end_timestamp - datetime.now().timestamp()
+        print(f"[GIVEAWAY TIMER] Starting timer for {giveaway_id}, delay: {delay} seconds")
         
         if delay <= 0:
+            print(f"[GIVEAWAY TIMER] Delay is <= 0, ending immediately")
             asyncio.create_task(self._end_giveaway(giveaway_id))
             return
         
         async def timer_task():
             try:
+                print(f"[GIVEAWAY TIMER] Sleeping for {delay} seconds...")
                 await asyncio.sleep(delay)
+                print(f"[GIVEAWAY TIMER] Timer finished, ending giveaway {giveaway_id}")
                 await self._end_giveaway(giveaway_id)
             except asyncio.CancelledError:
-                pass
+                print(f"[GIVEAWAY TIMER] Timer cancelled for {giveaway_id}")
             except Exception as e:
-                print(f"Error in giveaway timer: {e}")
+                print(f"[GIVEAWAY TIMER] Error in giveaway timer: {e}")
+                import traceback
+                traceback.print_exc()
         
         task = asyncio.create_task(timer_task())
         self.active_timers[giveaway_id] = task
+        print(f"[GIVEAWAY TIMER] Timer task created and stored for {giveaway_id}")
 
     async def _end_giveaway(self, giveaway_id: str):
         """End a giveaway and select winners."""
+        print(f"[GIVEAWAY END] Ending giveaway {giveaway_id}")
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway or giveaway['status'] == 'ended':
+            print(f"[GIVEAWAY END] Giveaway not found or already ended")
             return
         
+        print(f"[GIVEAWAY END] Updating status to 'ended'")
         db.update_giveaway_status(giveaway_id, 'ended')
         
         if giveaway_id in self.active_timers:
             del self.active_timers[giveaway_id]
         
         participants = db.get_participants(giveaway_id)
+        print(f"[GIVEAWAY END] Found {len(participants)} participants")
         channel = self.bot.get_channel(giveaway['channel_id'])
         if not channel:
+            print(f"[GIVEAWAY END] Could not find channel")
             return
         
         try:
             message = await channel.fetch_message(giveaway['message_id'])
         except discord.NotFound:
+            print(f"[GIVEAWAY END] Could not find message")
             return
         
         if not participants:
+            print(f"[GIVEAWAY END] No participants, updating message")
             await self._update_giveaway_message_no_winners(message)
             return
         
         winners_amount = min(giveaway['winners_amount'], len(participants))
         winners = random.sample(participants, winners_amount)
+        print(f"[GIVEAWAY END] Selected {len(winners)} winners: {winners}")
         
         for winner_id in winners:
             db.add_winner(giveaway_id, winner_id)
         
+        print(f"[GIVEAWAY END] Updating message with winners")
         await self._update_giveaway_message_with_winners(message, giveaway, winners)
         
         if giveaway['winner_role_id']:
+            print(f"[GIVEAWAY END] Giving winner role")
             await self._give_winner_role(channel.guild, winners, giveaway['winner_role_id'])
         
         if giveaway['winner_dm_message']:
+            print(f"[GIVEAWAY END] DMing winners")
             await self._dm_winners(winners, giveaway['prize'], giveaway['winner_dm_message'])
+        
+        print(f"[GIVEAWAY END] Giveaway ended successfully")
 
     async def _update_giveaway_message_with_winners(
         self,
@@ -633,46 +653,42 @@ class GiveawaySystem(commands.Cog):
         giveaway: dict,
         winners: List[int]
     ):
-        """Update the giveaway message with winners."""
+        """Update the giveaway message with winners using Components V2."""
         winner_mentions = [f"<@{w_id}>" for w_id in winners]
         
-        embed = discord.Embed(
-            title="🎉 Giveaway Ended!",
-            color=discord.Color.green()
-        )
-        embed.add_field(name="🎁 Prize", value=giveaway['prize'], inline=False)
-        embed.add_field(name="🏆 Winners", value="\n".join(winner_mentions), inline=False)
-        embed.set_footer(text="Congratulations! 🎉")
-        
-        view = discord.ui.View(timeout=None)
-        view.add_item(
-            discord.ui.Button(
-                label="🎉 Giveaway Ended",
-                style=discord.ButtonStyle.gray,
-                disabled=True
-            )
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        await message.edit(embed=embed, view=view)
+        container.add_item(discord.ui.TextDisplay("🎉 Giveaway Ended!"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"🎁 Prize:\n{giveaway['prize']}"))
+        container.add_item(discord.ui.Separator())
+        
+        winners_text = "\n".join(winner_mentions)
+        container.add_item(discord.ui.TextDisplay(f"� Winners:\n{winners_text}"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
+        
+        view.add_item(container)
+        
+        await message.edit(view=view)
 
     async def _update_giveaway_message_no_winners(self, message: discord.Message):
-        """Update the giveaway message when no winners."""
-        embed = discord.Embed(
-            title="❌ Giveaway Ended",
-            description="No valid entries were found.",
-            color=discord.Color.red()
+        """Update the giveaway message when no winners using Components V2."""
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        view = discord.ui.View(timeout=None)
-        view.add_item(
-            discord.ui.Button(
-                label="🎉 Giveaway Ended",
-                style=discord.ButtonStyle.gray,
-                disabled=True
-            )
-        )
+        container.add_item(discord.ui.TextDisplay("❌ Giveaway Ended"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay("No valid entries were found."))
         
-        await message.edit(embed=embed, view=view)
+        view.add_item(container)
+        
+        await message.edit(view=view)
 
     async def _give_winner_role(self, guild: discord.Guild, winner_ids: List[int], role_id: int):
         role = guild.get_role(role_id)
