@@ -273,6 +273,9 @@ class GiveawaySystem(commands.Cog):
         
         await self._update_giveaway_message_with_winners(message, giveaway, new_winners)
         
+        # Send reroll announcement
+        await self._send_reroll_announcement(channel, giveaway, new_winners)
+        
         if giveaway['winner_role_id']:
             await self._give_winner_role(channel.guild, new_winners, giveaway['winner_role_id'])
         
@@ -892,7 +895,7 @@ class GiveawaySystem(commands.Cog):
         
         container.add_item(discord.ui.TextDisplay("🎉 Giveaway Ended!"))
         container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(f"🎁 Prize:\n{giveaway['prize']}"))
+        container.add_item(discord.ui.TextDisplay(f"🎁 Prize: {giveaway['prize']}"))
         container.add_item(discord.ui.Separator())
         
         winners_text = "\n".join(winner_mentions)
@@ -959,7 +962,29 @@ class GiveawaySystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
+        container.add_item(discord.ui.TextDisplay("Congratulations!"))
         container.add_item(discord.ui.TextDisplay(f"{winners_text} won **{giveaway['prize']}**"))
+        
+        view.add_item(container)
+        
+        await channel.send(view=view)
+
+    async def _send_reroll_announcement(
+        self,
+        channel: discord.TextChannel,
+        giveaway: dict,
+        winners: List[int]
+    ):
+        """Send a reroll announcement message."""
+        winner_mentions = [f"<@{w_id}>" for w_id in winners]
+        winners_text = ", ".join(winner_mentions)
+        
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        container.add_item(discord.ui.TextDisplay(f"The new winner of the giveaway **{giveaway['prize']}** is {winners_text}. Congrats! 🎉"))
         
         view.add_item(container)
         
