@@ -15,8 +15,8 @@ import uuid
 from giveaway_database import db
 from giveaway_views import (
     GiveawayView, EndedGiveawayView,
-    build_entry_confirmation_view, build_already_entered_view,
-    build_requirement_failed_view, build_winner_dm_view
+    build_entry_confirmation_embed, build_already_entered_embed,
+    build_requirement_failed_embed, build_winner_dm_embed
 )
 
 
@@ -452,72 +452,38 @@ class GiveawaySystem(commands.Cog):
         required_role: Optional[discord.Role],
         giveaway_id: str
     ) -> discord.Message:
-        """Create the Components V2 giveaway message."""
+        """Create the giveaway message using embed for faster response."""
         
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(139, 92, 246)
+        # Create embed
+        embed = discord.Embed(
+            title=f"🎉 {prize}",
+            color=discord.Color.purple(),
+            timestamp=datetime.fromtimestamp(end_timestamp)
         )
         
-        # Prize (main title)
-        container.add_item(
-            discord.ui.TextDisplay(f"🎉 {prize}")
-        )
+        embed.add_field(name="Hosted by", value=host.mention, inline=True)
+        embed.add_field(name="🏆 Winners", value=str(winners), inline=True)
+        embed.add_field(name="⏰ Ends", value=f"<t:{end_timestamp}:R>", inline=True)
         
-        container.add_item(discord.ui.Separator())
-        
-        # Host
-        container.add_item(
-            discord.ui.TextDisplay(f"Hosted by {host.mention}")
-        )
-        
-        # Winners
-        container.add_item(
-            discord.ui.TextDisplay(f"🏆 Winners: {winners}")
-        )
-        
-        # End time
-        container.add_item(
-            discord.ui.TextDisplay(f"⏰ Ends: <t:{end_timestamp}:R>")
-        )
-        
-        # Custom message if provided
         if message:
-            container.add_item(discord.ui.Separator())
-            container.add_item(
-                discord.ui.TextDisplay(message)
-            )
+            embed.add_field(name="Message", value=message, inline=False)
         
-        # Requirements if provided
         if required_role:
-            container.add_item(discord.ui.Separator())
-            container.add_item(
-                discord.ui.TextDisplay(f"📋 Requirement: {required_role.mention}")
-            )
+            embed.add_field(name="📋 Requirement", value=required_role.mention, inline=False)
         
-        container.add_item(discord.ui.Separator())
+        embed.add_field(name="🎟️ Entries", value="0", inline=True)
         
-        # Entry count
-        container.add_item(
-            discord.ui.TextDisplay("🎟️ Entries: 0")
-        )
-        
-        container.add_item(discord.ui.Separator())
-        
-        # Enter button with actual giveaway ID
-        button_row = discord.ui.ActionRow()
-        button_row.add_item(
+        # Create view with button
+        view = discord.ui.View(timeout=None)
+        view.add_item(
             discord.ui.Button(
                 label="🎉 Enter Giveaway",
                 style=discord.ButtonStyle.green,
                 custom_id=f"giveaway_enter_{giveaway_id}"
             )
         )
-        container.add_item(button_row)
         
-        view.add_item(container)
-        
-        message = await channel.send(view=view)
+        message = await channel.send(embed=embed, view=view)
         return message
     
     async def _update_giveaway_entry_count(self, message_id: int, count: int):
@@ -558,7 +524,7 @@ class GiveawaySystem(commands.Cog):
         # Check if already entered
         if db.has_participant(giveaway_id, interaction.user.id):
             await interaction.response.send_message(
-                view=build_already_entered_view(),
+                embed=build_already_entered_embed(),
                 ephemeral=True
             )
             return
@@ -575,7 +541,7 @@ class GiveawaySystem(commands.Cog):
             
             if not has_bypass and (not required_role or required_role not in interaction.user.roles):
                 await interaction.response.send_message(
-                    view=build_requirement_failed_view(
+                    embed=build_requirement_failed_embed(
                         f"• You must have the {required_role.mention if required_role else 'required role'}."
                     ),
                     ephemeral=True
@@ -587,7 +553,7 @@ class GiveawaySystem(commands.Cog):
         
         # Send confirmation
         await interaction.response.send_message(
-            view=build_entry_confirmation_view(
+            embed=build_entry_confirmation_embed(
                 giveaway['prize'],
                 giveaway['winners_amount'],
                 int(giveaway['end_timestamp'])
@@ -690,60 +656,49 @@ class GiveawaySystem(commands.Cog):
             else:
                 winner_mentions.append(f"<@{winner_id}>")
         
-        # Build new message
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(34, 197, 94)
+        # Build new embed
+        embed = discord.Embed(
+            title="🎉 Giveaway Ended!",
+            color=discord.Color.green()
         )
-        
-        container.add_item(
-            discord.ui.TextDisplay("🎉 Giveaway Ended!")
-        )
-        
-        container.add_item(discord.ui.Separator())
-        
-        container.add_item(
-            discord.ui.TextDisplay(f"🎁 Prize:\n{giveaway['prize']}")
-        )
-        
-        container.add_item(discord.ui.Separator())
+        embed.add_field(name="🎁 Prize", value=giveaway['prize'], inline=False)
         
         winners_text = "\n".join(winner_mentions)
-        container.add_item(
-            discord.ui.TextDisplay(f"🏆 Winners:\n{winners_text}")
+        embed.add_field(name="🏆 Winners", value=winners_text, inline=False)
+        
+        embed.set_footer(text="Congratulations! 🎉")
+        
+        # Create ended view
+        view = discord.ui.View(timeout=None)
+        view.add_item(
+            discord.ui.Button(
+                label="🎉 Giveaway Ended",
+                style=discord.ButtonStyle.gray,
+                disabled=True
+            )
         )
         
-        container.add_item(discord.ui.Separator())
-        
-        container.add_item(
-            discord.ui.TextDisplay("Congratulations! 🎉")
-        )
-        
-        view.add_item(container)
-        
-        await message.edit(view=view)
+        await message.edit(embed=embed, view=view)
     
     async def _update_giveaway_message_no_winners(self, message: discord.Message):
         """Update the giveaway message when no winners."""
         
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(239, 68, 68)
+        embed = discord.Embed(
+            title="❌ Giveaway Ended",
+            description="No valid entries were found.",
+            color=discord.Color.red()
         )
         
-        container.add_item(
-            discord.ui.TextDisplay("❌ Giveaway Ended")
+        view = discord.ui.View(timeout=None)
+        view.add_item(
+            discord.ui.Button(
+                label="🎉 Giveaway Ended",
+                style=discord.ButtonStyle.gray,
+                disabled=True
+            )
         )
         
-        container.add_item(discord.ui.Separator())
-        
-        container.add_item(
-            discord.ui.TextDisplay("No valid entries were found.")
-        )
-        
-        view.add_item(container)
-        
-        await message.edit(view=view)
+        await message.edit(embed=embed, view=view)
     
     async def _give_winner_role(self, guild: discord.Guild, winner_ids: List[int], role_id: int):
         """Give winner role to winners."""
@@ -767,7 +722,7 @@ class GiveawaySystem(commands.Cog):
                 user = self.bot.get_user(winner_id)
                 if user:
                     await user.send(
-                        view=build_winner_dm_view(prize, dm_message)
+                        embed=build_winner_dm_embed(prize, dm_message)
                     )
             except Exception as e:
                 print(f"Error DMing winner {winner_id}: {e}")

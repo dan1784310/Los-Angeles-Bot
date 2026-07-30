@@ -1,6 +1,6 @@
 """
 Giveaway Views Module
-Contains all Components V2 UI components for the giveaway system.
+Contains all UI components for the giveaway system.
 """
 
 import discord
@@ -64,157 +64,64 @@ class EndedGiveawayView(discord.ui.View):
 
 
 # ==========================================
-# ENTRY CONFIRMATION VIEW (COMPONENTS V2)
+# ENTRY CONFIRMATION EMBED
 # ==========================================
 
-def build_entry_confirmation_view(prize: str, winners: int, end_timestamp: int) -> discord.ui.LayoutView:
-    """Build a Components V2 view for entry confirmation."""
-    view = discord.ui.LayoutView(timeout=None)
-    
-    container = discord.ui.Container(
-        accent_colour=discord.Color.from_rgb(34, 197, 94)
+def build_entry_confirmation_embed(prize: str, winners: int, end_timestamp: int) -> discord.Embed:
+    """Build an embed for entry confirmation."""
+    embed = discord.Embed(
+        title="✅ Successfully Entered!",
+        description="You have successfully entered this giveaway!",
+        color=discord.Color.green()
     )
-    
-    # Success header
-    container.add_item(
-        discord.ui.TextDisplay(
-            "✅ You have successfully entered this giveaway!"
-        )
-    )
-    
-    container.add_item(discord.ui.Separator())
-    
-    # Prize info
-    container.add_item(
-        discord.ui.TextDisplay(
-            f"🎁 {prize}"
-        )
-    )
-    
-    # Winners info
-    container.add_item(
-        discord.ui.TextDisplay(
-            f"🏆 Winners: {winners}"
-        )
-    )
-    
-    # End time
-    container.add_item(
-        discord.ui.TextDisplay(
-            f"⏰ Ends: <t:{end_timestamp}:R>"
-        )
-    )
-    
-    container.add_item(discord.ui.Separator())
-    
-    # Footer
-    container.add_item(
-        discord.ui.TextDisplay(
-            "Good luck! 🍀"
-        )
-    )
-    
-    view.add_item(container)
-    
-    return view
+    embed.add_field(name="🎁 Prize", value=prize, inline=True)
+    embed.add_field(name="🏆 Winners", value=str(winners), inline=True)
+    embed.add_field(name="⏰ Ends", value=f"<t:{end_timestamp}:R>", inline=True)
+    embed.set_footer(text="Good luck! 🍀")
+    return embed
 
 
 # ==========================================
-# ALREADY ENTERED VIEW (COMPONENTS V2)
+# ALREADY ENTERED EMBED
 # ==========================================
 
-def build_already_entered_view() -> discord.ui.LayoutView:
-    """Build a Components V2 view for already entered message."""
-    view = discord.ui.LayoutView(timeout=None)
-    
-    container = discord.ui.Container(
-        accent_colour=discord.Color.from_rgb(59, 130, 246)
+def build_already_entered_embed() -> discord.Embed:
+    """Build an embed for already entered message."""
+    embed = discord.Embed(
+        title="ℹ️ Already Entered",
+        description="You're already participating in this giveaway.",
+        color=discord.Color.blue()
     )
-    
-    container.add_item(
-        discord.ui.TextDisplay(
-            "ℹ️ You're already participating in this giveaway."
-        )
-    )
-    
-    container.add_item(discord.ui.Separator())
-    
-    container.add_item(
-        discord.ui.TextDisplay(
-            "Good luck! 🍀"
-        )
-    )
-    
-    view.add_item(container)
-    
-    return view
+    embed.set_footer(text="Good luck! 🍀")
+    return embed
 
 
 # ==========================================
-# REQUIREMENT FAILED VIEW (COMPONENTS V2)
+# REQUIREMENT FAILED EMBED
 # ==========================================
 
-def build_requirement_failed_view(reason: str) -> discord.ui.LayoutView:
-    """Build a Components V2 view for requirement failure."""
-    view = discord.ui.LayoutView(timeout=None)
-    
-    container = discord.ui.Container(
-        accent_colour=discord.Color.from_rgb(239, 68, 68)
+def build_requirement_failed_embed(reason: str) -> discord.Embed:
+    """Build an embed for requirement failure."""
+    embed = discord.Embed(
+        title="❌ Cannot Enter",
+        description="You can't enter this giveaway.",
+        color=discord.Color.red()
     )
-    
-    container.add_item(
-        discord.ui.TextDisplay(
-            "❌ You can't enter this giveaway."
-        )
-    )
-    
-    container.add_item(discord.ui.Separator())
-    
-    container.add_item(
-        discord.ui.TextDisplay(
-            f"Reason:\n{reason}"
-        )
-    )
-    
-    view.add_item(container)
-    
-    return view
+    embed.add_field(name="Reason", value=reason, inline=False)
+    return embed
 
 
 # ==========================================
-# WINNER DM VIEW (COMPONENTS V2)
+# WINNER DM EMBED
 # ==========================================
 
-def build_winner_dm_view(prize: str, custom_message: Optional[str] = None) -> discord.ui.LayoutView:
-    """Build a Components V2 view for winner DM."""
-    view = discord.ui.LayoutView(timeout=None)
-    
-    container = discord.ui.Container(
-        accent_colour=discord.Color.from_rgb(168, 85, 247)
+def build_winner_dm_embed(prize: str, custom_message: Optional[str] = None) -> discord.Embed:
+    """Build an embed for winner DM."""
+    embed = discord.Embed(
+        title="🎉 Congratulations!",
+        description=f"You won:\n{prize}",
+        color=discord.Color.purple()
     )
-    
-    container.add_item(
-        discord.ui.TextDisplay(
-            "🎉 Congratulations!"
-        )
-    )
-    
-    container.add_item(discord.ui.Separator())
-    
-    container.add_item(
-        discord.ui.TextDisplay(
-            f"You won:\n{prize}"
-        )
-    )
-    
     if custom_message:
-        container.add_item(discord.ui.Separator())
-        container.add_item(
-            discord.ui.TextDisplay(
-                custom_message
-            )
-        )
-    
-    view.add_item(container)
-    
-    return view
+        embed.add_field(name="Message", value=custom_message, inline=False)
+    return embed
