@@ -396,6 +396,9 @@ class GiveawaySystem(commands.Cog):
         elif custom_id.startswith("giveaway_participants_"):
             giveaway_id = custom_id.replace("giveaway_participants_", "")
             await self._handle_participants_button(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_leave_"):
+            giveaway_id = custom_id.replace("giveaway_leave_", "")
+            await self._handle_leave_giveaway(interaction, giveaway_id)
     
     # ==========================================
     # HELPER METHODS
@@ -558,10 +561,27 @@ class GiveawaySystem(commands.Cog):
             return
         
         if db.has_participant(giveaway_id, interaction.user.id):
-            await interaction.response.send_message(
-                view=build_already_entered_view(),
-                ephemeral=True
+            view = discord.ui.LayoutView(timeout=None)
+            container = discord.ui.Container(
+                accent_colour=discord.Color.from_rgb(37, 37, 41)
             )
+            
+            container.add_item(discord.ui.TextDisplay("You have already entered this giveaway."))
+            container.add_item(discord.ui.Separator())
+            
+            button_row = discord.ui.ActionRow()
+            button_row.add_item(
+                discord.ui.Button(
+                    label="Leave Giveaway",
+                    style=discord.ButtonStyle.danger,
+                    custom_id=f"giveaway_leave_{giveaway_id}"
+                )
+            )
+            container.add_item(button_row)
+            
+            view.add_item(container)
+            
+            await interaction.response.send_message(view=view, ephemeral=True)
             return
         
         if giveaway['required_role_id']:
@@ -632,6 +652,39 @@ class GiveawaySystem(commands.Cog):
         view.add_item(container)
         
         await interaction.response.send_message(view=view, ephemeral=True)
+
+    async def _handle_leave_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
+        """Handle the leave giveaway button click."""
+        giveaway = db.get_giveaway(giveaway_id)
+        if not giveaway:
+            await interaction.response.send_message(
+                "❌ This giveaway no longer exists.",
+                ephemeral=True
+            )
+            return
+        
+        if giveaway['status'] != 'active':
+            await interaction.response.send_message(
+                "❌ This giveaway has ended.",
+                ephemeral=True
+            )
+            return
+        
+        if not db.has_participant(giveaway_id, interaction.user.id):
+            await interaction.response.send_message(
+                "❌ You are not in this giveaway.",
+                ephemeral=True
+            )
+            return
+        
+        db.remove_participant(giveaway_id, interaction.user.id)
+        
+        await self._update_giveaway_entry_count(giveaway['message_id'])
+        
+        await interaction.response.send_message(
+            "✅ You have left this giveaway.",
+            ephemeral=True
+        )
 
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
@@ -791,27 +844,9 @@ class GiveawaySystem(commands.Cog):
     ):
         """Send a separate announcement message when giveaway ends."""
         winner_mentions = [f"<@{w_id}>" for w_id in winners]
+        winners_text = ", ".join(winner_mentions)
         
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
-        )
-        
-        container.add_item(discord.ui.TextDisplay("🎉 Giveaway Ended!"))
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(f"🎁 Prize:\n{giveaway['prize']}"))
-        container.add_item(discord.ui.Separator())
-        
-        winners_text = "\n".join(winner_mentions)
-        container.add_item(discord.ui.TextDisplay(f"🏆 Winners:\n{winners_text}"))
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(f"🎟️ Total Entries: {total_entries}"))
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
-        
-        view.add_item(container)
-        
-        await channel.send(view=view)
+        await channel.send(f"Congratulations! 🎉 {winners_text} won the giveaway of {giveaway['prize']}!")
 
     @commands.Cog.listener()
     async def on_ready(self):
