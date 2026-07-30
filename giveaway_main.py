@@ -25,10 +25,10 @@ from giveaway_views import (
 # ==========================================
 
 GIVEAWAY_WHITELIST_ROLES = [
-    1500971862539239536
+    1532456182147711108
 ]
 
-GIVEAWAY_REMOVE_PARTICIPANT_ROLE = 1500971862539239536  # Set to role ID (int) to allow removing participants
+GIVEAWAY_REMOVE_PARTICIPANT_ROLE = 1532456182147711108  # Set to role ID (int) to allow removing participants
 
 
 def is_giveaway_admin(user: discord.Member) -> bool:
