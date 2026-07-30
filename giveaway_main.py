@@ -431,7 +431,7 @@ class GiveawaySystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(139, 92, 246)
         )
         
-        container.add_item(discord.ui.TextDisplay(f"🎉 {prize}"))
+        container.add_item(discord.ui.TextDisplay(f"{prize}"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
         container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners}"))
@@ -461,6 +461,61 @@ class GiveawaySystem(commands.Cog):
         view.add_item(container)
         
         return await channel.send(view=view)
+    
+    async def _update_giveaway_entry_count(self, message_id: int):
+        """Update the entry count in the giveaway message."""
+        try:
+            giveaway = db.get_giveaway_by_message_id(message_id)
+            if not giveaway:
+                return
+            
+            channel = self.bot.get_channel(giveaway['channel_id'])
+            if not channel:
+                return
+            
+            message = await channel.fetch_message(message_id)
+            participants = db.get_participants(giveaway['giveaway_id'])
+            entry_count = len(participants)
+            
+            # Rebuild the message with updated entry count
+            view = discord.ui.LayoutView(timeout=None)
+            container = discord.ui.Container(
+                accent_colour=discord.Color.from_rgb(139, 92, 246)
+            )
+            
+            container.add_item(discord.ui.TextDisplay(f"{giveaway['prize']}"))
+            container.add_item(discord.ui.Separator())
+            container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
+            container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {giveaway['winners_amount']}"))
+            container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{giveaway['end_timestamp']}:R>"))
+            
+            if giveaway['giveaway_message']:
+                container.add_item(discord.ui.Separator())
+                container.add_item(discord.ui.TextDisplay(giveaway['giveaway_message']))
+            
+            if giveaway['required_role_id']:
+                container.add_item(discord.ui.Separator())
+                container.add_item(discord.ui.TextDisplay(f"📋 Requirement: <@&{giveaway['required_role_id']}>"))
+            
+            container.add_item(discord.ui.Separator())
+            container.add_item(discord.ui.TextDisplay(f"🎟️ Entries: {entry_count}"))
+            container.add_item(discord.ui.Separator())
+            
+            button_row = discord.ui.ActionRow()
+            button_row.add_item(
+                discord.ui.Button(
+                    label="🎉 Enter Giveaway",
+                    style=discord.ButtonStyle.green,
+                    custom_id=f"giveaway_enter_{giveaway['giveaway_id']}"
+                )
+            )
+            container.add_item(button_row)
+            
+            view.add_item(container)
+            
+            await message.edit(view=view)
+        except Exception as e:
+            print(f"Error updating entry count: {e}")
 
     async def _handle_enter_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the enter giveaway button click."""
@@ -506,12 +561,10 @@ class GiveawaySystem(commands.Cog):
         
         db.add_participant(giveaway_id, interaction.user.id)
         
+        await self._update_giveaway_entry_count(giveaway['message_id'])
+        
         await interaction.response.send_message(
-            view=build_entry_confirmation_view(
-                giveaway['prize'],
-                giveaway['winners_amount'],
-                int(giveaway['end_timestamp'])
-            ),
+            "✅ You have successfully entered this giveaway!",
             ephemeral=True
         )
 
