@@ -620,10 +620,18 @@ class GiveawaySystem(commands.Cog):
         
         participants_text = "\n".join(participant_mentions)
         
-        await interaction.response.send_message(
-            f"**Giveaway Participants ({len(participants)}):**\n\n{participants_text}",
-            ephemeral=True
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
+        
+        container.add_item(discord.ui.TextDisplay(f"Giveaway Participants ({len(participants)})"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(participants_text))
+        
+        view.add_item(container)
+        
+        await interaction.response.send_message(view=view, ephemeral=True)
 
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
@@ -693,6 +701,9 @@ class GiveawaySystem(commands.Cog):
         
         print(f"[GIVEAWAY END] Updating message with winners")
         await self._update_giveaway_message_with_winners(message, giveaway, winners)
+        
+        print(f"[GIVEAWAY END] Sending announcement message")
+        await self._send_giveaway_announcement(channel, giveaway, winners, len(participants))
         
         if giveaway['winner_role_id']:
             print(f"[GIVEAWAY END] Giving winner role")
@@ -770,6 +781,37 @@ class GiveawaySystem(commands.Cog):
                     )
             except Exception as e:
                 print(f"Error DMing winner {winner_id}: {e}")
+
+    async def _send_giveaway_announcement(
+        self,
+        channel: discord.TextChannel,
+        giveaway: dict,
+        winners: List[int],
+        total_entries: int
+    ):
+        """Send a separate announcement message when giveaway ends."""
+        winner_mentions = [f"<@{w_id}>" for w_id in winners]
+        
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        container.add_item(discord.ui.TextDisplay("🎉 Giveaway Ended!"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"🎁 Prize:\n{giveaway['prize']}"))
+        container.add_item(discord.ui.Separator())
+        
+        winners_text = "\n".join(winner_mentions)
+        container.add_item(discord.ui.TextDisplay(f"🏆 Winners:\n{winners_text}"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"🎟️ Total Entries: {total_entries}"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
+        
+        view.add_item(container)
+        
+        await channel.send(view=view)
 
     @commands.Cog.listener()
     async def on_ready(self):
