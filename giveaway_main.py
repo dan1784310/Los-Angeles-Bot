@@ -420,6 +420,9 @@ class GiveawaySystem(commands.Cog):
         elif custom_id.startswith("giveaway_remove_participants_"):
             giveaway_id = custom_id.replace("giveaway_remove_participants_", "")
             await self._handle_remove_participants(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_remove_select_"):
+            giveaway_id = custom_id.replace("giveaway_remove_select_", "")
+            await self._handle_remove_participants_select(interaction, giveaway_id)
     
     # ==========================================
     # HELPER METHODS
@@ -764,38 +767,61 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Create view with select menu
-        class RemoveParticipantsView(discord.ui.View):
-            def __init__(self, giveaway_id: str, cog):
-                super().__init__(timeout=None)
-                self.giveaway_id = giveaway_id
-                self.cog = cog
-            
-            @discord.ui.select(
-                placeholder="Select participants to remove...",
-                min_values=1,
-                max_values=len(select_options),
-                options=select_options[:25]  # Discord limit is 25
-            )
-            async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-                selected_ids = [int(value) for value in select.values]
-                
-                for user_id in selected_ids:
-                    db.remove_participant(self.giveaway_id, user_id)
-                
-                await self.cog._update_giveaway_entry_count(giveaway['message_id'])
-                
-                await interaction.response.edit_message(
-                    content=f"✅ Removed {len(selected_ids)} participant(s) from the giveaway.",
-                    view=None
-                )
+        # Store the giveaway ID for the select callback
+        self._pending_remove_giveaway = giveaway_id
         
-        view = RemoveParticipantsView(giveaway_id, self)
-        
-        await interaction.response.edit_message(
-            content="Select participants to remove:",
-            view=view
+        # Create Components V2 view with select menu
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
+        
+        container.add_item(discord.ui.TextDisplay("Select participants to remove:"))
+        container.add_item(discord.ui.Separator())
+        
+        select_row = discord.ui.ActionRow()
+        select = discord.ui.Select(
+            placeholder="Select participants to remove...",
+            min_values=1,
+            max_values=len(select_options[:25]),
+            options=select_options[:25],
+            custom_id=f"giveaway_remove_select_{giveaway_id}"
+        )
+        select_row.add_item(select)
+        container.add_item(select_row)
+        
+        view.add_item(container)
+        
+        await interaction.response.edit_message(view=view)
+
+    async def _handle_remove_participants_select(self, interaction: discord.Interaction, giveaway_id: str):
+        """Handle the select menu for removing participants."""
+        selected_values = interaction.data.get("values", [])
+        selected_ids = [int(value) for value in selected_values]
+        
+        giveaway = db.get_giveaway(giveaway_id)
+        if not giveaway:
+            await interaction.response.send_message(
+                "❌ This giveaway no longer exists.",
+                ephemeral=True
+            )
+            return
+        
+        for user_id in selected_ids:
+            db.remove_participant(giveaway_id, user_id)
+        
+        await self._update_giveaway_entry_count(giveaway['message_id'])
+        
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        container.add_item(discord.ui.TextDisplay(f"✅ Removed {len(selected_ids)} participant(s) from the giveaway."))
+        
+        view.add_item(container)
+        
+        await interaction.response.edit_message(view=view)
 
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
@@ -895,7 +921,7 @@ class GiveawaySystem(commands.Cog):
         
         container.add_item(discord.ui.TextDisplay("🎉 Giveaway Ended!"))
         container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(f"🎁 Prize: {giveaway['prize']}"))
+        container.add_item(discord.ui.TextDisplay(f"🎁 Prize: **{giveaway['prize']}**"))
         container.add_item(discord.ui.Separator())
         
         winners_text = "\n".join(winner_mentions)
