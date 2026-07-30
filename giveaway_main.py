@@ -815,7 +815,7 @@ class GiveawaySystem(commands.Cog):
 
         view.add_item(container)
         
-        await interaction.response.edit_message(view=view)
+        await interaction.response.send_message(view=view, ephemeral=True)
 
     async def _handle_add_participants(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the add participants button click."""
@@ -893,7 +893,7 @@ class GiveawaySystem(commands.Cog):
 
         view.add_item(container)
         
-        await interaction.response.edit_message(view=view)
+        await interaction.response.send_message(view=view, ephemeral=True)
 
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
