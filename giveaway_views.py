@@ -190,7 +190,7 @@ def build_winner_dm_view(prize: str, custom_message: Optional[str] = None) -> di
     view = discord.ui.LayoutView(timeout=None)
     
     container = discord.ui.Container(
-        accent_colour=discord.Color.from_rgb(168, 85, 247)
+        accent_colour=discord.Color.from_rgb(37, 37, 41)
     )
     
     container.add_item(

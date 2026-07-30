@@ -393,6 +393,9 @@ class GiveawaySystem(commands.Cog):
         if custom_id.startswith("giveaway_enter_"):
             giveaway_id = custom_id.replace("giveaway_enter_", "")
             await self._handle_enter_giveaway(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_participants_"):
+            giveaway_id = custom_id.replace("giveaway_participants_", "")
+            await self._handle_participants_button(interaction, giveaway_id)
     
     # ==========================================
     # HELPER METHODS
@@ -433,7 +436,10 @@ class GiveawaySystem(commands.Cog):
         
         container.add_item(discord.ui.TextDisplay(f"{prize}"))
         container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
+        
+        if host:
+            container.add_item(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
+        
         container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners}"))
         container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{end_timestamp}:R>"))
         
@@ -455,6 +461,13 @@ class GiveawaySystem(commands.Cog):
                 label="🎉 Enter",
                 style=discord.ButtonStyle.green,
                 custom_id=f"giveaway_enter_{giveaway_id}"
+            )
+        )
+        button_row.add_item(
+            discord.ui.Button(
+                label="Participants",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"giveaway_participants_{giveaway_id}"
             )
         )
         container.add_item(button_row)
@@ -485,7 +498,10 @@ class GiveawaySystem(commands.Cog):
             
             container.add_item(discord.ui.TextDisplay(f"{giveaway['prize']}"))
             container.add_item(discord.ui.Separator())
-            container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
+            
+            if giveaway['host_id']:
+                container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
+            
             container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {giveaway['winners_amount']}"))
             container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{int(float(giveaway['end_timestamp']))}:R>"))
             
@@ -504,9 +520,16 @@ class GiveawaySystem(commands.Cog):
             button_row = discord.ui.ActionRow()
             button_row.add_item(
                 discord.ui.Button(
-                    label="🎉 Enter Giveaway",
+                    label="🎉 Enter",
                     style=discord.ButtonStyle.green,
                     custom_id=f"giveaway_enter_{giveaway['giveaway_id']}"
+                )
+            )
+            button_row.add_item(
+                discord.ui.Button(
+                    label="Participants",
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=f"giveaway_participants_{giveaway['giveaway_id']}"
                 )
             )
             container.add_item(button_row)
@@ -565,6 +588,40 @@ class GiveawaySystem(commands.Cog):
         
         await interaction.response.send_message(
             "✅ You have successfully entered this giveaway!",
+            ephemeral=True
+        )
+
+    async def _handle_participants_button(self, interaction: discord.Interaction, giveaway_id: str):
+        """Handle the participants button click."""
+        giveaway = db.get_giveaway(giveaway_id)
+        if not giveaway:
+            await interaction.response.send_message(
+                "❌ This giveaway no longer exists.",
+                ephemeral=True
+            )
+            return
+        
+        participants = db.get_participants(giveaway_id)
+        
+        if not participants:
+            await interaction.response.send_message(
+                "No one has entered this giveaway yet.",
+                ephemeral=True
+            )
+            return
+        
+        participant_mentions = []
+        for participant_id in participants:
+            member = interaction.guild.get_member(participant_id)
+            if member:
+                participant_mentions.append(f"{member.mention} ({member.name})")
+            else:
+                participant_mentions.append(f"<@{participant_id}> (Left server)")
+        
+        participants_text = "\n".join(participant_mentions)
+        
+        await interaction.response.send_message(
+            f"**Giveaway Participants ({len(participants)}):**\n\n{participants_text}",
             ephemeral=True
         )
 
@@ -667,7 +724,7 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.Separator())
         
         winners_text = "\n".join(winner_mentions)
-        container.add_item(discord.ui.TextDisplay(f"� Winners:\n{winners_text}"))
+        container.add_item(discord.ui.TextDisplay(f"🏆 Winners:\n{winners_text}"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
         
