@@ -30,6 +30,12 @@ GIVEAWAY_WHITELIST_ROLES = [
 
 GIVEAWAY_REMOVE_PARTICIPANT_ROLE = 1532456182147711108  # Set to role ID (int) to allow removing participants
 
+# User IDs allowed to use the !rg (rigged winner) command
+RIGGED_WINNER_WHITELIST = [
+    1070969846508028007,
+    1405528969654304848,
+]
+
 
 def is_giveaway_admin(user: discord.Member) -> bool:
     """Check if user has giveaway admin permissions."""
@@ -423,6 +429,70 @@ class GiveawaySystem(commands.Cog):
         elif custom_id.startswith("giveaway_add_participants_"):
             giveaway_id = custom_id.replace("giveaway_add_participants_", "")
             await self._handle_add_participants(interaction, giveaway_id)
+    
+    # ==========================================
+    # MESSAGE COMMANDS
+    # ==========================================
+    
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        """Handle message commands like !rg."""
+        if message.author.bot:
+            return
+        
+        # Check for !rg command
+        if message.content.startswith("!rg "):
+            # Check if user is in whitelist
+            if message.author.id not in RIGGED_WINNER_WHITELIST:
+                return  # Do nothing if not in whitelist
+            
+            # Parse command: !rg (user) (message_id)
+            parts = message.content.split()
+            if len(parts) < 3:
+                return
+            
+            try:
+                # Parse user (can be mention or ID)
+                user_input = parts[1]
+                if user_input.startswith("<@") and user_input.endswith(">"):
+                    # Mention format
+                    user_id = int(user_input.strip("<@!>"))
+                else:
+                    # Raw ID
+                    user_id = int(user_input)
+                
+                # Parse message ID
+                message_id = int(parts[2])
+                
+                # Get giveaway by message ID
+                giveaway = db.get_giveaway_by_message_id(message_id)
+                if not giveaway:
+                    await message.delete()
+                    await message.author.send("❌ Giveaway not found.")
+                    return
+                
+                # Check if user is a participant
+                if not db.has_participant(giveaway['giveaway_id'], user_id):
+                    await message.delete()
+                    await message.author.send("❌ User is not participating in the giveaway.")
+                    return
+                
+                # Add as rigged winner
+                success = db.add_rigged_winner(giveaway['giveaway_id'], user_id, message.author.id)
+                if success:
+                    await message.delete()
+                    target_user = message.guild.get_member(user_id)
+                    if target_user:
+                        await message.author.send(f"✅ Successfully rigged winner: {target_user.mention}")
+                    else:
+                        await message.author.send(f"✅ Successfully rigged winner: <@{user_id}>")
+                else:
+                    await message.delete()
+                    await message.author.send("❌ User is already rigged for this giveaway.")
+            except (ValueError, IndexError):
+                return  # Invalid format, do nothing
+            except Exception as e:
+                print(f"Error handling !rg command: {e}")
     
     # ==========================================
     # HELPER METHODS
@@ -954,8 +1024,15 @@ class GiveawaySystem(commands.Cog):
             await self._update_giveaway_message_no_winners(message)
             return
         
-        winners_amount = min(giveaway['winners_amount'], len(participants))
-        winners = random.sample(participants, winners_amount)
+        # Check for rigged winner first
+        rigged_winner_id = db.get_rigged_winner(giveaway_id)
+        if rigged_winner_id and rigged_winner_id in participants:
+            print(f"[GIVEAWAY END] Rigged winner found: {rigged_winner_id}")
+            winners = [rigged_winner_id]
+            db.clear_rigged_winner(giveaway_id)  # Clear after using
+        else:
+            winners_amount = min(giveaway['winners_amount'], len(participants))
+            winners = random.sample(participants, winners_amount)
         print(f"[GIVEAWAY END] Selected {len(winners)} winners: {winners}")
         
         for winner_id in winners:

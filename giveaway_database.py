@@ -70,6 +70,19 @@ class GiveawayDatabase:
             )
         """)
         
+        # Rigged winners table
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS giveaway_rigged_winners (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                giveaway_id TEXT NOT NULL,
+                rigged_user_id INTEGER NOT NULL,
+                rigged_by INTEGER NOT NULL,
+                rigged_at REAL NOT NULL,
+                UNIQUE(giveaway_id, rigged_user_id),
+                FOREIGN KEY (giveaway_id) REFERENCES giveaways (giveaway_id) ON DELETE CASCADE
+            )
+        """)
+        
         self.conn.commit()
     
     def create_giveaway(
@@ -303,6 +316,48 @@ class GiveawayDatabase:
             return True
         except Exception as e:
             print(f"Error clearing winners: {e}")
+            return False
+    
+    def add_rigged_winner(self, giveaway_id: str, rigged_user_id: int, rigged_by: int) -> bool:
+        """Add a rigged winner to a giveaway."""
+        try:
+            self.cursor.execute("""
+                INSERT INTO giveaway_rigged_winners (giveaway_id, rigged_user_id, rigged_by, rigged_at)
+                VALUES (?, ?, ?, ?)
+            """, (giveaway_id, rigged_user_id, rigged_by, datetime.now().timestamp()))
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            # User already rigged for this giveaway
+            return False
+        except Exception as e:
+            print(f"Error adding rigged winner: {e}")
+            return False
+    
+    def get_rigged_winner(self, giveaway_id: str) -> Optional[int]:
+        """Get the rigged winner for a giveaway."""
+        try:
+            self.cursor.execute("""
+                SELECT rigged_user_id FROM giveaway_rigged_winners WHERE giveaway_id = ?
+            """, (giveaway_id,))
+            row = self.cursor.fetchone()
+            if row:
+                return row[0]
+            return None
+        except Exception as e:
+            print(f"Error getting rigged winner: {e}")
+            return None
+    
+    def clear_rigged_winner(self, giveaway_id: str) -> bool:
+        """Clear rigged winner for a giveaway."""
+        try:
+            self.cursor.execute("""
+                DELETE FROM giveaway_rigged_winners WHERE giveaway_id = ?
+            """, (giveaway_id,))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error clearing rigged winner: {e}")
             return False
     
     def _row_to_giveaway_dict(self, row) -> Dict[str, Any]:
