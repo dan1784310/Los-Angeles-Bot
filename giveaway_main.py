@@ -437,7 +437,7 @@ class GiveawaySystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        container.add_item(discord.ui.TextDisplay(f"{prize}"))
+        container.add_item(discord.ui.TextDisplay(f"**{prize}**"))
         container.add_item(discord.ui.Separator())
         
         if host:
@@ -499,7 +499,7 @@ class GiveawaySystem(commands.Cog):
                 accent_colour=discord.Color.from_rgb(37, 37, 41)
             )
             
-            container.add_item(discord.ui.TextDisplay(f"{giveaway['prize']}"))
+            container.add_item(discord.ui.TextDisplay(f"**{giveaway['prize']}**"))
             container.add_item(discord.ui.Separator())
             
             if giveaway['host_id']:
@@ -846,7 +846,16 @@ class GiveawaySystem(commands.Cog):
         winner_mentions = [f"<@{w_id}>" for w_id in winners]
         winners_text = ", ".join(winner_mentions)
         
-        await channel.send(f"Congratulations! 🎉 {winners_text} won the giveaway of {giveaway['prize']}!")
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        container.add_item(discord.ui.TextDisplay(f"Congratulations! 🎉 {winners_text} won the giveaway of {giveaway['prize']}!"))
+        
+        view.add_item(container)
+        
+        await channel.send(view=view)
 
     @commands.Cog.listener()
     async def on_ready(self):
