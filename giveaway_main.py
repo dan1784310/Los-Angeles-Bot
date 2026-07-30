@@ -15,8 +15,8 @@ import uuid
 from giveaway_database import db
 from giveaway_views import (
     GiveawayView, EndedGiveawayView,
-    build_entry_confirmation_embed, build_already_entered_embed,
-    build_requirement_failed_embed, build_winner_dm_embed
+    build_entry_confirmation_view, build_already_entered_view,
+    build_requirement_failed_view, build_winner_dm_view
 )
 
 
@@ -97,7 +97,7 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         
         # Parse duration
         try:
@@ -106,8 +106,7 @@ class GiveawaySystem(commands.Cog):
                 raise ValueError("Duration must be positive")
         except ValueError as e:
             await interaction.followup.send(
-                f"❌ Invalid duration format. Use formats like: 10m, 2h, 3d, 1w",
-                ephemeral=True
+                f"❌ Invalid duration format. Use formats like: 10m, 2h, 3d, 1w"
             )
             return
         
@@ -137,8 +136,7 @@ class GiveawaySystem(commands.Cog):
             )
         except Exception as e:
             await interaction.followup.send(
-                f"❌ Error creating giveaway message: {e}",
-                ephemeral=True
+                f"❌ Error creating giveaway message: {e}"
             )
             return
         
@@ -163,8 +161,7 @@ class GiveawaySystem(commands.Cog):
         if not success:
             await giveaway_message.delete()
             await interaction.followup.send(
-                "❌ Error storing giveaway in database.",
-                ephemeral=True
+                "❌ Error storing giveaway in database."
             )
             return
         
@@ -172,8 +169,7 @@ class GiveawaySystem(commands.Cog):
         self._start_giveaway_timer(giveaway_id, end_timestamp)
         
         await interaction.followup.send(
-            f"✅ Giveaway created successfully in {target_channel.mention}!",
-            ephemeral=True
+            f"✅ Giveaway created successfully in {target_channel.mention}!"
         )
     
     # ==========================================
@@ -193,7 +189,7 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         
         # Parse message ID
         try:
@@ -297,7 +293,7 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         
         # Parse message ID
         try:
@@ -356,7 +352,7 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         
         # Parse message ID
         try:
@@ -452,38 +448,72 @@ class GiveawaySystem(commands.Cog):
         required_role: Optional[discord.Role],
         giveaway_id: str
     ) -> discord.Message:
-        """Create the giveaway message using embed for faster response."""
+        """Create the Components V2 giveaway message."""
         
-        # Create embed
-        embed = discord.Embed(
-            title=f"🎉 {prize}",
-            color=discord.Color.purple(),
-            timestamp=datetime.fromtimestamp(end_timestamp)
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(139, 92, 246)
         )
         
-        embed.add_field(name="Hosted by", value=host.mention, inline=True)
-        embed.add_field(name="🏆 Winners", value=str(winners), inline=True)
-        embed.add_field(name="⏰ Ends", value=f"<t:{end_timestamp}:R>", inline=True)
+        # Prize (main title)
+        container.add_item(
+            discord.ui.TextDisplay(f"🎉 {prize}")
+        )
         
+        container.add_item(discord.ui.Separator())
+        
+        # Host
+        container.add_item(
+            discord.ui.TextDisplay(f"Hosted by {host.mention}")
+        )
+        
+        # Winners
+        container.add_item(
+            discord.ui.TextDisplay(f"🏆 Winners: {winners}")
+        )
+        
+        # End time
+        container.add_item(
+            discord.ui.TextDisplay(f"⏰ Ends: <t:{end_timestamp}:R>")
+        )
+        
+        # Custom message if provided
         if message:
-            embed.add_field(name="Message", value=message, inline=False)
+            container.add_item(discord.ui.Separator())
+            container.add_item(
+                discord.ui.TextDisplay(message)
+            )
         
+        # Requirements if provided
         if required_role:
-            embed.add_field(name="📋 Requirement", value=required_role.mention, inline=False)
+            container.add_item(discord.ui.Separator())
+            container.add_item(
+                discord.ui.TextDisplay(f"📋 Requirement: {required_role.mention}")
+            )
         
-        embed.add_field(name="🎟️ Entries", value="0", inline=True)
+        container.add_item(discord.ui.Separator())
         
-        # Create view with button
-        view = discord.ui.View(timeout=None)
-        view.add_item(
+        # Entry count
+        container.add_item(
+            discord.ui.TextDisplay("🎟️ Entries: 0")
+        )
+        
+        container.add_item(discord.ui.Separator())
+        
+        # Enter button with actual giveaway ID
+        button_row = discord.ui.ActionRow()
+        button_row.add_item(
             discord.ui.Button(
                 label="🎉 Enter Giveaway",
                 style=discord.ButtonStyle.green,
                 custom_id=f"giveaway_enter_{giveaway_id}"
             )
         )
+        container.add_item(button_row)
         
-        message = await channel.send(embed=embed, view=view)
+        view.add_item(container)
+        
+        message = await channel.send(view=view)
         return message
     
     async def _update_giveaway_entry_count(self, message_id: int, count: int):
@@ -524,7 +554,7 @@ class GiveawaySystem(commands.Cog):
         # Check if already entered
         if db.has_participant(giveaway_id, interaction.user.id):
             await interaction.response.send_message(
-                embed=build_already_entered_embed(),
+                view=build_already_entered_view(),
                 ephemeral=True
             )
             return
@@ -541,7 +571,7 @@ class GiveawaySystem(commands.Cog):
             
             if not has_bypass and (not required_role or required_role not in interaction.user.roles):
                 await interaction.response.send_message(
-                    embed=build_requirement_failed_embed(
+                    view=build_requirement_failed_view(
                         f"• You must have the {required_role.mention if required_role else 'required role'}."
                     ),
                     ephemeral=True
@@ -553,7 +583,7 @@ class GiveawaySystem(commands.Cog):
         
         # Send confirmation
         await interaction.response.send_message(
-            embed=build_entry_confirmation_embed(
+            view=build_entry_confirmation_view(
                 giveaway['prize'],
                 giveaway['winners_amount'],
                 int(giveaway['end_timestamp'])
