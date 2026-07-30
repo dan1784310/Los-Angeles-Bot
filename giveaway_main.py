@@ -695,7 +695,7 @@ class GiveawaySystem(commands.Cog):
         
         view.add_item(container)
         
-        await interaction.response.edit_message(view=view)
+        await interaction.response.send_message(view=view, ephemeral=True)
 
     async def _handle_leave_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the leave giveaway button click."""
