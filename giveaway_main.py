@@ -444,7 +444,7 @@ class GiveawaySystem(commands.Cog):
         self,
         channel: discord.TextChannel,
         prize: str,
-        host: discord.Member,
+        host: Optional[discord.Member],
         winners: int,
         end_timestamp: int,
         message: Optional[str],
