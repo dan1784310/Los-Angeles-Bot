@@ -25,8 +25,10 @@ from giveaway_views import (
 # ==========================================
 
 GIVEAWAY_WHITELIST_ROLES = [
-    # Example: 123456789012345678
+    1500971862539239536
 ]
+
+GIVEAWAY_REMOVE_PARTICIPANT_ROLE = 1500971862539239536  # Set to role ID (int) to allow removing participants
 
 
 def is_giveaway_admin(user: discord.Member) -> bool:
@@ -35,8 +37,21 @@ def is_giveaway_admin(user: discord.Member) -> bool:
         if role.id in GIVEAWAY_WHITELIST_ROLES:
             return True
     
-    if user.guild_permissions.manage_guild:
+    if user.guild_permissions.administrator:
         return True
+    
+    return False
+
+
+def can_remove_participants(user: discord.Member) -> bool:
+    """Check if user can remove participants from giveaways."""
+    if user.guild_permissions.administrator:
+        return True
+    
+    if GIVEAWAY_REMOVE_PARTICIPANT_ROLE:
+        for role in user.roles:
+            if role.id == GIVEAWAY_REMOVE_PARTICIPANT_ROLE:
+                return True
     
     return False
 
@@ -399,6 +414,9 @@ class GiveawaySystem(commands.Cog):
         elif custom_id.startswith("giveaway_leave_"):
             giveaway_id = custom_id.replace("giveaway_leave_", "")
             await self._handle_leave_giveaway(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_remove_participants_"):
+            giveaway_id = custom_id.replace("giveaway_remove_participants_", "")
+            await self._handle_remove_participants(interaction, giveaway_id)
     
     # ==========================================
     # HELPER METHODS
@@ -649,6 +667,19 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(participants_text))
         
+        # Add remove participant button if user has permission
+        if can_remove_participants(interaction.user):
+            container.add_item(discord.ui.Separator())
+            button_row = discord.ui.ActionRow()
+            button_row.add_item(
+                discord.ui.Button(
+                    label="Remove Participants",
+                    style=discord.ButtonStyle.danger,
+                    custom_id=f"giveaway_remove_participants_{giveaway_id}"
+                )
+            )
+            container.add_item(button_row)
+        
         view.add_item(container)
         
         await interaction.response.send_message(view=view, ephemeral=True)
@@ -684,6 +715,83 @@ class GiveawaySystem(commands.Cog):
         await interaction.response.send_message(
             "✅ You have left this giveaway.",
             ephemeral=True
+        )
+
+    async def _handle_remove_participants(self, interaction: discord.Interaction, giveaway_id: str):
+        """Handle the remove participants button click."""
+        if not can_remove_participants(interaction.user):
+            await interaction.response.send_message(
+                "❌ You don't have permission to remove participants.",
+                ephemeral=True
+            )
+            return
+        
+        giveaway = db.get_giveaway(giveaway_id)
+        if not giveaway:
+            await interaction.response.send_message(
+                "❌ This giveaway no longer exists.",
+                ephemeral=True
+            )
+            return
+        
+        participants = db.get_participants(giveaway_id)
+        
+        if not participants:
+            await interaction.response.send_message(
+                "No participants to remove.",
+                ephemeral=True
+            )
+            return
+        
+        # Create select options for participants
+        select_options = []
+        for participant_id in participants:
+            member = interaction.guild.get_member(participant_id)
+            if member:
+                label = f"{member.name} ({member.id})"
+                value = str(participant_id)
+                select_options.append(
+                    discord.SelectOption(label=label, value=value)
+                )
+        
+        if not select_options:
+            await interaction.response.send_message(
+                "No valid participants to remove.",
+                ephemeral=True
+            )
+            return
+        
+        # Create view with select menu
+        class RemoveParticipantsView(discord.ui.View):
+            def __init__(self, giveaway_id: str, cog):
+                super().__init__(timeout=None)
+                self.giveaway_id = giveaway_id
+                self.cog = cog
+            
+            @discord.ui.select(
+                placeholder="Select participants to remove...",
+                min_values=1,
+                max_values=len(select_options),
+                options=select_options[:25]  # Discord limit is 25
+            )
+            async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+                selected_ids = [int(value) for value in select.values]
+                
+                for user_id in selected_ids:
+                    db.remove_participant(self.giveaway_id, user_id)
+                
+                await self.cog._update_giveaway_entry_count(giveaway['message_id'])
+                
+                await interaction.response.edit_message(
+                    content=f"✅ Removed {len(selected_ids)} participant(s) from the giveaway.",
+                    view=None
+                )
+        
+        view = RemoveParticipantsView(giveaway_id, self)
+        
+        await interaction.response.edit_message(
+            content="Select participants to remove:",
+            view=view
         )
 
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
@@ -851,7 +959,7 @@ class GiveawaySystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        container.add_item(discord.ui.TextDisplay(f"Congratulations! 🎉 {winners_text} won the giveaway of {giveaway['prize']}!"))
+        container.add_item(discord.ui.TextDisplay(f"{winners_text} won **{giveaway['prize']}**"))
         
         view.add_item(container)
         
