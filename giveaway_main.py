@@ -853,46 +853,73 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Create select options for all guild members
-        select_options = []
-        for member in interaction.guild.members:
-            if not member.bot:
-                label = f"{member.name} ({member.id})"
-                value = str(member.id)
-                select_options.append(
-                    discord.SelectOption(label=label, value=value)
-                )
+        # Store the giveaway ID for the modal callback
+        self._pending_add_giveaway = giveaway_id
         
-        if not select_options:
-            await interaction.response.send_message(
-                "No members available to add.",
-                ephemeral=True
+        # Create a modal for searching members
+        class SearchMemberModal(discord.ui.Modal, title="Search Members"):
+            def __init__(self, cog):
+                super().__init__()
+                self.cog = cog
+            
+            search = discord.ui.TextInput(
+                label="Search by username or display name",
+                placeholder="Type a name to search...",
+                required=False,
+                style=discord.TextStyle.short
             )
-            return
+            
+            async def on_submit(self, interaction: discord.Interaction):
+                search_query = self.search.value.lower().strip() if self.search.value else ""
+                
+                # Filter members based on search
+                filtered_members = []
+                for member in interaction.guild.members:
+                    if not member.bot:
+                        if not search_query or search_query in member.name.lower() or search_query in member.display_name.lower():
+                            filtered_members.append(member)
+                
+                if not filtered_members:
+                    await interaction.response.send_message(
+                        "No members found matching your search.",
+                        ephemeral=True
+                    )
+                    return
+                
+                # Create select options with display names
+                select_options = []
+                for member in filtered_members[:25]:
+                    label = member.display_name
+                    value = str(member.id)
+                    select_options.append(
+                        discord.SelectOption(label=label, value=value)
+                    )
+                
+                # Create Components V2 view with select menu
+                view = discord.ui.LayoutView(timeout=None)
+                container = discord.ui.Container(
+                    accent_colour=discord.Color.from_rgb(37, 37, 41)
+                )
+                
+                container.add_item(discord.ui.TextDisplay("Select members to add:"))
+                container.add_item(discord.ui.Separator())
+                
+                select_row = discord.ui.ActionRow()
+                select = discord.ui.Select(
+                    placeholder="Select members to add...",
+                    min_values=1,
+                    max_values=len(select_options),
+                    options=select_options,
+                    custom_id=f"giveaway_add_select_{self.cog._pending_add_giveaway}"
+                )
+                select_row.add_item(select)
+                container.add_item(select_row)
+                
+                view.add_item(container)
+                
+                await interaction.response.edit_message(view=view)
         
-        # Create Components V2 view with select menu
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
-        )
-        
-        container.add_item(discord.ui.TextDisplay("Select members to add:"))
-        container.add_item(discord.ui.Separator())
-        
-        select_row = discord.ui.ActionRow()
-        select = discord.ui.Select(
-            placeholder="Select members to add...",
-            min_values=1,
-            max_values=len(select_options[:25]),
-            options=select_options[:25],
-            custom_id=f"giveaway_add_select_{giveaway_id}"
-        )
-        select_row.add_item(select)
-        container.add_item(select_row)
-        
-        view.add_item(container)
-        
-        await interaction.response.edit_message(view=view)
+        await interaction.response.send_modal(SearchMemberModal(self))
 
     async def _handle_add_participants_select(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the select menu for adding participants."""
