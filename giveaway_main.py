@@ -605,7 +605,7 @@ class GiveawaySystem(commands.Cog):
             
             view.add_item(container)
             
-            await interaction.response.send_message(view=view, ephemeral=True)
+            await interaction.response.edit_message(view=view)
             return
         
         if giveaway['required_role_id']:
@@ -695,7 +695,7 @@ class GiveawaySystem(commands.Cog):
         
         view.add_item(container)
         
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.edit_message(view=view)
 
     async def _handle_leave_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the leave giveaway button click."""
@@ -801,21 +801,21 @@ class GiveawaySystem(commands.Cog):
             result_container.add_item(discord.ui.TextDisplay("✅ Participants Removed"))
             result_container.add_item(discord.ui.Separator())
             result_container.add_item(
-                discord.ui.TextDisplay(f"Successfully removed {len(selected_ids)} participant(s) from the giveaway.")
+                discord.ui.TextDisplay(f"Successfully removed {removed_count} participant(s) from the giveaway.")
             )
             result_view.add_item(result_container)
 
             await select_interaction.response.edit_message(view=result_view)
 
-        select_menu.callback = select_callback
+        user_select.callback = select_callback
 
         action_row = discord.ui.ActionRow()
-        action_row.add_item(select_menu)
+        action_row.add_item(user_select)
         container.add_item(action_row)
 
         view.add_item(container)
         
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.edit_message(view=view)
 
     async def _handle_add_participants(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the add participants button click."""
@@ -885,15 +885,15 @@ class GiveawaySystem(commands.Cog):
 
             await select_interaction.response.edit_message(view=result_view)
 
-        select_menu.callback = select_callback
+        user_select.callback = select_callback
 
         action_row = discord.ui.ActionRow()
-        action_row.add_item(select_menu)
+        action_row.add_item(user_select)
         container.add_item(action_row)
 
         view.add_item(container)
         
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.edit_message(view=view)
 
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
