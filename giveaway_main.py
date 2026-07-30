@@ -431,7 +431,7 @@ class GiveawaySystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(139, 92, 246)
         )
         
-        container.add_item(discord.ui.TextDisplay(f"{prize}"))
+        container.add_item(discord.ui.TextDisplay(f"{prize}", size=discord.ui.TextDisplaySize.large))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
         container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners}"))
@@ -483,11 +483,11 @@ class GiveawaySystem(commands.Cog):
                 accent_colour=discord.Color.from_rgb(139, 92, 246)
             )
             
-            container.add_item(discord.ui.TextDisplay(f"{giveaway['prize']}"))
+            container.add_item(discord.ui.TextDisplay(f"{giveaway['prize']}", size=discord.ui.TextDisplaySize.large))
             container.add_item(discord.ui.Separator())
             container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
-            container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {giveaway['winners_amount']}"))
-            container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{giveaway['end_timestamp']}:R>"))
+            container.add_item(discord.ui.TextDisplay(f"Winners: {giveaway['winners_amount']}"))
+            container.add_item(discord.ui.TextDisplay(f"Ends: <t:{giveaway['end_timestamp']}:R>"))
             
             if giveaway['giveaway_message']:
                 container.add_item(discord.ui.Separator())
