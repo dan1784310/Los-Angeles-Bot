@@ -130,7 +130,7 @@ class GiveawaySystem(commands.Cog):
         
         # Determine channel and host
         target_channel = channel or interaction.channel
-        target_host = host or interaction.user
+        target_host = host  # Only use provided host, don't default
         
         # Generate giveaway ID
         giveaway_id = str(uuid.uuid4())
@@ -161,7 +161,7 @@ class GiveawaySystem(commands.Cog):
             channel_id=target_channel.id,
             message_id=giveaway_message.id,
             creator_id=interaction.user.id,
-            host_id=target_host.id,
+            host_id=target_host.id if target_host else None,
             prize=prize,
             winners_amount=winners,
             end_timestamp=end_timestamp,
@@ -461,7 +461,7 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay(f"**{prize}**"))
         container.add_item(discord.ui.Separator())
         
-        if host:
+        if host is not None:
             container.add_item(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
         
         container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners}"))
@@ -673,15 +673,12 @@ class GiveawaySystem(commands.Cog):
         # Add remove participant button if user has permission
         if can_remove_participants(interaction.user):
             container.add_item(discord.ui.Separator())
-            button_row = discord.ui.ActionRow()
-            button_row.add_item(
-                discord.ui.Button(
-                    label="Remove Participants",
-                    style=discord.ButtonStyle.danger,
-                    custom_id=f"giveaway_remove_participants_{giveaway_id}"
-                )
+            button = discord.ui.Button(
+                label="Remove Participants",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"giveaway_remove_participants_{giveaway_id}"
             )
-            container.add_item(button_row)
+            container.add_item(button)
         
         view.add_item(container)
         
@@ -899,7 +896,7 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.Separator())
         
         winners_text = "\n".join(winner_mentions)
-        container.add_item(discord.ui.TextDisplay(f"🏆 Winners:\n{winners_text}"))
+        container.add_item(discord.ui.TextDisplay(f"🏆 Winners:{winners_text}"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
         
@@ -962,7 +959,7 @@ class GiveawaySystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        container.add_item(discord.ui.TextDisplay("Congratulations!"))
+        container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
         container.add_item(discord.ui.TextDisplay(f"{winners_text} won **{giveaway['prize']}**"))
         
         view.add_item(container)
@@ -984,7 +981,7 @@ class GiveawaySystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        container.add_item(discord.ui.TextDisplay(f"The new winner of the giveaway **{giveaway['prize']}** is {winners_text}. Congrats! 🎉"))
+        container.add_item(discord.ui.TextDisplay(f"The new winner for the giveaway of **{giveaway['prize']}** is {winners_text}. Congrats! 🎉"))
         
         view.add_item(container)
         
