@@ -24,8 +24,6 @@ from giveaway_views import (
 # CONFIGURATION
 # ==========================================
 
-# Role IDs that are whitelisted to use giveaway commands
-# Add your role IDs here
 GIVEAWAY_WHITELIST_ROLES = [
     # Example: 123456789012345678
 ]
@@ -33,12 +31,10 @@ GIVEAWAY_WHITELIST_ROLES = [
 
 def is_giveaway_admin(user: discord.Member) -> bool:
     """Check if user has giveaway admin permissions."""
-    # Check if user has any whitelisted role
     for role in user.roles:
         if role.id in GIVEAWAY_WHITELIST_ROLES:
             return True
     
-    # Check if user has Manage Server permission
     if user.guild_permissions.manage_guild:
         return True
     
@@ -99,26 +95,26 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        await interaction.response.defer()
+        # Always defer initial response as ephemeral to avoid command hanging
+        await interaction.response.defer(ephemeral=True)
         
         # Parse duration
         try:
             duration = self._parse_duration(ends)
-            if duration <= 0:
+            if duration.total_seconds() <= 0:
                 raise ValueError("Duration must be positive")
-        except ValueError as e:
+        except ValueError:
             await interaction.followup.send(
-                f"❌ Invalid duration format. Use formats like: 10m, 2h, 3d, 1w"
+                "❌ Invalid duration format. Use formats like: 10m, 2h, 3d, 1w",
+                ephemeral=True
             )
             return
         
         # Calculate end timestamp
         end_timestamp = (datetime.now() + duration).timestamp()
         
-        # Determine channel
+        # Determine channel and host
         target_channel = channel or interaction.channel
-        
-        # Determine host
         target_host = host or interaction.user
         
         # Generate giveaway ID
@@ -138,7 +134,8 @@ class GiveawaySystem(commands.Cog):
             )
         except Exception as e:
             await interaction.followup.send(
-                f"❌ Error creating giveaway message: {e}"
+                f"❌ Error creating giveaway message: {e}",
+                ephemeral=True
             )
             return
         
@@ -161,9 +158,13 @@ class GiveawaySystem(commands.Cog):
         )
         
         if not success:
-            await giveaway_message.delete()
+            try:
+                await giveaway_message.delete()
+            except Exception:
+                pass
             await interaction.followup.send(
-                "❌ Error storing giveaway in database."
+                "❌ Error storing giveaway in database.",
+                ephemeral=True
             )
             return
         
@@ -171,7 +172,8 @@ class GiveawaySystem(commands.Cog):
         self._start_giveaway_timer(giveaway_id, end_timestamp)
         
         await interaction.followup.send(
-            f"✅ Giveaway created successfully in {target_channel.mention}!"
+            f"✅ Giveaway created successfully in {target_channel.mention}!",
+            ephemeral=True
         )
     
     # ==========================================
@@ -183,7 +185,6 @@ class GiveawaySystem(commands.Cog):
     async def reroll_giveaway(self, interaction: discord.Interaction, message_id: str):
         """Reroll giveaway winners."""
         
-        # Check permissions
         if not is_giveaway_admin(interaction.user):
             await interaction.response.send_message(
                 "❌ You do not have permission to manage giveaways.",
@@ -191,9 +192,8 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
-        # Parse message ID
         try:
             msg_id = int(message_id)
         except ValueError:
@@ -203,48 +203,42 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Get giveaway
         giveaway = db.get_giveaway_by_message_id(msg_id)
         if not giveaway:
             await interaction.followup.send(
-                "❌ Could not find a giveaway with that Message ID.\nPlease provide the Message ID of a valid giveaway.",
+                "❌ Could not find a giveaway with that Message ID.",
                 ephemeral=True
             )
             return
         
-        # Get participants
         participants = db.get_participants(giveaway['giveaway_id'])
         previous_winners = db.get_winners(giveaway['giveaway_id'])
         
         if not participants:
             await interaction.followup.send(
-                "❌ Could not reroll giveaway.\nReason: No valid participants found.",
+                "❌ Could not reroll giveaway. Reason: No valid participants found.",
                 ephemeral=True
             )
             return
         
-        # Select new winners (avoid previous winners if possible)
         available_participants = [p for p in participants if p not in previous_winners]
         
         if len(available_participants) < giveaway['winners_amount']:
-            # Not enough unique participants, use all available
-            new_winners = available_participants
+            new_winners = available_participants if available_participants else random.sample(participants, min(len(participants), giveaway['winners_amount']))
         else:
             new_winners = random.sample(available_participants, giveaway['winners_amount'])
         
         if not new_winners:
             await interaction.followup.send(
-                "❌ Could not reroll giveaway.\nReason: No valid participants found.",
+                "❌ Could not reroll giveaway. Reason: No valid participants found.",
                 ephemeral=True
             )
             return
         
-        # Clear previous winners and add new ones
         db.clear_winners(giveaway['giveaway_id'])
         for winner_id in new_winners:
             db.add_winner(giveaway['giveaway_id'], winner_id)
         
-        # Get channel and message
         channel = self.bot.get_channel(giveaway['channel_id'])
         if not channel:
             await interaction.followup.send(
@@ -262,14 +256,11 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Update message with new winners
         await self._update_giveaway_message_with_winners(message, giveaway, new_winners)
         
-        # Give winner role if configured
         if giveaway['winner_role_id']:
             await self._give_winner_role(channel.guild, new_winners, giveaway['winner_role_id'])
         
-        # DM winners if configured
         if giveaway['winner_dm_message']:
             await self._dm_winners(new_winners, giveaway['prize'], giveaway['winner_dm_message'])
         
@@ -287,7 +278,6 @@ class GiveawaySystem(commands.Cog):
     async def end_giveaway(self, interaction: discord.Interaction, message_id: str):
         """End a giveaway early."""
         
-        # Check permissions
         if not is_giveaway_admin(interaction.user):
             await interaction.response.send_message(
                 "❌ You do not have permission to manage giveaways.",
@@ -295,9 +285,8 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
-        # Parse message ID
         try:
             msg_id = int(message_id)
         except ValueError:
@@ -307,16 +296,14 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Get giveaway
         giveaway = db.get_giveaway_by_message_id(msg_id)
         if not giveaway:
             await interaction.followup.send(
-                "❌ Could not find a giveaway with that Message ID.\nPlease provide the Message ID of a valid giveaway.",
+                "❌ Could not find a giveaway with that Message ID.",
                 ephemeral=True
             )
             return
         
-        # Check if already ended
         if giveaway['status'] == 'ended':
             await interaction.followup.send(
                 "❌ This giveaway has already ended.",
@@ -324,12 +311,10 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Cancel timer if running
         if giveaway['giveaway_id'] in self.active_timers:
             self.active_timers[giveaway['giveaway_id']].cancel()
             del self.active_timers[giveaway['giveaway_id']]
         
-        # End the giveaway
         await self._end_giveaway(giveaway['giveaway_id'])
         
         await interaction.followup.send(
@@ -346,7 +331,6 @@ class GiveawaySystem(commands.Cog):
     async def delete_giveaway(self, interaction: discord.Interaction, message_id: str):
         """Delete a giveaway."""
         
-        # Check permissions
         if not is_giveaway_admin(interaction.user):
             await interaction.response.send_message(
                 "❌ You do not have permission to manage giveaways.",
@@ -354,9 +338,8 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
-        # Parse message ID
         try:
             msg_id = int(message_id)
         except ValueError:
@@ -366,30 +349,26 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Get giveaway
         giveaway = db.get_giveaway_by_message_id(msg_id)
         if not giveaway:
             await interaction.followup.send(
-                "❌ Could not delete giveaway.\nThe provided Message ID is not linked to a giveaway.",
+                "❌ Could not delete giveaway. Message ID not found.",
                 ephemeral=True
             )
             return
         
-        # Cancel timer if running
         if giveaway['giveaway_id'] in self.active_timers:
             self.active_timers[giveaway['giveaway_id']].cancel()
             del self.active_timers[giveaway['giveaway_id']]
         
-        # Delete message if possible
         try:
             channel = self.bot.get_channel(giveaway['channel_id'])
             if channel:
                 message = await channel.fetch_message(giveaway['message_id'])
                 await message.delete()
         except Exception:
-            pass  # Message might already be deleted
+            pass
         
-        # Delete from database
         db.delete_giveaway(giveaway['giveaway_id'])
         
         await interaction.followup.send(
@@ -411,7 +390,6 @@ class GiveawaySystem(commands.Cog):
         if not custom_id:
             return
         
-        # Handle enter giveaway button
         if custom_id.startswith("giveaway_enter_"):
             giveaway_id = custom_id.replace("giveaway_enter_", "")
             await self._handle_enter_giveaway(interaction, giveaway_id)
@@ -425,17 +403,13 @@ class GiveawaySystem(commands.Cog):
         duration_str = duration_str.lower().strip()
         
         if duration_str.endswith('m'):
-            minutes = int(duration_str[:-1])
-            return timedelta(minutes=minutes)
+            return timedelta(minutes=int(duration_str[:-1]))
         elif duration_str.endswith('h'):
-            hours = int(duration_str[:-1])
-            return timedelta(hours=hours)
+            return timedelta(hours=int(duration_str[:-1]))
         elif duration_str.endswith('d'):
-            days = int(duration_str[:-1])
-            return timedelta(days=days)
+            return timedelta(days=int(duration_str[:-1]))
         elif duration_str.endswith('w'):
-            weeks = int(duration_str[:-1])
-            return timedelta(weeks=weeks)
+            return timedelta(weeks=int(duration_str[:-1]))
         else:
             raise ValueError("Invalid duration format")
     
@@ -457,52 +431,24 @@ class GiveawaySystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(139, 92, 246)
         )
         
-        # Prize (main title)
-        container.add_item(
-            discord.ui.TextDisplay(f"🎉 {prize}")
-        )
-        
+        container.add_item(discord.ui.TextDisplay(f"🎉 {prize}"))
         container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
+        container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners}"))
+        container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{end_timestamp}:R>"))
         
-        # Host
-        container.add_item(
-            discord.ui.TextDisplay(f"Hosted by {host.mention}")
-        )
-        
-        # Winners
-        container.add_item(
-            discord.ui.TextDisplay(f"🏆 Winners: {winners}")
-        )
-        
-        # End time
-        container.add_item(
-            discord.ui.TextDisplay(f"⏰ Ends: <t:{end_timestamp}:R>")
-        )
-        
-        # Custom message if provided
         if message:
             container.add_item(discord.ui.Separator())
-            container.add_item(
-                discord.ui.TextDisplay(message)
-            )
+            container.add_item(discord.ui.TextDisplay(message))
         
-        # Requirements if provided
         if required_role:
             container.add_item(discord.ui.Separator())
-            container.add_item(
-                discord.ui.TextDisplay(f"📋 Requirement: {required_role.mention}")
-            )
+            container.add_item(discord.ui.TextDisplay(f"📋 Requirement: {required_role.mention}"))
         
         container.add_item(discord.ui.Separator())
-        
-        # Entry count
-        container.add_item(
-            discord.ui.TextDisplay("🎟️ Entries: 0")
-        )
-        
+        container.add_item(discord.ui.TextDisplay("🎟️ Entries: 0"))
         container.add_item(discord.ui.Separator())
         
-        # Enter button with actual giveaway ID
         button_row = discord.ui.ActionRow()
         button_row.add_item(
             discord.ui.Button(
@@ -512,31 +458,12 @@ class GiveawaySystem(commands.Cog):
             )
         )
         container.add_item(button_row)
-        
         view.add_item(container)
         
-        message = await channel.send(view=view)
-        return message
-    
-    async def _update_giveaway_entry_count(self, message_id: int, count: int):
-        """Update the entry count in the giveaway message."""
-        try:
-            channel = self.bot.get_channel(
-                db.get_giveaway_by_message_id(message_id)['channel_id']
-            )
-            if not channel:
-                return
-            
-            message = await channel.fetch_message(message_id)
-            # Note: Components V2 messages can't be easily edited to update just text
-            # For now, we'll skip this or implement a full message rebuild
-        except Exception as e:
-            print(f"Error updating entry count: {e}")
-    
+        return await channel.send(view=view)
+
     async def _handle_enter_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the enter giveaway button click."""
-        
-        # Get giveaway
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway:
             await interaction.response.send_message(
@@ -545,7 +472,6 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Check if giveaway is active
         if giveaway['status'] != 'active':
             await interaction.response.send_message(
                 "❌ This giveaway has ended.",
@@ -553,7 +479,6 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Check if already entered
         if db.has_participant(giveaway_id, interaction.user.id):
             await interaction.response.send_message(
                 view=build_already_entered_view(),
@@ -561,7 +486,6 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
-        # Check requirements
         if giveaway['required_role_id']:
             required_role = interaction.guild.get_role(giveaway['required_role_id'])
             has_bypass = False
@@ -580,10 +504,8 @@ class GiveawaySystem(commands.Cog):
                 )
                 return
         
-        # Add participant
         db.add_participant(giveaway_id, interaction.user.id)
         
-        # Send confirmation
         await interaction.response.send_message(
             view=build_entry_confirmation_view(
                 giveaway['prize'],
@@ -592,16 +514,12 @@ class GiveawaySystem(commands.Cog):
             ),
             ephemeral=True
         )
-        
-        # Update entry count (would need to rebuild message in V2)
-        # For now, we'll skip this to avoid complexity
-    
+
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
         delay = end_timestamp - datetime.now().timestamp()
         
         if delay <= 0:
-            # Already ended
             asyncio.create_task(self._end_giveaway(giveaway_id))
             return
         
@@ -616,61 +534,46 @@ class GiveawaySystem(commands.Cog):
         
         task = asyncio.create_task(timer_task())
         self.active_timers[giveaway_id] = task
-    
+
     async def _end_giveaway(self, giveaway_id: str):
         """End a giveaway and select winners."""
-        
-        # Get giveaway
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway or giveaway['status'] == 'ended':
             return
         
-        # Update status
         db.update_giveaway_status(giveaway_id, 'ended')
         
-        # Remove from active timers
         if giveaway_id in self.active_timers:
             del self.active_timers[giveaway_id]
         
-        # Get participants
         participants = db.get_participants(giveaway_id)
-        
-        # Get channel and message
         channel = self.bot.get_channel(giveaway['channel_id'])
         if not channel:
-            print(f"Could not find channel for giveaway {giveaway_id}")
             return
         
         try:
             message = await channel.fetch_message(giveaway['message_id'])
         except discord.NotFound:
-            print(f"Could not find message for giveaway {giveaway_id}")
             return
         
-        # Select winners
         if not participants:
-            # No participants
             await self._update_giveaway_message_no_winners(message)
             return
         
         winners_amount = min(giveaway['winners_amount'], len(participants))
         winners = random.sample(participants, winners_amount)
         
-        # Store winners
         for winner_id in winners:
             db.add_winner(giveaway_id, winner_id)
         
-        # Update message with winners
         await self._update_giveaway_message_with_winners(message, giveaway, winners)
         
-        # Give winner role if configured
         if giveaway['winner_role_id']:
             await self._give_winner_role(channel.guild, winners, giveaway['winner_role_id'])
         
-        # DM winners if configured
         if giveaway['winner_dm_message']:
             await self._dm_winners(winners, giveaway['prize'], giveaway['winner_dm_message'])
-    
+
     async def _update_giveaway_message_with_winners(
         self,
         message: discord.Message,
@@ -678,29 +581,16 @@ class GiveawaySystem(commands.Cog):
         winners: List[int]
     ):
         """Update the giveaway message with winners."""
+        winner_mentions = [f"<@{w_id}>" for w_id in winners]
         
-        # Get winner mentions
-        winner_mentions = []
-        for winner_id in winners:
-            member = message.guild.get_member(winner_id)
-            if member:
-                winner_mentions.append(member.mention)
-            else:
-                winner_mentions.append(f"<@{winner_id}>")
-        
-        # Build new embed
         embed = discord.Embed(
             title="🎉 Giveaway Ended!",
             color=discord.Color.green()
         )
         embed.add_field(name="🎁 Prize", value=giveaway['prize'], inline=False)
-        
-        winners_text = "\n".join(winner_mentions)
-        embed.add_field(name="🏆 Winners", value=winners_text, inline=False)
-        
+        embed.add_field(name="🏆 Winners", value="\n".join(winner_mentions), inline=False)
         embed.set_footer(text="Congratulations! 🎉")
         
-        # Create ended view
         view = discord.ui.View(timeout=None)
         view.add_item(
             discord.ui.Button(
@@ -711,10 +601,9 @@ class GiveawaySystem(commands.Cog):
         )
         
         await message.edit(embed=embed, view=view)
-    
+
     async def _update_giveaway_message_no_winners(self, message: discord.Message):
         """Update the giveaway message when no winners."""
-        
         embed = discord.Embed(
             title="❌ Giveaway Ended",
             description="No valid entries were found.",
@@ -731,12 +620,10 @@ class GiveawaySystem(commands.Cog):
         )
         
         await message.edit(embed=embed, view=view)
-    
+
     async def _give_winner_role(self, guild: discord.Guild, winner_ids: List[int], role_id: int):
-        """Give winner role to winners."""
         role = guild.get_role(role_id)
         if not role:
-            print(f"Could not find winner role {role_id}")
             return
         
         for winner_id in winner_ids:
@@ -745,49 +632,32 @@ class GiveawaySystem(commands.Cog):
                 if member:
                     await member.add_roles(role)
             except Exception as e:
-                print(f"Error giving winner role to {winner_id}: {e}")
-    
+                print(f"Error giving winner role: {e}")
+
     async def _dm_winners(self, winner_ids: List[int], prize: str, dm_message: str):
-        """DM winners."""
         for winner_id in winner_ids:
             try:
                 user = self.bot.get_user(winner_id)
                 if user:
                     await user.send(
-                        embed=build_winner_dm_embed(prize, dm_message)
+                        view=build_winner_dm_view(prize, dm_message)
                     )
             except Exception as e:
                 print(f"Error DMing winner {winner_id}: {e}")
-    
-    # ==========================================
-    # STARTUP RESTORATION
-    # ==========================================
-    
+
     @commands.Cog.listener()
     async def on_ready(self):
         """Restore active giveaways on startup."""
-        print("Restoring active giveaways...")
-        
         active_giveaways = db.get_active_giveaways()
-        
         for giveaway in active_giveaways:
             giveaway_id = giveaway['giveaway_id']
             end_timestamp = giveaway['end_timestamp']
             
-            # Check if already ended
             if datetime.now().timestamp() >= end_timestamp:
-                # End it
                 asyncio.create_task(self._end_giveaway(giveaway_id))
             else:
-                # Start timer
                 self._start_giveaway_timer(giveaway_id, end_timestamp)
-        
-        print(f"Restored {len(active_giveaways)} active giveaways.")
 
-
-# ==========================================
-# SETUP FUNCTION
-# ==========================================
 
 async def setup(bot: commands.Bot):
     """Setup the giveaway cog."""
