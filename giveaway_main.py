@@ -132,7 +132,8 @@ class GiveawaySystem(commands.Cog):
                 winners,
                 int(end_timestamp),
                 message,
-                required_role
+                required_role,
+                giveaway_id
             )
         except Exception as e:
             await interaction.followup.send(
@@ -448,7 +449,8 @@ class GiveawaySystem(commands.Cog):
         winners: int,
         end_timestamp: int,
         message: Optional[str],
-        required_role: Optional[discord.Role]
+        required_role: Optional[discord.Role],
+        giveaway_id: str
     ) -> discord.Message:
         """Create the Components V2 giveaway message."""
         
@@ -502,13 +504,13 @@ class GiveawaySystem(commands.Cog):
         
         container.add_item(discord.ui.Separator())
         
-        # Enter button
+        # Enter button with actual giveaway ID
         button_row = discord.ui.ActionRow()
         button_row.add_item(
             discord.ui.Button(
                 label="🎉 Enter Giveaway",
                 style=discord.ButtonStyle.green,
-                custom_id=f"giveaway_enter_temp"
+                custom_id=f"giveaway_enter_{giveaway_id}"
             )
         )
         container.add_item(button_row)
