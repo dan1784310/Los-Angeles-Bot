@@ -452,7 +452,7 @@ class GiveawaySystem(commands.Cog):
         button_row = discord.ui.ActionRow()
         button_row.add_item(
             discord.ui.Button(
-                label="🎉 Enter Giveaway",
+                label="🎉 Enter",
                 style=discord.ButtonStyle.green,
                 custom_id=f"giveaway_enter_{giveaway_id}"
             )
@@ -486,8 +486,8 @@ class GiveawaySystem(commands.Cog):
             container.add_item(discord.ui.TextDisplay(f"{giveaway['prize']}"))
             container.add_item(discord.ui.Separator())
             container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
-            container.add_item(discord.ui.TextDisplay(f"Winners: {giveaway['winners_amount']}"))
-            container.add_item(discord.ui.TextDisplay(f"Ends: <t:{giveaway['end_timestamp']}:R>"))
+            container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {giveaway['winners_amount']}"))
+            container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{giveaway['end_timestamp']}:R>"))
             
             if giveaway['giveaway_message']:
                 container.add_item(discord.ui.Separator())
