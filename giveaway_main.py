@@ -430,6 +430,18 @@ class GiveawaySystem(commands.Cog):
         elif custom_id.startswith("giveaway_add_participants_"):
             giveaway_id = custom_id.replace("giveaway_add_participants_", "")
             await self._handle_add_participants(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_participants_prev_"):
+            # Handle previous page button
+            parts = custom_id.replace("giveaway_participants_prev_", "").split("_")
+            giveaway_id = parts[0]
+            current_page = int(parts[1])
+            await self._handle_participants_button(interaction, giveaway_id, current_page - 1)
+        elif custom_id.startswith("giveaway_participants_next_"):
+            # Handle next page button
+            parts = custom_id.replace("giveaway_participants_next_", "").split("_")
+            giveaway_id = parts[0]
+            current_page = int(parts[1])
+            await self._handle_participants_button(interaction, giveaway_id, current_page + 1)
     
     # ==========================================
     # MESSAGE COMMANDS
@@ -706,7 +718,7 @@ class GiveawaySystem(commands.Cog):
             ephemeral=True
         )
 
-    async def _handle_participants_button(self, interaction: discord.Interaction, giveaway_id: str):
+    async def _handle_participants_button(self, interaction: discord.Interaction, giveaway_id: str, page: int = 1):
         """Handle the participants button click."""
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway:
@@ -725,8 +737,21 @@ class GiveawaySystem(commands.Cog):
             )
             return
         
+        # Pagination settings
+        per_page = 10
+        total_pages = (len(participants) + per_page - 1) // per_page
+        
+        # Ensure page is within bounds
+        page = max(1, min(page, total_pages))
+        
+        # Get participants for current page
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        page_participants = participants[start_idx:end_idx]
+        
+        # Build participant mentions for current page
         participant_mentions = []
-        for participant_id in participants:
+        for participant_id in page_participants:
             member = interaction.guild.get_member(participant_id)
             if member:
                 participant_mentions.append(f"{member.mention} ({member.name})")
@@ -740,9 +765,34 @@ class GiveawaySystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
         
-        container.add_item(discord.ui.TextDisplay(f"Giveaway Participants ({len(participants)})"))
+        container.add_item(discord.ui.TextDisplay(f"Giveaway Participants (Page {page}/{total_pages})"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(participants_text))
+        
+        # Add navigation arrows if there are multiple pages
+        if total_pages > 1:
+            container.add_item(discord.ui.Separator())
+            nav_row = discord.ui.ActionRow()
+            
+            # Left arrow (previous page)
+            left_button = discord.ui.Button(
+                label="◀",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"giveaway_participants_prev_{giveaway_id}_{page}",
+                disabled=(page == 1)
+            )
+            nav_row.add_item(left_button)
+            
+            # Right arrow (next page)
+            right_button = discord.ui.Button(
+                label="▶",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"giveaway_participants_next_{giveaway_id}_{page}",
+                disabled=(page == total_pages)
+            )
+            nav_row.add_item(right_button)
+            
+            container.add_item(nav_row)
         
         # Add remove/add participant buttons if user has permission
         if can_remove_participants(interaction.user):
@@ -766,7 +816,11 @@ class GiveawaySystem(commands.Cog):
         
         view.add_item(container)
         
-        await interaction.response.send_message(view=view, ephemeral=True)
+        # Check if this is an edit or new message
+        if interaction.response.is_done():
+            await interaction.edit_original_response(view=view)
+        else:
+            await interaction.response.send_message(view=view, ephemeral=True)
 
     async def _handle_leave_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the leave giveaway button click."""
