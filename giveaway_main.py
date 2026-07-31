@@ -765,7 +765,7 @@ class GiveawaySystem(commands.Cog):
         end_idx = start_idx + per_page
         page_participants = participants[start_idx:end_idx]
         
-        # Build participant mentions for current page with numbering and spacing
+        # Build participant mentions for current page with numbering
         participant_mentions = []
         for idx, participant_id in enumerate(page_participants, start=start_idx + 1):
             member = interaction.guild.get_member(participant_id)
@@ -774,7 +774,7 @@ class GiveawaySystem(commands.Cog):
             else:
                 participant_mentions.append(f"{idx}. <@{participant_id}>")
         
-        participants_text = "\n\n".join(participant_mentions)
+        participants_text = "\n".join(participant_mentions)
         
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
