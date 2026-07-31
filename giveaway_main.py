@@ -432,15 +432,19 @@ class GiveawaySystem(commands.Cog):
             await self._handle_add_participants(interaction, giveaway_id)
         elif custom_id.startswith("giveaway_participants_prev_"):
             # Handle previous page button
-            parts = custom_id.replace("giveaway_participants_prev_", "").split("_")
-            giveaway_id = parts[0]
-            current_page = int(parts[1])
+            # Format: giveaway_participants_prev_{giveaway_id}_{page}
+            rest = custom_id.replace("giveaway_participants_prev_", "")
+            last_underscore = rest.rfind("_")
+            giveaway_id = rest[:last_underscore]
+            current_page = int(rest[last_underscore + 1:])
             await self._handle_participants_button(interaction, giveaway_id, current_page - 1)
         elif custom_id.startswith("giveaway_participants_next_"):
             # Handle next page button
-            parts = custom_id.replace("giveaway_participants_next_", "").split("_")
-            giveaway_id = parts[0]
-            current_page = int(parts[1])
+            # Format: giveaway_participants_next_{giveaway_id}_{page}
+            rest = custom_id.replace("giveaway_participants_next_", "")
+            last_underscore = rest.rfind("_")
+            giveaway_id = rest[:last_underscore]
+            current_page = int(rest[last_underscore + 1:])
             await self._handle_participants_button(interaction, giveaway_id, current_page + 1)
     
     # ==========================================
@@ -722,19 +726,31 @@ class GiveawaySystem(commands.Cog):
         """Handle the participants button click."""
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway:
-            await interaction.response.send_message(
-                "❌ This giveaway no longer exists.",
-                ephemeral=True
-            )
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "❌ This giveaway no longer exists.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "❌ This giveaway no longer exists.",
+                    ephemeral=True
+                )
             return
         
         participants = db.get_participants(giveaway_id)
         
         if not participants:
-            await interaction.response.send_message(
-                "No one has entered this giveaway yet.",
-                ephemeral=True
-            )
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "No one has entered this giveaway yet.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "No one has entered this giveaway yet.",
+                    ephemeral=True
+                )
             return
         
         # Pagination settings
@@ -749,16 +765,16 @@ class GiveawaySystem(commands.Cog):
         end_idx = start_idx + per_page
         page_participants = participants[start_idx:end_idx]
         
-        # Build participant mentions for current page
+        # Build participant mentions for current page with numbering and spacing
         participant_mentions = []
-        for participant_id in page_participants:
+        for idx, participant_id in enumerate(page_participants, start=start_idx + 1):
             member = interaction.guild.get_member(participant_id)
             if member:
-                participant_mentions.append(f"{member.mention} ({member.name})")
+                participant_mentions.append(f"{idx}. {member.mention}")
             else:
-                participant_mentions.append(f"<@{participant_id}> (Left server)")
+                participant_mentions.append(f"{idx}. <@{participant_id}>")
         
-        participants_text = "\n".join(participant_mentions)
+        participants_text = "\n\n".join(participant_mentions)
         
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
