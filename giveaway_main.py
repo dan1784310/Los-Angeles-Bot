@@ -437,6 +437,7 @@ class GiveawaySystem(commands.Cog):
             last_underscore = rest.rfind("_")
             giveaway_id = rest[:last_underscore]
             current_page = int(rest[last_underscore + 1:])
+            print(f"[PAGINATION] Prev button clicked - giveaway_id: {giveaway_id}, page: {current_page}")
             await self._handle_participants_button(interaction, giveaway_id, current_page - 1)
         elif custom_id.startswith("giveaway_participants_next_"):
             # Handle next page button
@@ -445,6 +446,7 @@ class GiveawaySystem(commands.Cog):
             last_underscore = rest.rfind("_")
             giveaway_id = rest[:last_underscore]
             current_page = int(rest[last_underscore + 1:])
+            print(f"[PAGINATION] Next button clicked - giveaway_id: {giveaway_id}, page: {current_page}")
             await self._handle_participants_button(interaction, giveaway_id, current_page + 1)
     
     # ==========================================
@@ -724,8 +726,11 @@ class GiveawaySystem(commands.Cog):
 
     async def _handle_participants_button(self, interaction: discord.Interaction, giveaway_id: str, page: int = 1):
         """Handle the participants button click."""
+        print(f"[PAGINATION] _handle_participants_button called - giveaway_id: {giveaway_id}, page: {page}")
         giveaway = db.get_giveaway(giveaway_id)
+        print(f"[PAGINATION] Giveaway found: {giveaway is not None}")
         if not giveaway:
+            print(f"[PAGINATION] Giveaway not found in database")
             if interaction.response.is_done():
                 await interaction.followup.send(
                     "❌ This giveaway no longer exists.",
