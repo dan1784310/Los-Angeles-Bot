@@ -628,3 +628,26 @@ class RemoveUserModal(ui.Modal, title='Remove User from Ticket'):
             await self.on_submit_callback(interaction, user_id)
         except ValueError:
             await interaction.response.send_message('Invalid user ID. Please enter a valid number.', ephemeral=True)
+
+
+# ==========================================
+# Ticket Issue Modal
+# ==========================================
+
+class TicketIssueModal(ui.Modal, title='What seems to be the issue?'):
+    """Modal shown right after a user picks a category, asking them to describe their issue."""
+
+    issue = ui.TextInput(
+        label='Describe your issue',
+        placeholder='Write what you need help with...',
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=1000
+    )
+
+    def __init__(self, on_submit: Callable):
+        super().__init__()
+        self.on_submit_callback = on_submit
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.on_submit_callback(interaction, self.issue.value)

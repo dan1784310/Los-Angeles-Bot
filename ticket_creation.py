@@ -9,7 +9,7 @@ from typing import Optional, List
 import asyncio
 
 from ticket_database import db
-from ticket_views import TicketManagementView, AddUserModal, RemoveUserModal
+from ticket_views import TicketManagementView, AddUserModal, RemoveUserModal, TicketIssueModal
 
 # Only members with this role may claim tickets or add/remove users on a ticket.
 TICKET_MANAGER_ROLE_ID = 1527374021572956291
@@ -36,6 +36,12 @@ async def _reject_missing_role(interaction: discord.Interaction):
 async def on_category_select(interaction: discord.Interaction, category_id: str, guild_id: int, db_instance):
     """
     Handle category selection from dropdown.
+
+    Runs the pre-flight checks (config present, not blacklisted, no
+    duplicate ticket, category exists) and, if they all pass, opens a
+    modal asking the user to describe their issue. The actual ticket
+    channel isn't created until that modal is submitted — see
+    create_ticket_from_issue.
     
     Args:
         interaction: The interaction object
@@ -44,12 +50,10 @@ async def on_category_select(interaction: discord.Interaction, category_id: str,
         db_instance: Database instance
     """
     
-    await interaction.response.defer()
-    
     # Get guild settings
     settings = db_instance.get_guild_settings(guild_id)
     if not settings:
-        await interaction.followup.send("❌ Ticket system not configured.", ephemeral=True)
+        await interaction.response.send_message("❌ Ticket system not configured.", ephemeral=True)
         return
 
     # Check blacklist — members with a blacklisted role can't open tickets
@@ -57,7 +61,7 @@ async def on_category_select(interaction: discord.Interaction, category_id: str,
     if blacklisted_role_ids and isinstance(interaction.user, discord.Member):
         member_role_ids = {role.id for role in interaction.user.roles}
         if member_role_ids.intersection(blacklisted_role_ids):
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 "❌ You are blacklisted from opening a ticket!",
                 ephemeral=True
             )
@@ -66,7 +70,7 @@ async def on_category_select(interaction: discord.Interaction, category_id: str,
     # Check for duplicate tickets
     user_open_tickets = db_instance.get_user_open_tickets(guild_id, interaction.user.id)
     if user_open_tickets:
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"❌ You already have an open ticket. Please close it before creating a new one.",
             ephemeral=True
         )
@@ -78,12 +82,40 @@ async def on_category_select(interaction: discord.Interaction, category_id: str,
     category = next((cat for cat in categories if cat['id'] == category_id_int), None)
     
     if not category:
-        await interaction.followup.send("❌ Category not found.", ephemeral=True)
+        await interaction.response.send_message("❌ Category not found.", ephemeral=True)
         return
-    
+
+    # Ask the user to describe their issue before the ticket is created
+    await interaction.response.send_modal(
+        TicketIssueModal(
+            lambda modal_interaction, issue_text: create_ticket_from_issue(
+                modal_interaction, guild_id, db_instance, settings, category_id_int, category, issue_text
+            )
+        )
+    )
+
+
+async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: int, db_instance,
+                                    settings: dict, category_id_int: int, category: dict, issue_text: str):
+    """
+    Create the ticket channel once the user has submitted the "What seems
+    to be the issue?" modal.
+
+    Args:
+        interaction: The modal submission interaction
+        guild_id: The guild ID
+        db_instance: Database instance
+        settings: Guild settings fetched during category selection
+        category_id_int: The selected category ID
+        category: The category info
+        issue_text: What the user wrote in the modal
+    """
+
+    await interaction.response.defer(ephemeral=True)
+
     # Get ticket number
     ticket_number = settings.get('ticket_counter', 0) + 1
-    
+
     # Create ticket channel
     try:
         ticket_channel = await create_ticket_channel(
@@ -107,7 +139,8 @@ async def on_category_select(interaction: discord.Interaction, category_id: str,
             ticket_channel,
             interaction.user,
             category,
-            ticket_number
+            ticket_number,
+            issue_text
         )
         
         await interaction.followup.send(
@@ -179,7 +212,7 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
 
 
 async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member, 
-                            category: dict, ticket_number: int):
+                            category: dict, ticket_number: int, issue_text: Optional[str] = None):
     """
     Send the welcome message in a new ticket channel.
     
@@ -188,8 +221,22 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
         user: The user who created the ticket
         category: The category information
         ticket_number: The ticket number
+        issue_text: What the user described in the "What seems to be the
+            issue?" modal, if any. Posted as a Components V2 message.
     """
-    
+
+    # Post what the user described as a Components V2 message
+    if issue_text:
+        issue_view = discord.ui.LayoutView(timeout=None)
+        issue_container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        )
+        issue_container.add_item(
+            discord.ui.TextDisplay(f"**{user.display_name}**: {issue_text}")
+        )
+        issue_view.add_item(issue_container)
+        await channel.send(view=issue_view)
+
     # Create embed
     embed = discord.Embed(
         title=category.get('title', category['name']),
