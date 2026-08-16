@@ -11,6 +11,27 @@ import asyncio
 from ticket_database import db
 from ticket_views import TicketManagementView, AddUserModal, RemoveUserModal
 
+# Only members with this role may claim tickets or add/remove users on a ticket.
+TICKET_MANAGER_ROLE_ID = 1527374021572956291
+
+
+def _has_ticket_manager_role(interaction: discord.Interaction) -> bool:
+    """Check whether the interacting member has the ticket manager role."""
+
+    user = interaction.user
+    if not isinstance(user, discord.Member):
+        return False
+    return any(role.id == TICKET_MANAGER_ROLE_ID for role in user.roles)
+
+
+async def _reject_missing_role(interaction: discord.Interaction):
+    """Send the standard ephemeral error for missing the ticket manager role."""
+
+    await interaction.response.send_message(
+        "❌ You don't have permission to do that.",
+        ephemeral=True
+    )
+
 
 async def on_category_select(interaction: discord.Interaction, category_id: str, guild_id: int, db_instance):
     """
@@ -228,6 +249,10 @@ async def claim_ticket(interaction: discord.Interaction, channel_id: int, creato
         creator: The ticket creator
     """
     
+    if not _has_ticket_manager_role(interaction):
+        await _reject_missing_role(interaction)
+        return
+
     channel = interaction.guild.get_channel(channel_id)
     if not channel:
         await interaction.response.send_message("❌ Ticket channel not found.", ephemeral=True)
@@ -254,6 +279,10 @@ async def add_user_to_ticket(interaction: discord.Interaction, channel_id: int):
         channel_id: The ticket channel ID
     """
     
+    if not _has_ticket_manager_role(interaction):
+        await _reject_missing_role(interaction)
+        return
+
     await interaction.response.send_modal(
         AddUserModal(lambda i, user_id: on_add_user_submit(i, channel_id, user_id))
     )
@@ -303,6 +332,10 @@ async def remove_user_from_ticket(interaction: discord.Interaction, channel_id: 
         channel_id: The ticket channel ID
     """
     
+    if not _has_ticket_manager_role(interaction):
+        await _reject_missing_role(interaction)
+        return
+
     await interaction.response.send_modal(
         RemoveUserModal(lambda i, user_id: on_remove_user_submit(i, channel_id, user_id))
     )
