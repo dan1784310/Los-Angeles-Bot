@@ -222,25 +222,19 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
         category: The category information
         ticket_number: The ticket number
         issue_text: What the user described in the "What seems to be the
-            issue?" modal, if any. Posted as a Components V2 message.
+            issue?" modal, if any. Appended under the category description.
     """
 
-    # Post what the user described as a Components V2 message
+    # Build the description, appending the user's inquiry underneath
+    # whatever text was configured for this category.
+    description = category.get('description', '')
     if issue_text:
-        issue_view = discord.ui.LayoutView(timeout=None)
-        issue_container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
-        )
-        issue_container.add_item(
-            discord.ui.TextDisplay(f"**{user.display_name}**: {issue_text}")
-        )
-        issue_view.add_item(issue_container)
-        await channel.send(view=issue_view)
+        description = f"{description}\n\nInquiry:\n{user.display_name}: {issue_text}"
 
     # Create embed
     embed = discord.Embed(
         title=category.get('title', category['name']),
-        description=category.get('description', ''),
+        description=description,
         color=discord.Color.from_rgb(37, 37, 41)
     )
     
