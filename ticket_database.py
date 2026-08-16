@@ -83,12 +83,20 @@ class TicketDatabase:
                     category_id INTEGER,
                     ticket_number INTEGER,
                     status TEXT DEFAULT 'open',
+                    claimed_by INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     closed_at TIMESTAMP,
                     FOREIGN KEY (guild_id) REFERENCES guild_settings(guild_id),
                     FOREIGN KEY (category_id) REFERENCES ticket_categories(id)
                 )
             """)
+
+            # Migration: add claimed_by to a pre-existing database that
+            # was created before this column existed.
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN claimed_by INTEGER")
+            except Exception:
+                pass  # Column already exists
             
             # Ticket panel messages table (for updating panels)
             cursor.execute("""
@@ -250,6 +258,7 @@ class TicketDatabase:
                         'category_id': row['category_id'],
                         'ticket_number': row['ticket_number'],
                         'status': row['status'],
+                        'claimed_by': row['claimed_by'],
                         'created_at': row['created_at'],
                         'closed_at': row['closed_at']
                     }
@@ -257,6 +266,20 @@ class TicketDatabase:
         except Exception as e:
             print(f"Error getting ticket by channel: {e}")
             return None
+
+    def set_ticket_claim(self, channel_id: int, user_id: Optional[int]) -> bool:
+        """Set (or clear, with user_id=None) who has claimed a ticket."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE tickets SET claimed_by = ?
+                    WHERE channel_id = ?
+                """, (user_id, channel_id))
+                return True
+        except Exception as e:
+            print(f"Error setting ticket claim: {e}")
+            return False
     
     def close_ticket(self, channel_id: int) -> bool:
         """Mark a ticket as closed."""

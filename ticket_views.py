@@ -296,32 +296,67 @@ class CategoryConfigView(ui.View):
 # Ticket Management Buttons
 # ==========================================
 
-class TicketManagementView(ui.View):
-    """View for ticket management buttons."""
-    
-    def __init__(self, ticket_channel_id: int, 
-                 on_close: Callable,
-                 on_claim: Optional[Callable] = None,
-                 on_add_user: Optional[Callable] = None,
-                 on_remove_user: Optional[Callable] = None,
-                 on_transcript: Optional[Callable] = None):
-        super().__init__(timeout=None)
-        self.ticket_channel_id = ticket_channel_id
-        self.on_close = on_close
-        self.on_claim = on_claim
-        self.on_add_user = on_add_user
-        self.on_remove_user = on_remove_user
-        self.on_transcript = on_transcript
-        
-        self.add_item(CloseTicketButton(self.on_close))
-        if on_claim:
-            self.add_item(ClaimTicketButton(self.on_claim))
-        if on_add_user:
-            self.add_item(AddUserButton(self.on_add_user))
-        if on_remove_user:
-            self.add_item(RemoveUserButton(self.on_remove_user))
-        if on_transcript:
-            self.add_item(TranscriptButton(self.on_transcript))
+def build_ticket_management_view(
+    config_title: Optional[str],
+    config_description: Optional[str],
+    issue_text: Optional[str],
+    ticket_number: int,
+    creator_mention: str,
+    category_name: str,
+    on_close: Callable,
+    on_claim: Optional[Callable] = None,
+    on_add_user: Optional[Callable] = None,
+    on_remove_user: Optional[Callable] = None,
+    on_transcript: Optional[Callable] = None,
+    accent_colour: Optional[discord.Colour] = None
+) -> discord.ui.LayoutView:
+    """
+    Build the ticket management message using Components V2. Three
+    sections (configured text / inquiry / ticket info), each separated
+    by a Separator, with the management buttons in a row underneath
+    the last separator. Mentions/pings are NOT included here — send
+    those as a plain message alongside this one.
+    """
+
+    view = discord.ui.LayoutView(timeout=None)
+    container = discord.ui.Container(accent_colour=accent_colour)
+
+    # Section 1: configured category text
+    config_text = config_description or ''
+    if config_title:
+        config_text = f"**{config_title}**\n{config_text}" if config_text else f"**{config_title}**"
+    container.add_item(discord.ui.TextDisplay(config_text))
+
+    # Section 2: the user's inquiry
+    if issue_text:
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"Inquiry:\n{issue_text}"))
+
+    # Section 3: ticket info
+    container.add_item(discord.ui.Separator())
+    info_text = (
+        f"**Ticket Number:** #{ticket_number:04d}\n"
+        f"**Created By:** {creator_mention}\n"
+        f"**Category:** {category_name}"
+    )
+    container.add_item(discord.ui.TextDisplay(info_text))
+
+    # Buttons
+    container.add_item(discord.ui.Separator())
+    button_row = discord.ui.ActionRow()
+    button_row.add_item(CloseTicketButton(on_close))
+    if on_claim:
+        button_row.add_item(ClaimTicketButton(on_claim))
+    if on_add_user:
+        button_row.add_item(AddUserButton(on_add_user))
+    if on_remove_user:
+        button_row.add_item(RemoveUserButton(on_remove_user))
+    if on_transcript:
+        button_row.add_item(TranscriptButton(on_transcript))
+    container.add_item(button_row)
+
+    view.add_item(container)
+    return view
 
 
 class CloseTicketButton(ui.Button):
@@ -382,6 +417,29 @@ class TranscriptButton(ui.Button):
     async def callback(self, interaction: discord.Interaction):
         if self.callback_func:
             await self.callback_func(interaction)
+
+
+class UnclaimButton(ui.Button):
+    """Unclaim button. Only ever shown to the current claimant, via an ephemeral message."""
+
+    def __init__(self, callback: Callable):
+        super().__init__(label='Unclaim Ticket', style=discord.ButtonStyle.danger, custom_id='unclaim_ticket')
+        self.callback_func = callback
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.callback_func:
+            await self.callback_func(interaction)
+
+
+class UnclaimView(ui.View):
+    """Ephemeral view with a single Unclaim button, shown only to the claimant."""
+
+    def __init__(self, on_unclaim: Callable):
+        super().__init__(timeout=None)
+        self.add_item(UnclaimButton(on_unclaim))
+
+
+
 
 
 # ==========================================
