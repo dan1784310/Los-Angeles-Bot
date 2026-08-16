@@ -1047,7 +1047,7 @@ async def inputresults(
 
 
 # ==========================================
-# REGISTER SESSION COMMANDS
+# REGISTER SESSIONS COMMANDS
 # ==========================================
 
 setup_session_commands(bot, has_role_or_higher)
