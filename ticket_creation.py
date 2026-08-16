@@ -229,7 +229,7 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
     # whatever text was configured for this category.
     description = category.get('description', '')
     if issue_text:
-        description = f"{description}\n\nInquiry:\n{user.display_name}: {issue_text}"
+        description = f"{description}\n\n> **Inquiry**\n> {issue_text}"
 
     # Create embed
     embed = discord.Embed(
@@ -252,7 +252,7 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
         on_transcript=lambda i: generate_transcript(i, channel.id)
     )
     
-    await channel.send(content=f"{user.mention}", embed=embed, view=view)
+    await channel.send(content=f"{user.mention}, <@&{TICKET_MANAGER_ROLE_ID}>", embed=embed, view=view)
 
 
 async def close_ticket(interaction: discord.Interaction, channel_id: int):
