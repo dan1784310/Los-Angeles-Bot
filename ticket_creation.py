@@ -229,7 +229,7 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
     # whatever text was configured for this category.
     description = category.get('description', '')
     if issue_text:
-        description = f"{description}\n\n ## Inquiry:\n> **{issue_text}**"
+        description = f"{description}\n\n## Inquiry:\n> **{issue_text}**"
 
     # Create embed
     embed = discord.Embed(
