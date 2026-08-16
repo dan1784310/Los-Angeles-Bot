@@ -215,6 +215,12 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
                             category: dict, ticket_number: int, issue_text: Optional[str] = None):
     """
     Send the welcome message in a new ticket channel.
+
+    Sends three stacked embeds (same accent colour) in one message:
+    1. The category's configured title/description.
+    2. The user's inquiry text.
+    3. Ticket number / created by / category fields, with the
+       management buttons underneath.
     
     Args:
         channel: The ticket channel
@@ -222,25 +228,34 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
         category: The category information
         ticket_number: The ticket number
         issue_text: What the user described in the "What seems to be the
-            issue?" modal, if any. Appended under the category description.
+            issue?" modal, if any.
     """
 
-    # Build the description, appending the user's inquiry underneath
-    # whatever text was configured for this category.
-    description = category.get('description', '')
-    if issue_text:
-        description = f"{description}\n## Inquiry:\n> **{issue_text}**\n"
+    accent_color = discord.Color.from_rgb(37, 37, 41)
 
-    # Create embed
-    embed = discord.Embed(
+    # Embed 1: the configured category text
+    config_embed = discord.Embed(
         title=category.get('title', category['name']),
-        description=description,
-        color=discord.Color.from_rgb(37, 37, 41)
+        description=category.get('description', ''),
+        color=accent_color
     )
-    
-    embed.add_field(name="Ticket Number", value=f"#{ticket_number:04d}", inline=True)
-    embed.add_field(name="Created By", value=user.mention, inline=True)
-    embed.add_field(name="Category", value=category['name'], inline=True)
+
+    embeds = [config_embed]
+
+    # Embed 2: the user's inquiry
+    if issue_text:
+        inquiry_embed = discord.Embed(
+            description=f"Inquiry:\n{issue_text}",
+            color=accent_color
+        )
+        embeds.append(inquiry_embed)
+
+    # Embed 3: ticket info fields
+    info_embed = discord.Embed(color=accent_color)
+    info_embed.add_field(name="Ticket Number", value=f"#{ticket_number:04d}", inline=True)
+    info_embed.add_field(name="Created By", value=user.mention, inline=True)
+    info_embed.add_field(name="Category", value=category['name'], inline=True)
+    embeds.append(info_embed)
     
     # Create management view
     view = TicketManagementView(
@@ -252,7 +267,7 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
         on_transcript=lambda i: generate_transcript(i, channel.id)
     )
     
-    await channel.send(content=f"{user.mention}, <@&{TICKET_MANAGER_ROLE_ID}>", embed=embed, view=view)
+    await channel.send(content=f"{user.mention}, <@&{TICKET_MANAGER_ROLE_ID}>", embeds=embeds, view=view)
 
 
 async def close_ticket(interaction: discord.Interaction, channel_id: int):
