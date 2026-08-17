@@ -30,8 +30,6 @@ GIVEAWAY_WHITELIST_ROLES = [
 
 GIVEAWAY_REMOVE_PARTICIPANT_ROLE = 1532456182147711108  # Set to role ID (int) to allow removing participants
 
-# Shown top-right on giveaway and giveaway-ended panels
-GIVEAWAY_IMAGE_URL = "https://cdn.discordapp.com/attachments/1528467096416026745/1538564999385977066/New_Project621.png?ex=6a83cc91&is=6a827b11&hm=baf39946755df979bdd683fb21328cf386f11060f2b97031ab1d8ad1b3c3aa89&"
 GIVEAWAY_ACCENT_COLOUR = discord.Color.orange()
 
 # User IDs allowed to use the !rg (rigged winner) command
@@ -554,20 +552,14 @@ class GiveawaySystem(commands.Cog):
             accent_colour=GIVEAWAY_ACCENT_COLOUR
         )
         
-        # Bundle the intro lines into one Section (up to 3 TextDisplay
-        # children) so the Thumbnail scales up to match — taller and
-        # proportionally wider than a single title line would give it.
-        header_texts = [discord.ui.TextDisplay(f"## {prize}")]
+        container.add_item(discord.ui.TextDisplay(f"## {prize}"))
+        container.add_item(discord.ui.Separator())
+        
         if host is not None:
-            header_texts.append(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
-        header_texts.append(discord.ui.TextDisplay(
-            f"🏆 Winners: {winners}\n⏰ Ends: <t:{end_timestamp}:R>"
-        ))
-        header_section = discord.ui.Section(
-            *header_texts,
-            accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
-        )
-        container.add_item(header_section)
+            container.add_item(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
+        
+        container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners}"))
+        container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{end_timestamp}:R>"))
         
         if message:
             container.add_item(discord.ui.Separator())
@@ -622,17 +614,14 @@ class GiveawaySystem(commands.Cog):
                 accent_colour=GIVEAWAY_ACCENT_COLOUR
             )
             
-            header_texts = [discord.ui.TextDisplay(f"## {giveaway['prize']}")]
+            container.add_item(discord.ui.TextDisplay(f"## {giveaway['prize']}"))
+            container.add_item(discord.ui.Separator())
+            
             if giveaway['host_id']:
-                header_texts.append(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
-            header_texts.append(discord.ui.TextDisplay(
-                f"🏆 Winners: {giveaway['winners_amount']}\n⏰ Ends: <t:{int(float(giveaway['end_timestamp']))}:R>"
-            ))
-            header_section = discord.ui.Section(
-                *header_texts,
-                accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
-            )
-            container.add_item(header_section)
+                container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
+            
+            container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {giveaway['winners_amount']}"))
+            container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{int(float(giveaway['end_timestamp']))}:R>"))
             
             if giveaway['giveaway_message']:
                 container.add_item(discord.ui.Separator())
@@ -1157,14 +1146,13 @@ class GiveawaySystem(commands.Cog):
             accent_colour=GIVEAWAY_ACCENT_COLOUR
         )
         
+        container.add_item(discord.ui.TextDisplay("🎉 Giveaway Ended!"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"🎁 Prize: **{giveaway['prize']}**"))
+        container.add_item(discord.ui.Separator())
+        
         winners_text = "\n".join(winner_mentions)
-        header_section = discord.ui.Section(
-            discord.ui.TextDisplay("🎉 Giveaway Ended!"),
-            discord.ui.TextDisplay(f"🎁 Prize: **{giveaway['prize']}**"),
-            discord.ui.TextDisplay(f"🏆 Winners: {winners_text}"),
-            accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
-        )
-        container.add_item(header_section)
+        container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners_text}"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
         
@@ -1179,12 +1167,9 @@ class GiveawaySystem(commands.Cog):
             accent_colour=GIVEAWAY_ACCENT_COLOUR
         )
         
-        header_section = discord.ui.Section(
-            discord.ui.TextDisplay("❌ Giveaway Ended"),
-            discord.ui.TextDisplay("No valid entries were found."),
-            accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
-        )
-        container.add_item(header_section)
+        container.add_item(discord.ui.TextDisplay("❌ Giveaway Ended"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay("No valid entries were found."))
         
         view.add_item(container)
         
