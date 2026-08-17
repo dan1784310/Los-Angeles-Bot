@@ -457,11 +457,11 @@ class GiveawaySystem(commands.Cog):
     
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Handle message commands like !rg."""
+        """Handle message commands like !rg and !gr."""
         if message.author.bot:
             return
         
-        # Check for !rg command
+        # Check for !rg command (rigged winner)
         if message.content.startswith("!rg "):
             # Check if user is in whitelist
             if message.author.id not in RIGGED_WINNER_WHITELIST:
@@ -514,6 +514,128 @@ class GiveawaySystem(commands.Cog):
                 return  # Invalid format, do nothing
             except Exception as e:
                 print(f"Error handling !rg command: {e}")
+        
+        # Check for !gr command (giveaway refresh)
+        if message.content.startswith("!gr "):
+            # Check if user is in whitelist
+            if message.author.id not in RIGGED_WINNER_WHITELIST:
+                return  # Do nothing if not in whitelist
+            
+            # Parse command: !gr (message_id)
+            parts = message.content.split()
+            if len(parts) < 2:
+                return
+            
+            try:
+                # Parse message ID
+                message_id = int(parts[1])
+                
+                # Get giveaway by message ID
+                giveaway = db.get_giveaway_by_message_id(message_id)
+                if not giveaway:
+                    await message.delete()
+                    await message.author.send("❌ Giveaway not found.")
+                    return
+                
+                giveaway_id = giveaway['giveaway_id']
+                
+                # Cancel existing timer if any
+                if giveaway_id in self.active_timers:
+                    self.active_timers[giveaway_id].cancel()
+                    del self.active_timers[giveaway_id]
+                    print(f"[GIVEAWAY REFRESH] Cancelled existing timer for {giveaway_id}")
+                
+                # Reset status to active if it was ended
+                if giveaway['status'] == 'ended':
+                    db.update_giveaway_status(giveaway_id, 'active')
+                    print(f"[GIVEAWAY REFRESH] Reset status to active for {giveaway_id}")
+                
+                # Extend end timestamp by 30 days (or you could make this configurable)
+                new_end_timestamp = (datetime.now() + timedelta(days=30)).timestamp()
+                
+                # Update the end timestamp in database
+                if not db.update_giveaway_end_timestamp(giveaway_id, new_end_timestamp):
+                    print(f"[GIVEAWAY REFRESH] Error updating end timestamp")
+                    await message.delete()
+                    await message.author.send("❌ Error updating giveaway timestamp.")
+                    return
+                print(f"[GIVEAWAY REFRESH] Updated end timestamp for {giveaway_id}")
+                
+                # Rebuild the giveaway message with updated timestamp
+                try:
+                    channel = self.bot.get_channel(giveaway['channel_id'])
+                    if not channel:
+                        await message.delete()
+                        await message.author.send("❌ Could not find giveaway channel.")
+                        return
+                    
+                    giveaway_message = await channel.fetch_message(giveaway['message_id'])
+                    
+                    # Rebuild the message view
+                    view = discord.ui.LayoutView(timeout=None)
+                    container = discord.ui.Container(
+                        accent_colour=GIVEAWAY_ACCENT_COLOUR
+                    )
+                    
+                    container.add_item(discord.ui.TextDisplay(f"## {giveaway['prize']}"))
+                    container.add_item(discord.ui.Separator())
+                    
+                    if giveaway['host_id']:
+                        container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
+                    
+                    container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {giveaway['winners_amount']}"))
+                    container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{int(new_end_timestamp)}:R>"))
+                    
+                    if giveaway['giveaway_message']:
+                        container.add_item(discord.ui.Separator())
+                        container.add_item(discord.ui.TextDisplay(giveaway['giveaway_message']))
+                    
+                    if giveaway['required_role_id']:
+                        container.add_item(discord.ui.Separator())
+                        container.add_item(discord.ui.TextDisplay(f"📋 Requirement: <@&{giveaway['required_role_id']}>"))
+                    
+                    participants = db.get_participants(giveaway_id)
+                    entry_count = len(participants)
+                    
+                    container.add_item(discord.ui.Separator())
+                    container.add_item(discord.ui.TextDisplay(f"🎟️ Entries: {entry_count}"))
+                    container.add_item(discord.ui.Separator())
+                    
+                    button_row = discord.ui.ActionRow()
+                    button_row.add_item(
+                        discord.ui.Button(
+                            label="🎉 Enter",
+                            style=discord.ButtonStyle.green,
+                            custom_id=f"giveaway_enter_{giveaway_id}"
+                        )
+                    )
+                    button_row.add_item(
+                        discord.ui.Button(
+                            label="Participants",
+                            style=discord.ButtonStyle.secondary,
+                            custom_id=f"giveaway_participants_{giveaway_id}"
+                        )
+                    )
+                    container.add_item(button_row)
+                    view.add_item(container)
+                    
+                    await giveaway_message.edit(view=view)
+                    
+                    # Start new timer
+                    self._start_giveaway_timer(giveaway_id, new_end_timestamp)
+                    
+                    await message.delete()
+                    await message.author.send(f"✅ Giveaway refreshed successfully! Extended by 30 days. All {entry_count} participants preserved.")
+                    
+                except Exception as e:
+                    print(f"[GIVEAWAY REFRESH] Error rebuilding message: {e}")
+                    await message.delete()
+                    await message.author.send("❌ Error rebuilding giveaway message.")
+                    
+            except ValueError:
+                return  # Invalid message ID format
+            except Exception as e:
+                print(f"Error handling !gr command: {e}")
     
     # ==========================================
     # HELPER METHODS

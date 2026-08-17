@@ -199,6 +199,18 @@ class GiveawayDatabase:
             print(f"Error updating giveaway message ID: {e}")
             return False
     
+    def update_giveaway_end_timestamp(self, giveaway_id: str, end_timestamp: float) -> bool:
+        """Update giveaway end timestamp."""
+        try:
+            self.cursor.execute("""
+                UPDATE giveaways SET end_timestamp = ? WHERE giveaway_id = ?
+            """, (end_timestamp, giveaway_id))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error updating giveaway end timestamp: {e}")
+            return False
+    
     def delete_giveaway(self, giveaway_id: str) -> bool:
         """Delete a giveaway and its participants."""
         try:

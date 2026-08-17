@@ -12,7 +12,7 @@ import asyncio
 from ticket_database import db
 from ticket_views import (
     ChannelSelectView, RoleSelectView, BannerURLModal, TextBlockModal,
-    CategoryInputModal, BottomBannerModal, CategoryConfigModal,
+    CategoryInputModal, CategoryConfigModal,
     NavigationButtons, PanelPreviewView, CategoryConfigView, ModalStepView,
     BlacklistRoleSelectView
 )
@@ -45,6 +45,19 @@ class TicketSetup(commands.Cog):
                 color=discord.Color.blue()
             )
             view = discord.ui.View(timeout=None)
+
+            # Quick Edit Button
+            edit_button = discord.ui.Button(
+                label="✏️ Quick Edit",
+                style=discord.ButtonStyle.primary,
+                custom_id="quick_edit_setup"
+            )
+
+            async def on_quick_edit(button_interaction: discord.Interaction):
+                await self.show_edit_menu(button_interaction)
+
+            edit_button.callback = on_quick_edit
+            view.add_item(edit_button)
 
             # Reconfigure Button
             reconfigure_button = discord.ui.Button(
@@ -141,6 +154,73 @@ class TicketSetup(commands.Cog):
         }
         await self.step_1_ticket_config(interaction)
 
+    # ==========================================
+    # Quick Edit Component & Handler
+    # ==========================================
+
+    async def show_edit_menu(self, interaction: discord.Interaction):
+        """Displays a dropdown menu to select a specific setting to edit."""
+        
+        select = discord.ui.Select(
+            placeholder="Select a setting to edit...",
+            options=[
+                discord.SelectOption(label="Top Banner URL", value="banner_url", description="Change the top image banner", emoji="🖼️"),
+            ]
+        )
+
+        async def select_callback(select_interaction: discord.Interaction):
+            selected = select.values[0]
+
+            if selected == "banner_url":
+                await select_interaction.response.send_modal(
+                    BannerURLModal(lambda i, url: self.save_quick_edit(i, 'banner_url', url))
+                )
+
+        select.callback = select_callback
+        edit_view = discord.ui.View(timeout=None)
+        edit_view.add_item(select)
+
+        await interaction.response.send_message(
+            "Select which component you want to update:",
+            view=edit_view,
+            ephemeral=True
+        )
+
+    async def save_quick_edit(self, interaction: discord.Interaction, field_key: str, value: str):
+        """Saves the edited setting directly to DB and redeploys the panel."""
+        await interaction.response.defer(ephemeral=True)
+
+        settings = db.get_guild_settings(interaction.guild_id)
+        if not settings:
+            await interaction.followup.send("❌ Settings not found in database.", ephemeral=True)
+            return
+
+        # Clean URL or set to None
+        cleaned_val = value.strip() if value else None
+        if cleaned_val and not cleaned_val.startswith(("http://", "https://")):
+            cleaned_val = None
+
+        # Update setting field
+        settings[field_key] = cleaned_val
+
+        # Save back to database
+        if db.save_guild_settings(interaction.guild_id, settings):
+            from ticket_panel import update_panel
+            success = await update_panel(interaction.guild, db)
+
+            if success:
+                await interaction.followup.send(
+                    f"✅ **{field_key.replace('_', ' ').title()}** updated! Ticket panel has been refreshed.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    f"⚠️ Saved to database, but failed to refresh the panel message automatically.",
+                    ephemeral=True
+                )
+        else:
+            await interaction.followup.send("❌ Failed to update database.", ephemeral=True)
+    
     # ==========================================
     # STEP 1: Ticket Configuration
     # ==========================================
