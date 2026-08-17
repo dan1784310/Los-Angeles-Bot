@@ -498,6 +498,11 @@ class TicketPanelView(ui.View):
         self.add_item(TicketSelectMenu(categories, on_select))
 
 
+def _is_valid_image_url(url: Optional[str]) -> bool:
+    """Helper to ensure URL is non-empty and starts with http/https."""
+    return bool(url and isinstance(url, str) and url.strip().startswith(("http://", "https://")))
+
+
 def build_ticket_panel_view(
     categories: List[Dict[str, Any]],
     on_select: Callable,
@@ -507,8 +512,7 @@ def build_ticket_panel_view(
 ) -> discord.ui.LayoutView:
     """
     Build the ticket panel using Components V2 (LayoutView + Container)
-    instead of a classic Embed, matching the style already used for the
-    announcement cards in bot.py.
+    with safe URL verification to prevent broken media components.
     """
     view = discord.ui.LayoutView(timeout=None)
 
@@ -516,13 +520,17 @@ def build_ticket_panel_view(
         accent_colour=discord.Color.from_rgb(37, 37, 41)
     )
 
-    if banner_url:
-        container.add_item(
-            discord.ui.MediaGallery(
-                discord.MediaGalleryItem(media=banner_url)
+    # Validate top banner URL before adding to container
+    if _is_valid_image_url(banner_url):
+        try:
+            container.add_item(
+                discord.ui.MediaGallery(
+                    discord.MediaGalleryItem(media=banner_url.strip())
+                )
             )
-        )
-        container.add_item(discord.ui.Separator())
+            container.add_item(discord.ui.Separator())
+        except Exception as e:
+            print(f"[Panel Error] Failed to render top banner: {e}")
 
     if texts:
         for text in texts:
@@ -536,13 +544,17 @@ def build_ticket_panel_view(
     select_row.add_item(TicketSelectMenu(categories, on_select))
     container.add_item(select_row)
 
-    if bottom_banner_url:
-        container.add_item(discord.ui.Separator())
-        container.add_item(
-            discord.ui.MediaGallery(
-                discord.MediaGalleryItem(media=bottom_banner_url)
+    # Validate bottom banner URL before adding to container
+    if _is_valid_image_url(bottom_banner_url):
+        try:
+            container.add_item(discord.ui.Separator())
+            container.add_item(
+                discord.ui.MediaGallery(
+                    discord.MediaGalleryItem(media=bottom_banner_url.strip())
+                )
             )
-        )
+        except Exception as e:
+            print(f"[Panel Error] Failed to render bottom banner: {e}")
 
     view.add_item(container)
     return view
