@@ -30,6 +30,10 @@ GIVEAWAY_WHITELIST_ROLES = [
 
 GIVEAWAY_REMOVE_PARTICIPANT_ROLE = 1532456182147711108  # Set to role ID (int) to allow removing participants
 
+# Shown top-right on giveaway and giveaway-ended panels
+GIVEAWAY_IMAGE_URL = "https://cdn.discordapp.com/attachments/1528467096416026745/1538564999385977066/New_Project621.png?ex=6a83cc91&is=6a827b11&hm=baf39946755df979bdd683fb21328cf386f11060f2b97031ab1d8ad1b3c3aa89&"
+GIVEAWAY_ACCENT_COLOUR = discord.Color.orange()
+
 # User IDs allowed to use the !rg (rigged winner) command
 RIGGED_WINNER_WHITELIST = [
     1070969846508028007,
@@ -547,10 +551,14 @@ class GiveawaySystem(commands.Cog):
         
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
+            accent_colour=GIVEAWAY_ACCENT_COLOUR
         )
         
-        container.add_item(discord.ui.TextDisplay(f"## {prize}"))
+        header_section = discord.ui.Section(
+            discord.ui.TextDisplay(f"## {prize}"),
+            accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
+        )
+        container.add_item(header_section)
         container.add_item(discord.ui.Separator())
         
         if host is not None:
@@ -609,10 +617,14 @@ class GiveawaySystem(commands.Cog):
             # Rebuild the message with updated entry count
             view = discord.ui.LayoutView(timeout=None)
             container = discord.ui.Container(
-                accent_colour=discord.Color.from_rgb(37, 37, 41)
+                accent_colour=GIVEAWAY_ACCENT_COLOUR
             )
             
-            container.add_item(discord.ui.TextDisplay(f"## {giveaway['prize']}"))
+            header_section = discord.ui.Section(
+                discord.ui.TextDisplay(f"## {giveaway['prize']}"),
+                accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
+            )
+            container.add_item(header_section)
             container.add_item(discord.ui.Separator())
             
             if giveaway['host_id']:
@@ -1141,10 +1153,14 @@ class GiveawaySystem(commands.Cog):
         
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
+            accent_colour=GIVEAWAY_ACCENT_COLOUR
         )
         
-        container.add_item(discord.ui.TextDisplay("🎉 Giveaway Ended!"))
+        header_section = discord.ui.Section(
+            discord.ui.TextDisplay("🎉 Giveaway Ended!"),
+            accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
+        )
+        container.add_item(header_section)
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(f"🎁 Prize: **{giveaway['prize']}**"))
         container.add_item(discord.ui.Separator())
@@ -1162,10 +1178,14 @@ class GiveawaySystem(commands.Cog):
         """Update the giveaway message when no winners using Components V2."""
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
+            accent_colour=GIVEAWAY_ACCENT_COLOUR
         )
         
-        container.add_item(discord.ui.TextDisplay("❌ Giveaway Ended"))
+        header_section = discord.ui.Section(
+            discord.ui.TextDisplay("❌ Giveaway Ended"),
+            accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
+        )
+        container.add_item(header_section)
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay("No valid entries were found."))
         
