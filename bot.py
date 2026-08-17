@@ -122,7 +122,32 @@ async def setup_hook():
         import traceback
         traceback.print_exc()
 
-    # Refresh ticket panels
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(e)
+
+
+@bot.event
+async def on_ready():
+    print(f"[READY] Logged in as {bot.user} ({bot.user.id})")
+
+    # change_presence needs a live gateway connection, which only exists
+    # once on_ready fires — calling it from setup_hook (which runs during
+    # login, before the websocket connects) throws AttributeError since
+    # bot.ws is still None at that point.
+    try:
+        await bot.change_presence(
+            status=discord.Status.online,
+            activity=discord.Game("Announcements")
+        )
+    except Exception as e:
+        print(f"[READY] Could not set presence: {e}")
+
+    # Refresh ticket panels — bot.guilds is only populated once the
+    # gateway connects (i.e. by on_ready), so this was a silent no-op
+    # when it lived in setup_hook.
     try:
         from ticket_panel import update_panel
         for guild in bot.guilds:
@@ -134,17 +159,6 @@ async def setup_hook():
         print(f"Error refreshing ticket panels: {e}")
         import traceback
         traceback.print_exc()
-
-    await bot.change_presence(
-        status=discord.Status.online,
-        activity=discord.Game("Announcements")
-    )
-
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
-    except Exception as e:
-        print(e)
 
 
 # ==========================================
