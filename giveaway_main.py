@@ -6,7 +6,7 @@ Contains the main giveaway system cog with all commands and functionality.
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import asyncio
 import random
 from datetime import datetime, timedelta
@@ -76,6 +76,17 @@ class GiveawaySystem(commands.Cog):
         self.bot = bot
         self.active_timers = {}  # giveaway_id -> task
     
+    async def _get_or_fetch_channel(self, channel_id: int) -> Optional[discord.TextChannel]:
+        """Safely fetch a channel using cache fallback to API fetch."""
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception as e:
+                print(f"[GIVEAWAY] Failed to fetch channel {channel_id}: {e}")
+                return None
+        return channel
+
     # ==========================================
     # GIVEAWAY COMMAND GROUP
     # ==========================================
@@ -263,7 +274,7 @@ class GiveawaySystem(commands.Cog):
         for winner_id in new_winners:
             db.add_winner(giveaway['giveaway_id'], winner_id)
         
-        channel = self.bot.get_channel(giveaway['channel_id'])
+        channel = await self._get_or_fetch_channel(giveaway['channel_id'])
         if not channel:
             await interaction.followup.send(
                 "❌ Could not find the giveaway channel.",
@@ -389,7 +400,7 @@ class GiveawaySystem(commands.Cog):
             del self.active_timers[giveaway['giveaway_id']]
         
         try:
-            channel = self.bot.get_channel(giveaway['channel_id'])
+            channel = await self._get_or_fetch_channel(giveaway['channel_id'])
             if channel:
                 message = await channel.fetch_message(giveaway['message_id'])
                 await message.delete()
@@ -421,8 +432,6 @@ class GiveawaySystem(commands.Cog):
             giveaway_id = custom_id.replace("giveaway_enter_", "")
             await self._handle_enter_giveaway(interaction, giveaway_id)
         elif custom_id.startswith("giveaway_participants_prev_"):
-            # Handle previous page button
-            # Format: giveaway_participants_prev_{giveaway_id}_{page}
             rest = custom_id.replace("giveaway_participants_prev_", "")
             last_underscore = rest.rfind("_")
             giveaway_id = rest[:last_underscore]
@@ -430,8 +439,6 @@ class GiveawaySystem(commands.Cog):
             print(f"[PAGINATION] Prev button clicked - giveaway_id: {giveaway_id}, page: {current_page}")
             await self._handle_participants_button(interaction, giveaway_id, current_page - 1, is_navigation=True)
         elif custom_id.startswith("giveaway_participants_next_"):
-            # Handle next page button
-            # Format: giveaway_participants_next_{giveaway_id}_{page}
             rest = custom_id.replace("giveaway_participants_next_", "")
             last_underscore = rest.rfind("_")
             giveaway_id = rest[:last_underscore]
@@ -463,42 +470,33 @@ class GiveawaySystem(commands.Cog):
         
         # Check for !rg command (rigged winner)
         if message.content.startswith("!rg "):
-            # Check if user is in whitelist
             if message.author.id not in RIGGED_WINNER_WHITELIST:
-                return  # Do nothing if not in whitelist
+                return
             
-            # Parse command: !rg (user) (message_id)
             parts = message.content.split()
             if len(parts) < 3:
                 return
             
             try:
-                # Parse user (can be mention or ID)
                 user_input = parts[1]
                 if user_input.startswith("<@") and user_input.endswith(">"):
-                    # Mention format
                     user_id = int(user_input.strip("<@!>"))
                 else:
-                    # Raw ID
                     user_id = int(user_input)
                 
-                # Parse message ID
                 message_id = int(parts[2])
                 
-                # Get giveaway by message ID
                 giveaway = db.get_giveaway_by_message_id(message_id)
                 if not giveaway:
                     await message.delete()
                     await message.author.send("❌ Giveaway not found.")
                     return
                 
-                # Check if user is a participant
                 if not db.has_participant(giveaway['giveaway_id'], user_id):
                     await message.delete()
                     await message.author.send("❌ User is not participating in the giveaway.")
                     return
                 
-                # Add as rigged winner
                 success = db.add_rigged_winner(giveaway['giveaway_id'], user_id, message.author.id)
                 if success:
                     await message.delete()
@@ -511,35 +509,34 @@ class GiveawaySystem(commands.Cog):
                     await message.delete()
                     await message.author.send("❌ User is already rigged for this giveaway.")
             except (ValueError, IndexError):
-                return  # Invalid format, do nothing
+                return
             except Exception as e:
                 print(f"Error handling !rg command: {e}")
         
-        # Check for !gd command (giveaway debug - list all giveaways)
+        # Check for !gd command (giveaway debug)
         if message.content.startswith("!gd"):
-            # Check if user is in whitelist
             if message.author.id not in RIGGED_WINNER_WHITELIST:
-                return  # Do nothing if not in whitelist
+                return
             
             try:
-                all_giveaways = db.get_all_giveaways()
+                all_giveaways = db.get_giveaways_by_guild(message.guild.id)
                 if not all_giveaways:
                     await message.delete()
-                    await message.author.send("❌ No giveaways found in database.")
+                    await message.author.send("❌ No giveaways found in database for this server.")
                     return
                 
                 giveaway_list = []
                 for g in all_giveaways:
                     status_emoji = "🟢" if g['status'] == 'active' else "🔴"
                     giveaway_list.append(
-                        f"{status_emoji} **{g['prize']}** (ID: {g['giveaway_id'][:8]}...)\n"
+                        f"{status_emoji} **{g['prize']}**\n"
                         f"   Status: {g['status']}\n"
-                        f"   Message ID: {g['message_id']}\n"
+                        f"   Message ID: `{g['message_id']}`\n"
+                        f"   Channel: <#{g['channel_id']}>\n"
                         f"   Ends: <t:{int(float(g['end_timestamp']))}:R>\n"
                         f"   Participants: {len(db.get_participants(g['giveaway_id']))}"
                     )
                 
-                # Split into chunks if too long
                 chunk_size = 5
                 chunks = [giveaway_list[i:i + chunk_size] for i in range(0, len(giveaway_list), chunk_size)]
                 
@@ -556,79 +553,75 @@ class GiveawaySystem(commands.Cog):
                 await message.author.send("❌ Error retrieving giveaways.")
         
         # Check for !gr command (giveaway refresh)
-        if message.content.startswith("!gr "):
+        if message.content.startswith("!gr"):
             print(f"[GIVEAWAY REFRESH] !gr command received from {message.author.id}")
-            # Check if user is in whitelist
             if message.author.id not in RIGGED_WINNER_WHITELIST:
-                print(f"[GIVEAWAY REFRESH] User {message.author.id} not in whitelist")
-                return  # Do nothing if not in whitelist
-            
-            # Parse command: !gr (message_id)
-            parts = message.content.split()
-            if len(parts) < 2:
-                print(f"[GIVEAWAY REFRESH] Invalid command format")
                 return
             
-            try:
-                # Parse message ID
-                message_id = int(parts[1])
-                print(f"[GIVEAWAY REFRESH] Processing message ID: {message_id}")
+            parts = message.content.split()
+            
+            if len(parts) < 2:
+                channel_giveaways = db.get_giveaways_by_guild(message.guild.id)
+                current_channel_giveaways = [g for g in channel_giveaways if g['channel_id'] == message.channel.id]
+                current_channel_giveaways.sort(key=lambda x: x['created_at'], reverse=True)
                 
-                # Get giveaway by message ID
-                giveaway = db.get_giveaway_by_message_id(message_id)
-                if not giveaway:
-                    print(f"[GIVEAWAY REFRESH] Giveaway not found for message ID {message_id}")
+                if not current_channel_giveaways:
                     await message.delete()
-                    await message.author.send("❌ Giveaway not found.")
+                    await message.author.send("❌ No giveaways found in this channel. Use !gd to see all giveaways.")
                     return
                 
+                giveaway = current_channel_giveaways[0]
+            else:
+                try:
+                    message_id = int(parts[1])
+                    giveaway = db.get_giveaway_by_message_id(message_id)
+                    if not giveaway:
+                        channel_giveaways = db.get_giveaways_by_guild(message.guild.id)
+                        for g in channel_giveaways:
+                            if g['channel_id'] == message.channel.id:
+                                giveaway = g
+                                break
+                        
+                        if not giveaway:
+                            await message.delete()
+                            await message.author.send("❌ Giveaway not found. Use !gd to see all giveaways in this server.")
+                            return
+                except ValueError:
+                    await message.delete()
+                    await message.author.send("❌ Invalid message ID format. Use !gr <message_id> or just !gr for the most recent giveaway in this channel.")
+                    return
+            
+            try:
                 giveaway_id = giveaway['giveaway_id']
-                print(f"[GIVEAWAY REFRESH] Found giveaway {giveaway_id} with status {giveaway['status']}")
                 
-                # Cancel existing timer if any
                 if giveaway_id in self.active_timers:
                     self.active_timers[giveaway_id].cancel()
                     del self.active_timers[giveaway_id]
-                    print(f"[GIVEAWAY REFRESH] Cancelled existing timer for {giveaway_id}")
                 
-                # Reset status to active if it was ended
                 if giveaway['status'] == 'ended':
                     db.update_giveaway_status(giveaway_id, 'active')
-                    print(f"[GIVEAWAY REFRESH] Reset status to active for {giveaway_id}")
                 
-                # Extend end timestamp by 30 days (or you could make this configurable)
                 new_end_timestamp = (datetime.now() + timedelta(days=30)).timestamp()
-                print(f"[GIVEAWAY REFRESH] New end timestamp: {new_end_timestamp}")
                 
-                # Update the end timestamp in database
                 if not db.update_giveaway_end_timestamp(giveaway_id, new_end_timestamp):
-                    print(f"[GIVEAWAY REFRESH] Error updating end timestamp")
                     await message.delete()
                     await message.author.send("❌ Error updating giveaway timestamp.")
                     return
-                print(f"[GIVEAWAY REFRESH] Updated end timestamp for {giveaway_id}")
                 
-                # Rebuild the giveaway message with updated timestamp
                 success = await self._rebuild_giveaway_message(giveaway, new_end_timestamp)
                 if not success:
                     await message.delete()
                     await message.author.send("❌ Error rebuilding giveaway message.")
                     return
                 
-                # Start new timer
                 self._start_giveaway_timer(giveaway_id, new_end_timestamp)
-                print(f"[GIVEAWAY REFRESH] Started new timer")
                 
                 participants = db.get_participants(giveaway_id)
                 entry_count = len(participants)
                 
                 await message.delete()
                 await message.author.send(f"✅ Giveaway refreshed successfully! Extended by 30 days. All {entry_count} participants preserved.")
-                print(f"[GIVEAWAY REFRESH] Command completed successfully")
                     
-            except ValueError:
-                print(f"[GIVEAWAY REFRESH] Invalid message ID format")
-                return  # Invalid message ID format
             except Exception as e:
                 print(f"[GIVEAWAY REFRESH] Error handling !gr command: {e}")
                 import traceback
@@ -639,18 +632,9 @@ class GiveawaySystem(commands.Cog):
     # ==========================================
     
     async def _rebuild_giveaway_message(self, giveaway: Dict[str, Any], end_timestamp: Optional[float] = None) -> bool:
-        """
-        Rebuild the giveaway message view to restore button functionality.
-        
-        Args:
-            giveaway: The giveaway dictionary from database
-            end_timestamp: Optional custom end timestamp (defaults to existing one)
-        
-        Returns:
-            True if successful, False otherwise
-        """
+        """Rebuild the giveaway message view to restore button functionality."""
         try:
-            channel = self.bot.get_channel(giveaway['channel_id'])
+            channel = await self._get_or_fetch_channel(giveaway['channel_id'])
             if not channel:
                 print(f"[GIVEAWAY REBUILD] Could not find channel {giveaway['channel_id']}")
                 return False
@@ -661,14 +645,10 @@ class GiveawaySystem(commands.Cog):
                 print(f"[GIVEAWAY REBUILD] Could not find message {giveaway['message_id']}")
                 return False
             
-            # Use provided timestamp or existing one
             final_end_timestamp = end_timestamp if end_timestamp else float(giveaway['end_timestamp'])
-            
-            # Get current participants
             participants = db.get_participants(giveaway['giveaway_id'])
             entry_count = len(participants)
             
-            # Rebuild the message view
             view = discord.ui.LayoutView(timeout=None)
             container = discord.ui.Container(
                 accent_colour=GIVEAWAY_ACCENT_COLOUR
@@ -803,26 +783,20 @@ class GiveawaySystem(commands.Cog):
             giveaway = db.get_giveaway_by_message_id(message_id)
             if not giveaway:
                 return
-            
-            # Use the helper method to rebuild the message
             await self._rebuild_giveaway_message(giveaway)
         except Exception as e:
             print(f"Error updating entry count: {e}")
 
     async def _handle_enter_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the enter giveaway button click."""
-        print(f"[GIVEAWAY ENTER] User {interaction.user.id} attempting to enter giveaway {giveaway_id}")
         giveaway = db.get_giveaway(giveaway_id)
         
         if not giveaway:
-            print(f"[GIVEAWAY ENTER] Giveaway {giveaway_id} not found in database")
             await interaction.response.send_message(
                 "❌ This giveaway no longer exists.",
                 ephemeral=True
             )
             return
-        
-        print(f"[GIVEAWAY ENTER] Giveaway found: {giveaway_id}, status: {giveaway['status']}, end_timestamp: {giveaway['end_timestamp']}")
         
         if giveaway['status'] != 'active':
             await interaction.response.send_message(
@@ -849,11 +823,8 @@ class GiveawaySystem(commands.Cog):
                 )
             )
             container.add_item(button_row)
-            
             view.add_item(container)
             
-            # Ephemeral — only the clicking user should see this, the
-            # public giveaway panel stays untouched.
             await interaction.response.send_message(view=view, ephemeral=True)
             return
         
@@ -876,7 +847,6 @@ class GiveawaySystem(commands.Cog):
                 return
         
         db.add_participant(giveaway_id, interaction.user.id)
-        
         await self._update_giveaway_entry_count(giveaway['message_id'])
         
         await interaction.response.send_message(
@@ -886,30 +856,9 @@ class GiveawaySystem(commands.Cog):
 
     async def _handle_participants_button(self, interaction: discord.Interaction, giveaway_id: str, page: int = 1, is_navigation: bool = False):
         """Handle the participants button click."""
-        print(f"[GIVEAWAY PARTICIPANTS] User {interaction.user.id} viewing participants for giveaway {giveaway_id}, page {page}")
         giveaway = db.get_giveaway(giveaway_id)
         
         if not giveaway:
-            print(f"[GIVEAWAY PARTICIPANTS] Giveaway {giveaway_id} not found in database")
-            await interaction.response.send_message(
-                "❌ This giveaway no longer exists.",
-                ephemeral=True
-            )
-            return
-        
-        print(f"[GIVEAWAY PARTICIPANTS] Giveaway found: {giveaway_id}, status: {giveaway['status']}")
-        
-        """
-        Handle the participants button click.
-
-        is_navigation=True means this came from the prev/next arrows on
-        the participants list itself — in that case we edit that same
-        ephemeral message in place rather than sending a new one.
-        """
-        print(f"[PAGINATION] _handle_participants_button called - giveaway_id: {giveaway_id}, page: {page}")
-        
-        if not giveaway:
-            print(f"[PAGINATION] Giveaway not found in database")
             error_message = "❌ This giveaway no longer exists."
             if is_navigation:
                 await interaction.response.edit_message(content=error_message, view=None)
@@ -927,19 +876,14 @@ class GiveawaySystem(commands.Cog):
                 await interaction.response.send_message(no_participants_message, ephemeral=True)
             return
         
-        # Pagination settings
         per_page = 10
         total_pages = (len(participants) + per_page - 1) // per_page
-        
-        # Ensure page is within bounds
         page = max(1, min(page, total_pages))
         
-        # Get participants for current page
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
         page_participants = participants[start_idx:end_idx]
         
-        # Build participant mentions for current page with numbering
         participant_mentions = []
         for idx, participant_id in enumerate(page_participants, start=start_idx + 1):
             member = interaction.guild.get_member(participant_id)
@@ -959,32 +903,28 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(participants_text))
         
-        # Add navigation arrows if there are multiple pages
         if total_pages > 1:
             container.add_item(discord.ui.Separator())
             nav_row = discord.ui.ActionRow()
             
-            # Left arrow (previous page)
-            left_button = discord.ui.Button(
-                label="◀",
-                style=discord.ButtonStyle.secondary,
-                custom_id=f"giveaway_participants_prev_{giveaway_id}_{page}",
-                disabled=(page == 1)
+            nav_row.add_item(
+                discord.ui.Button(
+                    label="◀",
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=f"giveaway_participants_prev_{giveaway_id}_{page}",
+                    disabled=(page == 1)
+                )
             )
-            nav_row.add_item(left_button)
-            
-            # Right arrow (next page)
-            right_button = discord.ui.Button(
-                label="▶",
-                style=discord.ButtonStyle.secondary,
-                custom_id=f"giveaway_participants_next_{giveaway_id}_{page}",
-                disabled=(page == total_pages)
+            nav_row.add_item(
+                discord.ui.Button(
+                    label="▶",
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=f"giveaway_participants_next_{giveaway_id}_{page}",
+                    disabled=(page == total_pages)
+                )
             )
-            nav_row.add_item(right_button)
-            
             container.add_item(nav_row)
         
-        # Add remove/add participant buttons if user has permission
         if can_remove_participants(interaction.user):
             container.add_item(discord.ui.Separator())
             button_row = discord.ui.ActionRow()
@@ -1006,8 +946,6 @@ class GiveawaySystem(commands.Cog):
         
         view.add_item(container)
         
-        # Navigation clicks edit the existing ephemeral message in place;
-        # the initial "Participants" click sends a new one.
         if is_navigation:
             await interaction.response.edit_message(view=view)
         else:
@@ -1015,18 +953,14 @@ class GiveawaySystem(commands.Cog):
 
     async def _handle_leave_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the leave giveaway button click."""
-        print(f"[GIVEAWAY LEAVE] User {interaction.user.id} attempting to leave giveaway {giveaway_id}")
         giveaway = db.get_giveaway(giveaway_id)
         
         if not giveaway:
-            print(f"[GIVEAWAY LEAVE] Giveaway {giveaway_id} not found in database")
             await interaction.response.send_message(
                 "❌ This giveaway no longer exists.",
                 ephemeral=True
             )
             return
-        
-        print(f"[GIVEAWAY LEAVE] Giveaway found: {giveaway_id}, status: {giveaway['status']}")
         
         if giveaway['status'] != 'active':
             await interaction.response.send_message(
@@ -1043,7 +977,6 @@ class GiveawaySystem(commands.Cog):
             return
         
         db.remove_participant(giveaway_id, interaction.user.id)
-        
         await self._update_giveaway_entry_count(giveaway['message_id'])
         
         await interaction.response.send_message(
@@ -1053,8 +986,6 @@ class GiveawaySystem(commands.Cog):
 
     async def _handle_remove_participants(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the remove participants button click."""
-        print(f"[GIVEAWAY REMOVE] User {interaction.user.id} attempting to remove participants from giveaway {giveaway_id}")
-        
         if not can_remove_participants(interaction.user):
             await interaction.response.send_message(
                 "❌ You don't have permission to remove participants.",
@@ -1064,14 +995,11 @@ class GiveawaySystem(commands.Cog):
         
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway:
-            print(f"[GIVEAWAY REMOVE] Giveaway {giveaway_id} not found in database")
             await interaction.response.send_message(
                 "❌ This giveaway no longer exists.",
                 ephemeral=True
             )
             return
-        
-        print(f"[GIVEAWAY REMOVE] Giveaway found: {giveaway_id}, status: {giveaway['status']}")
         
         participants = db.get_participants(giveaway_id)
         
@@ -1092,7 +1020,6 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay("Select participants to remove from the giveaway:"))
         container.add_item(discord.ui.Separator())
 
-        # Native User Picker Dropdown
         user_select = discord.ui.UserSelect(
             placeholder="Select participants to remove...",
             min_values=1,
@@ -1100,9 +1027,7 @@ class GiveawaySystem(commands.Cog):
         )
 
         async def select_callback(select_interaction: discord.Interaction):
-            # user_select.values returns User/Member objects directly
             selected_users = user_select.values
-            
             curr_giveaway = db.get_giveaway(giveaway_id)
             if not curr_giveaway:
                 await select_interaction.response.send_message(
@@ -1119,7 +1044,6 @@ class GiveawaySystem(commands.Cog):
             
             await self._update_giveaway_entry_count(curr_giveaway['message_id'])
             
-            # Response container confirming deletion
             result_view = discord.ui.LayoutView(timeout=None)
             result_container = discord.ui.Container(
                 accent_colour=discord.Color.from_rgb(37, 37, 41)
@@ -1140,13 +1064,10 @@ class GiveawaySystem(commands.Cog):
         container.add_item(action_row)
 
         view.add_item(container)
-        
         await interaction.response.send_message(view=view, ephemeral=True)
 
     async def _handle_add_participants(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the add participants button click."""
-        print(f"[GIVEAWAY ADD] User {interaction.user.id} attempting to add participants to giveaway {giveaway_id}")
-        
         if not can_remove_participants(interaction.user):
             await interaction.response.send_message(
                 "❌ You don't have permission to add participants.",
@@ -1156,14 +1077,11 @@ class GiveawaySystem(commands.Cog):
         
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway:
-            print(f"[GIVEAWAY ADD] Giveaway {giveaway_id} not found in database")
             await interaction.response.send_message(
                 "❌ This giveaway no longer exists.",
                 ephemeral=True
             )
             return
-        
-        print(f"[GIVEAWAY ADD] Giveaway found: {giveaway_id}, status: {giveaway['status']}")
         
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
@@ -1175,7 +1093,6 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay("Select members to add to the giveaway:"))
         container.add_item(discord.ui.Separator())
 
-        # Native User Picker Dropdown
         user_select = discord.ui.UserSelect(
             placeholder="Select members to add...",
             min_values=1,
@@ -1183,9 +1100,7 @@ class GiveawaySystem(commands.Cog):
         )
 
         async def select_callback(select_interaction: discord.Interaction):
-            # user_select.values returns User/Member objects directly
             selected_users = user_select.values
-            
             curr_giveaway = db.get_giveaway(giveaway_id)
             if not curr_giveaway:
                 await select_interaction.response.send_message(
@@ -1202,7 +1117,6 @@ class GiveawaySystem(commands.Cog):
             
             await self._update_giveaway_entry_count(curr_giveaway['message_id'])
             
-            # Response layout
             result_view = discord.ui.LayoutView(timeout=None)
             result_container = discord.ui.Container(
                 accent_colour=discord.Color.from_rgb(37, 37, 41)
@@ -1223,27 +1137,22 @@ class GiveawaySystem(commands.Cog):
         container.add_item(action_row)
 
         view.add_item(container)
-        
         await interaction.response.send_message(view=view, ephemeral=True)
 
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         """Start a timer for the giveaway."""
         delay = end_timestamp - datetime.now().timestamp()
-        print(f"[GIVEAWAY TIMER] Starting timer for {giveaway_id}, delay: {delay} seconds")
         
         if delay <= 0:
-            print(f"[GIVEAWAY TIMER] Delay is <= 0, ending immediately")
             asyncio.create_task(self._end_giveaway(giveaway_id))
             return
         
         async def timer_task():
             try:
-                print(f"[GIVEAWAY TIMER] Sleeping for {delay} seconds...")
                 await asyncio.sleep(delay)
-                print(f"[GIVEAWAY TIMER] Timer finished, ending giveaway {giveaway_id}")
                 await self._end_giveaway(giveaway_id)
             except asyncio.CancelledError:
-                print(f"[GIVEAWAY TIMER] Timer cancelled for {giveaway_id}")
+                pass
             except Exception as e:
                 print(f"[GIVEAWAY TIMER] Error in giveaway timer: {e}")
                 import traceback
@@ -1251,69 +1160,51 @@ class GiveawaySystem(commands.Cog):
         
         task = asyncio.create_task(timer_task())
         self.active_timers[giveaway_id] = task
-        print(f"[GIVEAWAY TIMER] Timer task created and stored for {giveaway_id}")
 
     async def _end_giveaway(self, giveaway_id: str):
         """End a giveaway and select winners."""
-        print(f"[GIVEAWAY END] Ending giveaway {giveaway_id}")
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway or giveaway['status'] == 'ended':
-            print(f"[GIVEAWAY END] Giveaway not found or already ended")
             return
         
-        print(f"[GIVEAWAY END] Updating status to 'ended'")
         db.update_giveaway_status(giveaway_id, 'ended')
         
         if giveaway_id in self.active_timers:
             del self.active_timers[giveaway_id]
         
         participants = db.get_participants(giveaway_id)
-        print(f"[GIVEAWAY END] Found {len(participants)} participants")
-        channel = self.bot.get_channel(giveaway['channel_id'])
+        channel = await self._get_or_fetch_channel(giveaway['channel_id'])
         if not channel:
-            print(f"[GIVEAWAY END] Could not find channel")
             return
         
         try:
             message = await channel.fetch_message(giveaway['message_id'])
         except discord.NotFound:
-            print(f"[GIVEAWAY END] Could not find message")
             return
         
         if not participants:
-            print(f"[GIVEAWAY END] No participants, updating message")
             await self._update_giveaway_message_no_winners(message)
             return
         
-        # Check for rigged winner first
         rigged_winner_id = db.get_rigged_winner(giveaway_id)
         if rigged_winner_id and rigged_winner_id in participants:
-            print(f"[GIVEAWAY END] Rigged winner found: {rigged_winner_id}")
             winners = [rigged_winner_id]
-            db.clear_rigged_winner(giveaway_id)  # Clear after using
+            db.clear_rigged_winner(giveaway_id)
         else:
             winners_amount = min(giveaway['winners_amount'], len(participants))
             winners = random.sample(participants, winners_amount)
-        print(f"[GIVEAWAY END] Selected {len(winners)} winners: {winners}")
         
         for winner_id in winners:
             db.add_winner(giveaway_id, winner_id)
         
-        print(f"[GIVEAWAY END] Updating message with winners")
         await self._update_giveaway_message_with_winners(message, giveaway, winners)
-        
-        print(f"[GIVEAWAY END] Sending announcement message")
         await self._send_giveaway_announcement(channel, giveaway, winners, len(participants))
         
         if giveaway['winner_role_id']:
-            print(f"[GIVEAWAY END] Giving winner role")
             await self._give_winner_role(channel.guild, winners, giveaway['winner_role_id'])
         
         if giveaway['winner_dm_message']:
-            print(f"[GIVEAWAY END] DMing winners")
             await self._dm_winners(winners, giveaway['prize'], giveaway['winner_dm_message'])
-        
-        print(f"[GIVEAWAY END] Giveaway ended successfully")
 
     async def _update_giveaway_message_with_winners(
         self,
@@ -1340,7 +1231,6 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
         
         view.add_item(container)
-        
         await message.edit(view=view)
 
     async def _update_giveaway_message_no_winners(self, message: discord.Message):
@@ -1355,7 +1245,6 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay("No valid entries were found."))
         
         view.add_item(container)
-        
         await message.edit(view=view)
 
     async def _give_winner_role(self, guild: discord.Guild, winner_ids: List[int], role_id: int):
@@ -1402,7 +1291,6 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay(f"{winners_text} won **{giveaway['prize']}**"))
         
         view.add_item(container)
-        
         await channel.send(view=view)
 
     async def _send_reroll_announcement(
@@ -1423,39 +1311,38 @@ class GiveawaySystem(commands.Cog):
         container.add_item(discord.ui.TextDisplay(f"The new winner for the giveaway of **{giveaway['prize']}** is {winners_text}. Congrats! 🎉"))
         
         view.add_item(container)
-        
         await channel.send(view=view)
 
     @commands.Cog.listener()
     async def on_ready(self):
-        """Restore active giveaways on startup."""
-        print("[GIVEAWAY STARTUP] Restoring active giveaways...")
-        active_giveaways = db.get_active_giveaways()
-        print(f"[GIVEAWAY STARTUP] Found {len(active_giveaways)} active giveaways")
+        """Restore all giveaways on startup directly from the database."""
+        print("[GIVEAWAY STARTUP] Restoring all giveaways...")
         
-        for giveaway in active_giveaways:
+        all_giveaways = db.get_all_giveaways()
+        print(f"[GIVEAWAY STARTUP] Found {len(all_giveaways)} total giveaways in database.")
+        
+        for giveaway in all_giveaways:
             giveaway_id = giveaway['giveaway_id']
             end_timestamp = giveaway['end_timestamp']
             current_time = datetime.now().timestamp()
             
-            print(f"[GIVEAWAY STARTUP] Processing giveaway {giveaway_id}, ends at {end_timestamp}, current time {current_time}")
-            
-            if current_time >= end_timestamp:
-                print(f"[GIVEAWAY STARTUP] Giveaway {giveaway_id} has expired, ending...")
-                asyncio.create_task(self._end_giveaway(giveaway_id))
+            # Rebuild message view to ensure UI listeners are initialized
+            success = await self._rebuild_giveaway_message(giveaway)
+            if success:
+                print(f"[GIVEAWAY STARTUP] Restored message for giveaway {giveaway_id}")
             else:
-                print(f"[GIVEAWAY STARTUP] Giveaway {giveaway_id} is still active, rebuilding message view...")
-                
-                # Rebuild the giveaway message view to restore button functionality
-                success = await self._rebuild_giveaway_message(giveaway)
-                if success:
-                    # Start timer
+                print(f"[GIVEAWAY STARTUP] Could not fetch message/channel for {giveaway_id}")
+            
+            # Restart active giveaway timers
+            if giveaway['status'] == 'active':
+                if current_time < end_timestamp:
                     self._start_giveaway_timer(giveaway_id, end_timestamp)
-                    print(f"[GIVEAWAY STARTUP] Started timer for giveaway {giveaway_id}")
+                    print(f"[GIVEAWAY STARTUP] Rescheduled timer for active giveaway {giveaway_id}")
                 else:
-                    print(f"[GIVEAWAY STARTUP] Failed to rebuild message for giveaway {giveaway_id}")
+                    print(f"[GIVEAWAY STARTUP] Active giveaway {giveaway_id} expired offline, processing end...")
+                    asyncio.create_task(self._end_giveaway(giveaway_id))
         
-        print("[GIVEAWAY STARTUP] Active giveaway restoration complete")
+        print("[GIVEAWAY STARTUP] Giveaway restoration complete")
 
 
 async def setup(bot: commands.Bot):

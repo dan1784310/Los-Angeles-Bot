@@ -9,7 +9,9 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 import os
 
-DATABASE_PATH = "giveaways.db"
+# Use absolute path relative to this file to prevent database reset across working directory changes
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_PATH = os.path.join(BASE_DIR, "giveaways.db")
 
 
 class GiveawayDatabase:
@@ -24,6 +26,7 @@ class GiveawayDatabase:
         """Initialize database tables."""
         try:
             self.conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+            self.conn.execute("PRAGMA foreign_keys = ON;")
             self.cursor = self.conn.cursor()
             self.cursor.row_factory = sqlite3.Row  # Enable row factory for dictionary access
         except Exception as e:
@@ -189,7 +192,7 @@ class GiveawayDatabase:
             return []
     
     def get_all_giveaways(self) -> List[Dict[str, Any]]:
-        """Get all giveaways (for debugging)."""
+        """Get all giveaways (for startup restoration & debugging)."""
         try:
             self.cursor.execute("""
                 SELECT * FROM giveaways
@@ -198,6 +201,20 @@ class GiveawayDatabase:
             return [self._row_to_giveaway_dict(row) for row in rows]
         except Exception as e:
             print(f"[DATABASE] Error getting all giveaways: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def get_giveaways_by_guild(self, guild_id: int) -> List[Dict[str, Any]]:
+        """Get all giveaways for a guild (including ended ones)."""
+        try:
+            self.cursor.execute("""
+                SELECT * FROM giveaways WHERE guild_id = ?
+            """, (guild_id,))
+            rows = self.cursor.fetchall()
+            return [self._row_to_giveaway_dict(row) for row in rows]
+        except Exception as e:
+            print(f"[DATABASE] Error getting guild giveaways: {e}")
             import traceback
             traceback.print_exc()
             return []
@@ -403,7 +420,6 @@ class GiveawayDatabase:
         """Convert database row to dictionary."""
         if row is None:
             return None
-        # With row_factory enabled, row can be accessed as a dictionary
         return dict(row)
     
     def close(self):
