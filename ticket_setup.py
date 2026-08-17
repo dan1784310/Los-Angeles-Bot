@@ -240,17 +240,21 @@ class TicketSetup(commands.Cog):
             color=discord.Color.purple()
         )
         
-        await interaction.response.edit_message(
-            content=None,
-            embed=embed,
-            view=None
-        )
-        
+        if not interaction.response.is_done():
+            await interaction.response.edit_message(content=None, embed=embed, view=None)
+
+        async def open_banner_modal(i: discord.Interaction):
+            await i.response.send_modal(
+                BannerURLModal(lambda i2, url: self.on_banner_submit(i2, url))
+            )
+
         await interaction.followup.send(
-            "Enter the **Banner Image URL** (optional):",
-            view=NavigationButtons(
+            "Click below to enter your **Banner Image URL** (or click **Skip** to leave blank):",
+            view=ModalStepView(
+                "🖼️ Enter Banner URL",
+                open_banner_modal,
                 on_back=lambda i: self.step_1_ticket_config(i),
-                on_continue=lambda i: self.on_banner_continue(i),
+                on_skip=lambda i: self.on_banner_submit(i, None),
                 on_cancel=lambda i: self.cancel_setup(i)
             ),
             ephemeral=True
