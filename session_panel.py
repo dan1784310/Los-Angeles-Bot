@@ -4,17 +4,17 @@ from discord import app_commands
 
 # ==========================================
 # CONFIGURATION SECTION
-# Customize RGB colors, text, and banner URLss
 # ==========================================
 
-SESSION_CHANNEL_ID: int = 1528497650595270707  # Replace with your actual channel ID
+SESSION_CHANNEL_ID: int = 1528497650595270707  # Target channel ID
+REGULATIONS_CHANNEL_ID: int = 1526890579080773693  # Replace with actual regulations channel ID
 
 # Shared Universal Assets
 GLOBAL_BANNER_URL: str = "https://i.postimg.cc/qRyQGFc3/51EC5E12-007D-4C16-A535-A6D36D67D3E6.png"
 GLOBAL_RGB_COLOR: discord.Color = discord.Color.from_rgb(37, 37, 41)
 GLOBAL_JOIN_URL: str = "https://www.roblox.com/games/2534724415/Emergency-Response-Liberty-County"
 
-# --- SERVER DETAILS CONFIG ---
+# Server Information Configuration
 SERVER_CODE: str = "ypOye"
 SERVER_NAME: str = "Arizona State Roleplay I Realistic I New"
 SERVER_OWNER: str = "Certified_Pro02"
@@ -28,7 +28,7 @@ SESSION_START_INFO_TEXT: str = (
     "## Information\n"
     "> Welcome to the sessions channel, here we'll post notifications about our session "
     "including session start-ups, shutdowns, breaks and low players. Make sure to read "
-    "up on all our guidelines in <#{1526890579080773693}> before joining our session."
+    f"up on all our guidelines in <#{REGULATIONS_CHANNEL_ID}> before joining our session."
 )
 
 SESSION_START_SERVER_TEXT: str = (
@@ -65,11 +65,11 @@ def create_session_card(
     button_label: str = "Quick Join",
     server_details: str = None
 ) -> discord.ui.LayoutView:
-    """Builds a Components V2 LayoutView card with custom RGB container accents."""
+    """Builds a Components V2 LayoutView card."""
     view = discord.ui.LayoutView(timeout=None)
     container = discord.ui.Container(accent_colour=color)
 
-    # 1. Top Banner
+    # 1. Top Media Banner
     if banner_url and banner_url.startswith("http"):
         container.add_item(
             discord.ui.MediaGallery(
@@ -78,7 +78,7 @@ def create_session_card(
         )
         container.add_item(discord.ui.Separator())
 
-    # 2. Information Text Section
+    # 2. Main Info Section
     container.add_item(discord.ui.TextDisplay(text))
 
     # 3. Server Details Section
@@ -86,9 +86,9 @@ def create_session_card(
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(server_details))
 
-    # 4. Action Button Section (with Separator above)
+    # 4. Quick Join Button Section (Separator above, no bottom banner)
     if button_url:
-        container.add_item(discord.ui.Separator())  # Added separator above button
+        container.add_item(discord.ui.Separator())
         row = discord.ui.ActionRow()
         row.add_item(
             discord.ui.Button(
@@ -148,7 +148,7 @@ class SessionPanelView(discord.ui.View):
             await interaction.followup.send("✅ Session update posted!", ephemeral=True)
         except discord.Forbidden:
             await interaction.followup.send(
-                "❌ Missing permissions to create/send webhooks in the target channel.",
+                "❌ Missing permissions to create/send webhooks in target channel.",
                 ephemeral=True
             )
         except Exception as e:
@@ -209,9 +209,7 @@ def setup_session_commands(bot: commands.Bot, has_role_or_higher):
         panel_view = SessionPanelView()
         
         panel_layout = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=GLOBAL_RGB_COLOR
-        )
+        container = discord.ui.Container(accent_colour=GLOBAL_RGB_COLOR)
         container.add_item(
             discord.ui.TextDisplay("## Session Management Panel\nListed below are the buttons you can use to send the required session messages.")
         )
