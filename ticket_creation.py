@@ -304,6 +304,11 @@ async def _rebuild_management_view(interaction: discord.Interaction, channel_id:
             creator = None
     creator_mention = creator.mention if creator else f"<@{ticket['user_id']}>"
 
+    claimant_mention = None
+    if claimed and ticket.get('claimed_by'):
+        claimant = interaction.guild.get_member(ticket['claimed_by'])
+        claimant_mention = claimant.mention if claimant else f"<@{ticket['claimed_by']}>"
+
     accent_color = discord.Color.from_rgb(37, 37, 41)
 
     return build_ticket_management_view(
@@ -317,6 +322,7 @@ async def _rebuild_management_view(interaction: discord.Interaction, channel_id:
         on_claim=lambda i: claim_ticket(i, channel_id, creator),
         on_unclaim=lambda i: unclaim_ticket(i, channel_id),
         claimed=claimed,
+        claimant_mention=claimant_mention,
         on_add_user=lambda i: add_user_to_ticket(i, channel_id),
         on_remove_user=lambda i: remove_user_from_ticket(i, channel_id),
         on_transcript=lambda i: generate_transcript(i, channel_id),
@@ -393,11 +399,11 @@ async def unclaim_ticket(interaction: discord.Interaction, channel_id: int):
     claimed_by = ticket.get('claimed_by') if ticket else None
 
     if claimed_by != interaction.user.id:
-        claimant_text = f"<@{claimed_by}>" if claimed_by else "someone"
-        await interaction.response.send_message(
-            f"❌ Only the person who claimed this ticket can unclaim it. It's currently claimed by {claimant_text}.",
-            ephemeral=True
-        )
+        if claimed_by:
+            message = f"❌ Only <@{claimed_by}> (who claimed this ticket) can unclaim it."
+        else:
+            message = "❌ This ticket isn't currently claimed."
+        await interaction.response.send_message(message, ephemeral=True)
         return
 
     db.set_ticket_claim(channel_id, None)

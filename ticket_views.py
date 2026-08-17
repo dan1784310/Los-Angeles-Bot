@@ -307,6 +307,7 @@ def build_ticket_management_view(
     on_claim: Optional[Callable] = None,
     on_unclaim: Optional[Callable] = None,
     claimed: bool = False,
+    claimant_mention: Optional[str] = None,
     on_add_user: Optional[Callable] = None,
     on_remove_user: Optional[Callable] = None,
     on_transcript: Optional[Callable] = None,
@@ -348,12 +349,14 @@ def build_ticket_management_view(
 
     # Section 3: ticket info
     container.add_item(discord.ui.Separator())
-    info_text = (
-        f"**Ticket Number:** #{ticket_number:04d}\n"
-        f"**Created By:** {creator_mention}\n"
+    info_lines = [
+        f"**Ticket Number:** #{ticket_number:04d}",
+        f"**Created By:** {creator_mention}",
         f"**Category:** {category_name}"
-    )
-    container.add_item(discord.ui.TextDisplay(info_text))
+    ]
+    if claimed and claimant_mention:
+        info_lines.append(f"**Claimed By:** {claimant_mention}")
+    container.add_item(discord.ui.TextDisplay("\n".join(info_lines)))
 
     # Buttons — Claim swaps for Unclaim once claimed
     container.add_item(discord.ui.Separator())
@@ -376,75 +379,81 @@ def build_ticket_management_view(
 
 
 class CloseTicketButton(ui.Button):
-    """Close ticket button."""
+    """
+    Close ticket button.
+
+    NOTE: this button's own callback is intentionally a no-op. The
+    ticket-management buttons aren't registered as Discord persistent
+    views, so the cog's on_interaction listener (ticket_creation.py)
+    is what actually handles these clicks — that way they keep working
+    even after a bot restart. Having this callback also call the
+    handler would fire it twice per click (a real bug we hit: clicking
+    Unclaim would run the handler twice, and the second run would see
+    state the first run had already changed, throwing a false "already
+    claimed" error).
+    """
     
     def __init__(self, callback: Callable):
         super().__init__(label='🔒 Close Ticket', style=discord.ButtonStyle.danger, custom_id='close_ticket')
         self.callback_func = callback
     
     async def callback(self, interaction: discord.Interaction):
-        if self.callback_func:
-            await self.callback_func(interaction)
+        pass  # handled by TicketCreation.on_interaction — see note above
 
 
 class ClaimTicketButton(ui.Button):
-    """Claim ticket button."""
+    """Claim ticket button. See CloseTicketButton for why callback() is a no-op."""
     
     def __init__(self, callback: Callable):
         super().__init__(label='🎯 Claim Ticket', style=discord.ButtonStyle.primary, custom_id='claim_ticket')
         self.callback_func = callback
     
     async def callback(self, interaction: discord.Interaction):
-        if self.callback_func:
-            await self.callback_func(interaction)
+        pass  # handled by TicketCreation.on_interaction
 
 
 class AddUserButton(ui.Button):
-    """Add user to ticket button."""
+    """Add user to ticket button. See CloseTicketButton for why callback() is a no-op."""
     
     def __init__(self, callback: Callable):
         super().__init__(label='➕ Add User', style=discord.ButtonStyle.success, custom_id='add_user')
         self.callback_func = callback
     
     async def callback(self, interaction: discord.Interaction):
-        if self.callback_func:
-            await self.callback_func(interaction)
+        pass  # handled by TicketCreation.on_interaction
 
 
 class RemoveUserButton(ui.Button):
-    """Remove user from ticket button."""
+    """Remove user from ticket button. See CloseTicketButton for why callback() is a no-op."""
     
     def __init__(self, callback: Callable):
         super().__init__(label='➖ Remove User', style=discord.ButtonStyle.secondary, custom_id='remove_user')
         self.callback_func = callback
     
     async def callback(self, interaction: discord.Interaction):
-        if self.callback_func:
-            await self.callback_func(interaction)
+        pass  # handled by TicketCreation.on_interaction
 
 
 class TranscriptButton(ui.Button):
-    """Generate transcript button."""
+    """Generate transcript button. See CloseTicketButton for why callback() is a no-op."""
     
     def __init__(self, callback: Callable):
         super().__init__(label='📄 Transcript', style=discord.ButtonStyle.secondary, custom_id='transcript')
         self.callback_func = callback
     
     async def callback(self, interaction: discord.Interaction):
-        if self.callback_func:
-            await self.callback_func(interaction)
+        pass  # handled by TicketCreation.on_interaction
 
 
 class UnclaimButton(ui.Button):
-    """Unclaim button. Only ever shown to the current claimant, via an ephemeral message."""
+    """Unclaim button, shown once a ticket is claimed. See CloseTicketButton for why callback() is a no-op."""
 
     def __init__(self, callback: Callable):
         super().__init__(label='Unclaim Ticket', style=discord.ButtonStyle.danger, custom_id='unclaim_ticket')
         self.callback_func = callback
 
     async def callback(self, interaction: discord.Interaction):
-        if self.callback_func:
-            await self.callback_func(interaction)
+        pass  # handled by TicketCreation.on_interaction
 
 
 
