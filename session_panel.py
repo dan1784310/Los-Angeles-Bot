@@ -10,7 +10,7 @@ from discord import app_commands
 SESSION_CHANNEL_ID: int = 1528497650595270707  # Replace with your actual channel ID
 
 # Shared Universal Assets
-GLOBAL_BANNER_URL: str = "https://cdn.discordapp.com/attachments/1526890579080773693/1528739376044048414/bg.png?ex=6a63597d&is=6a6207fd&hm=163d8a7c3eb83e7b77cad933794b56e18439098546a7f4ab3a0547177eb05ea4&"
+GLOBAL_BANNER_URL: str = "https://cdn.discordapp.com/attachments/1528467096416026745/1538901879591796736/51EC5E12-007D-4C16-A535-A6D36D67D3E6.png?ex=6a845d8f&is=6a830c0f&hm=27f4b83b32864aecb255323c0d0487cccccf0a0f3ce1b5254e733e1bf4b8810b&"
 GLOBAL_RGB_COLOR: discord.Color = discord.Color.from_rgb(37, 37, 41)
 GLOBAL_JOIN_URL: str = "https://www.roblox.com/games/2534724415/Emergency-Response-Liberty-County"
 
