@@ -11,7 +11,12 @@ import os
 
 # Use absolute path relative to this file to prevent database reset across working directory changes
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_PATH = os.path.join(BASE_DIR, "giveaways.db")
+
+# Use GIVEAWAY_DB_DIR for persistent storage on hosts such as Render.
+# If it is not set, keep the database beside this file for local development.
+DATABASE_DIR = os.environ.get("GIVEAWAY_DB_DIR", BASE_DIR)
+os.makedirs(DATABASE_DIR, exist_ok=True)
+DATABASE_PATH = os.path.join(DATABASE_DIR, "giveaways.db")
 
 
 class GiveawayDatabase:
