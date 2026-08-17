@@ -428,7 +428,7 @@ class GiveawaySystem(commands.Cog):
             giveaway_id = rest[:last_underscore]
             current_page = int(rest[last_underscore + 1:])
             print(f"[PAGINATION] Prev button clicked - giveaway_id: {giveaway_id}, page: {current_page}")
-            await self._handle_participants_button(interaction, giveaway_id, current_page - 1)
+            await self._handle_participants_button(interaction, giveaway_id, current_page - 1, is_navigation=True)
         elif custom_id.startswith("giveaway_participants_next_"):
             # Handle next page button
             # Format: giveaway_participants_next_{giveaway_id}_{page}
@@ -437,7 +437,7 @@ class GiveawaySystem(commands.Cog):
             giveaway_id = rest[:last_underscore]
             current_page = int(rest[last_underscore + 1:])
             print(f"[PAGINATION] Next button clicked - giveaway_id: {giveaway_id}, page: {current_page}")
-            await self._handle_participants_button(interaction, giveaway_id, current_page + 1)
+            await self._handle_participants_button(interaction, giveaway_id, current_page + 1, is_navigation=True)
         elif custom_id.startswith("giveaway_participants_"):
             giveaway_id = custom_id.replace("giveaway_participants_", "")
             await self._handle_participants_button(interaction, giveaway_id)
@@ -696,7 +696,9 @@ class GiveawaySystem(commands.Cog):
             
             view.add_item(container)
             
-            await interaction.response.edit_message(view=view)
+            # Ephemeral — only the clicking user should see this, the
+            # public giveaway panel stays untouched.
+            await interaction.response.send_message(view=view, ephemeral=True)
             return
         
         if giveaway['required_role_id']:
@@ -726,38 +728,34 @@ class GiveawaySystem(commands.Cog):
             ephemeral=True
         )
 
-    async def _handle_participants_button(self, interaction: discord.Interaction, giveaway_id: str, page: int = 1):
-        """Handle the participants button click."""
+    async def _handle_participants_button(self, interaction: discord.Interaction, giveaway_id: str, page: int = 1, is_navigation: bool = False):
+        """
+        Handle the participants button click.
+
+        is_navigation=True means this came from the prev/next arrows on
+        the participants list itself — in that case we edit that same
+        ephemeral message in place rather than sending a new one.
+        """
         print(f"[PAGINATION] _handle_participants_button called - giveaway_id: {giveaway_id}, page: {page}")
         giveaway = db.get_giveaway(giveaway_id)
         print(f"[PAGINATION] Giveaway found: {giveaway is not None}")
         if not giveaway:
             print(f"[PAGINATION] Giveaway not found in database")
-            if interaction.response.is_done():
-                await interaction.followup.send(
-                    "❌ This giveaway no longer exists.",
-                    ephemeral=True
-                )
+            error_message = "❌ This giveaway no longer exists."
+            if is_navigation:
+                await interaction.response.edit_message(content=error_message, view=None)
             else:
-                await interaction.response.send_message(
-                    "❌ This giveaway no longer exists.",
-                    ephemeral=True
-                )
+                await interaction.response.send_message(error_message, ephemeral=True)
             return
         
         participants = db.get_participants(giveaway_id)
         
         if not participants:
-            if interaction.response.is_done():
-                await interaction.followup.send(
-                    "No one has entered this giveaway yet.",
-                    ephemeral=True
-                )
+            no_participants_message = "No one has entered this giveaway yet."
+            if is_navigation:
+                await interaction.response.edit_message(content=no_participants_message, view=None)
             else:
-                await interaction.response.send_message(
-                    "No one has entered this giveaway yet.",
-                    ephemeral=True
-                )
+                await interaction.response.send_message(no_participants_message, ephemeral=True)
             return
         
         # Pagination settings
@@ -839,9 +837,10 @@ class GiveawaySystem(commands.Cog):
         
         view.add_item(container)
         
-        # Check if this is an edit or new message
-        if interaction.response.is_done():
-            await interaction.edit_original_response(view=view)
+        # Navigation clicks edit the existing ephemeral message in place;
+        # the initial "Participants" click sends a new one.
+        if is_navigation:
+            await interaction.response.edit_message(view=view)
         else:
             await interaction.response.send_message(view=view, ephemeral=True)
 
