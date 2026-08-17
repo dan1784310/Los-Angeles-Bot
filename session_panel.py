@@ -14,11 +14,28 @@ GLOBAL_BANNER_URL: str = "https://cdn.discordapp.com/attachments/152689057908077
 GLOBAL_RGB_COLOR: discord.Color = discord.Color.from_rgb(37, 37, 41)
 GLOBAL_JOIN_URL: str = "https://www.roblox.com/games/2534724415/Emergency-Response-Liberty-County"
 
-# --- SESSION START ---
+# --- SERVER DETAILS CONFIG ---
+SERVER_CODE: str = "ypOye"
+SERVER_NAME: str = "Arizona State Roleplay I Realistic I New"
+SERVER_OWNER: str = "Certified_Pro02"
+
+# --- SESSION START CONFIG ---
 SESSION_START_BANNER: str = GLOBAL_BANNER_URL
-SESSION_START_TEXT: str = "## 🟢 Session Starting!\nThe in-game server is now open! Join up through the code ypOye or the button below. We are excited to welcome you in!"
 SESSION_START_COLOUR: discord.Color = GLOBAL_RGB_COLOR
 SESSION_START_BUTTON_URL: str = GLOBAL_JOIN_URL
+
+SESSION_START_INFO_TEXT: str = (
+    "## Information\n"
+    "> Welcome to the sessions channel, here we'll post notifications about our session "
+    "including session start-ups, shutdowns, breaks and low players. Make sure to read "
+    "up on all our guidelines in <#1526890579080773693> before joining our session."
+)
+
+SESSION_START_SERVER_TEXT: str = (
+    f"> **Server Code:** `{SERVER_CODE}`\n"
+    f"> **Server Name:** `{SERVER_NAME}`\n"
+    f"> **Server Owner:** `{SERVER_OWNER}`"
+)
 
 # --- FULL PLAYERS ---
 FULL_PLAYERS_BANNER: str = GLOBAL_BANNER_URL
@@ -44,13 +61,15 @@ def create_session_card(
     banner_url: str,
     text: str,
     color: discord.Color,
-    button_url: str = None
+    button_url: str = None,
+    button_label: str = "Quick Join",
+    server_details: str = None
 ) -> discord.ui.LayoutView:
     """Builds a Components V2 LayoutView card with custom RGB container accents."""
     view = discord.ui.LayoutView(timeout=None)
     container = discord.ui.Container(accent_colour=color)
 
-    # Add media banner if provided
+    # 1. Top Banner
     if banner_url and banner_url.startswith("http"):
         container.add_item(
             discord.ui.MediaGallery(
@@ -59,15 +78,20 @@ def create_session_card(
         )
         container.add_item(discord.ui.Separator())
 
-    # Text Display
+    # 2. Information Text Section
     container.add_item(discord.ui.TextDisplay(text))
 
-    # Join link button (optional, used for Session Start)
+    # 3. Server Details Section
+    if server_details:
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(server_details))
+
+    # 4. Action Button Section (No bottom banner)
     if button_url:
         row = discord.ui.ActionRow()
         row.add_item(
             discord.ui.Button(
-                label="Join Session",
+                label=button_label,
                 style=discord.ButtonStyle.link,
                 url=button_url
             )
@@ -92,7 +116,9 @@ class SessionPanelView(discord.ui.View):
         banner_url: str,
         text: str,
         color: discord.Color,
-        button_url: str = None
+        button_url: str = None,
+        button_label: str = "Quick Join",
+        server_details: str = None
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -104,10 +130,16 @@ class SessionPanelView(discord.ui.View):
             )
             return
 
-        card_view = create_session_card(banner_url, text, color, button_url)
+        card_view = create_session_card(
+            banner_url=banner_url,
+            text=text,
+            color=color,
+            button_url=button_url,
+            button_label=button_label,
+            server_details=server_details
+        )
 
         try:
-            # Use a temporary webhook so V2 components send directly into the channel cleanly
             webhook = await channel.create_webhook(name="Session Manager")
             await webhook.send(view=card_view)
             await webhook.delete()
@@ -124,38 +156,40 @@ class SessionPanelView(discord.ui.View):
     @discord.ui.button(label="Session Start", style=discord.ButtonStyle.success, custom_id="session_panel:start")
     async def session_start(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.send_session_card(
-            interaction,
-            SESSION_START_BANNER,
-            SESSION_START_TEXT,
-            SESSION_START_COLOUR,
-            SESSION_START_BUTTON_URL
+            interaction=interaction,
+            banner_url=SESSION_START_BANNER,
+            text=SESSION_START_INFO_TEXT,
+            color=SESSION_START_COLOUR,
+            button_url=SESSION_START_BUTTON_URL,
+            button_label="Quick Join",
+            server_details=SESSION_START_SERVER_TEXT
         )
 
     @discord.ui.button(label="Full Players", style=discord.ButtonStyle.primary, custom_id="session_panel:full")
     async def full_players(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.send_session_card(
-            interaction,
-            FULL_PLAYERS_BANNER,
-            FULL_PLAYERS_TEXT,
-            FULL_PLAYERS_COLOUR
+            interaction=interaction,
+            banner_url=FULL_PLAYERS_BANNER,
+            text=FULL_PLAYERS_TEXT,
+            color=FULL_PLAYERS_COLOUR
         )
 
     @discord.ui.button(label="Session End", style=discord.ButtonStyle.danger, custom_id="session_panel:end")
     async def session_end(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.send_session_card(
-            interaction,
-            SESSION_END_BANNER,
-            SESSION_END_TEXT,
-            SESSION_END_COLOUR
+            interaction=interaction,
+            banner_url=SESSION_END_BANNER,
+            text=SESSION_END_TEXT,
+            color=SESSION_END_COLOUR
         )
 
     @discord.ui.button(label="Low Players", style=discord.ButtonStyle.secondary, custom_id="session_panel:low")
     async def low_players(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.send_session_card(
-            interaction,
-            LOW_PLAYERS_BANNER,
-            LOW_PLAYERS_TEXT,
-            LOW_PLAYERS_COLOUR
+            interaction=interaction,
+            banner_url=LOW_PLAYERS_BANNER,
+            text=LOW_PLAYERS_TEXT,
+            color=LOW_PLAYERS_COLOUR
         )
 
 
@@ -173,7 +207,6 @@ def setup_session_commands(bot: commands.Bot, has_role_or_higher):
     async def session_panel(interaction: discord.Interaction):
         panel_view = SessionPanelView()
         
-        # Build panel interface using V2 Container
         panel_layout = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
             accent_colour=GLOBAL_RGB_COLOR
@@ -183,7 +216,6 @@ def setup_session_commands(bot: commands.Bot, has_role_or_higher):
         )
         container.add_item(discord.ui.Separator())
         
-        # Add the 4 action buttons to the panel container in exact sequence
         button_row = discord.ui.ActionRow()
         for item in panel_view.children:
             button_row.add_item(item)
