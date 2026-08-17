@@ -420,18 +420,6 @@ class GiveawaySystem(commands.Cog):
         if custom_id.startswith("giveaway_enter_"):
             giveaway_id = custom_id.replace("giveaway_enter_", "")
             await self._handle_enter_giveaway(interaction, giveaway_id)
-        elif custom_id.startswith("giveaway_participants_"):
-            giveaway_id = custom_id.replace("giveaway_participants_", "")
-            await self._handle_participants_button(interaction, giveaway_id)
-        elif custom_id.startswith("giveaway_leave_"):
-            giveaway_id = custom_id.replace("giveaway_leave_", "")
-            await self._handle_leave_giveaway(interaction, giveaway_id)
-        elif custom_id.startswith("giveaway_remove_participants_"):
-            giveaway_id = custom_id.replace("giveaway_remove_participants_", "")
-            await self._handle_remove_participants(interaction, giveaway_id)
-        elif custom_id.startswith("giveaway_add_participants_"):
-            giveaway_id = custom_id.replace("giveaway_add_participants_", "")
-            await self._handle_add_participants(interaction, giveaway_id)
         elif custom_id.startswith("giveaway_participants_prev_"):
             # Handle previous page button
             # Format: giveaway_participants_prev_{giveaway_id}_{page}
@@ -450,6 +438,18 @@ class GiveawaySystem(commands.Cog):
             current_page = int(rest[last_underscore + 1:])
             print(f"[PAGINATION] Next button clicked - giveaway_id: {giveaway_id}, page: {current_page}")
             await self._handle_participants_button(interaction, giveaway_id, current_page + 1)
+        elif custom_id.startswith("giveaway_participants_"):
+            giveaway_id = custom_id.replace("giveaway_participants_", "")
+            await self._handle_participants_button(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_leave_"):
+            giveaway_id = custom_id.replace("giveaway_leave_", "")
+            await self._handle_leave_giveaway(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_remove_participants_"):
+            giveaway_id = custom_id.replace("giveaway_remove_participants_", "")
+            await self._handle_remove_participants(interaction, giveaway_id)
+        elif custom_id.startswith("giveaway_add_participants_"):
+            giveaway_id = custom_id.replace("giveaway_add_participants_", "")
+            await self._handle_add_participants(interaction, giveaway_id)
     
     # ==========================================
     # MESSAGE COMMANDS
