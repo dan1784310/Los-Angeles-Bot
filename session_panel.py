@@ -4,7 +4,7 @@ from discord import app_commands
 
 # ==========================================
 # CONFIGURATION SECTION
-# Customize RGB colors, text, and banner URLs
+# Customize RGB colors, text, and banner URLss
 # ==========================================
 
 SESSION_CHANNEL_ID: int = 1528497650595270707  # Replace with your actual channel ID
@@ -28,7 +28,7 @@ SESSION_START_INFO_TEXT: str = (
     "## Information\n"
     "> Welcome to the sessions channel, here we'll post notifications about our session "
     "including session start-ups, shutdowns, breaks and low players. Make sure to read "
-    "up on all our guidelines in <#1526890579080773693> before joining our session."
+    "up on all our guidelines in <#{1526890579080773693}> before joining our session."
 )
 
 SESSION_START_SERVER_TEXT: str = (
