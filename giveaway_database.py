@@ -140,12 +140,9 @@ class GiveawayDatabase:
             row = self.cursor.fetchone()
             if row:
                 return self._row_to_giveaway_dict(row)
-            print(f"[DATABASE] No giveaway found with message_id {message_id}")
             return None
         except Exception as e:
             print(f"[DATABASE] Error getting giveaway by message ID: {e}")
-            import traceback
-            traceback.print_exc()
             return None
     
     def get_giveaway(self, giveaway_id: str) -> Optional[Dict[str, Any]]:
@@ -157,12 +154,9 @@ class GiveawayDatabase:
             row = self.cursor.fetchone()
             if row:
                 return self._row_to_giveaway_dict(row)
-            print(f"[DATABASE] No giveaway found with giveaway_id {giveaway_id}")
             return None
         except Exception as e:
             print(f"[DATABASE] Error getting giveaway: {e}")
-            import traceback
-            traceback.print_exc()
             return None
     
     def get_active_giveaways(self) -> List[Dict[str, Any]]:
@@ -177,7 +171,19 @@ class GiveawayDatabase:
             print(f"Error getting active giveaways: {e}")
             return []
     
-    def get_guild_giveaways(self, guild_id: int) -> List[Dict[str, Any]]:
+    def get_all_giveaways(self) -> List[Dict[str, Any]]:
+        """Get all giveaways."""
+        try:
+            self.cursor.execute("""
+                SELECT * FROM giveaways
+            """)
+            rows = self.cursor.fetchall()
+            return [self._row_to_giveaway_dict(row) for row in rows]
+        except Exception as e:
+            print(f"[DATABASE] Error getting all giveaways: {e}")
+            return []
+    
+    def get_giveaways_by_guild(self, guild_id: int) -> List[Dict[str, Any]]:
         """Get all giveaways for a guild."""
         try:
             self.cursor.execute("""
@@ -187,36 +193,6 @@ class GiveawayDatabase:
             return [self._row_to_giveaway_dict(row) for row in rows]
         except Exception as e:
             print(f"[DATABASE] Error getting guild giveaways: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
-    
-    def get_all_giveaways(self) -> List[Dict[str, Any]]:
-        """Get all giveaways (for startup restoration & debugging)."""
-        try:
-            self.cursor.execute("""
-                SELECT * FROM giveaways
-            """)
-            rows = self.cursor.fetchall()
-            return [self._row_to_giveaway_dict(row) for row in rows]
-        except Exception as e:
-            print(f"[DATABASE] Error getting all giveaways: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
-    
-    def get_giveaways_by_guild(self, guild_id: int) -> List[Dict[str, Any]]:
-        """Get all giveaways for a guild (including ended ones)."""
-        try:
-            self.cursor.execute("""
-                SELECT * FROM giveaways WHERE guild_id = ?
-            """, (guild_id,))
-            rows = self.cursor.fetchall()
-            return [self._row_to_giveaway_dict(row) for row in rows]
-        except Exception as e:
-            print(f"[DATABASE] Error getting guild giveaways: {e}")
-            import traceback
-            traceback.print_exc()
             return []
     
     def update_giveaway_status(self, giveaway_id: str, status: str) -> bool:
@@ -229,18 +205,6 @@ class GiveawayDatabase:
             return True
         except Exception as e:
             print(f"Error updating giveaway status: {e}")
-            return False
-    
-    def update_giveaway_message_id(self, giveaway_id: str, message_id: int) -> bool:
-        """Update giveaway message ID."""
-        try:
-            self.cursor.execute("""
-                UPDATE giveaways SET message_id = ? WHERE giveaway_id = ?
-            """, (message_id, giveaway_id))
-            self.conn.commit()
-            return True
-        except Exception as e:
-            print(f"Error updating giveaway message ID: {e}")
             return False
     
     def update_giveaway_end_timestamp(self, giveaway_id: str, end_timestamp: float) -> bool:
@@ -258,15 +222,9 @@ class GiveawayDatabase:
     def delete_giveaway(self, giveaway_id: str) -> bool:
         """Delete a giveaway and its participants."""
         try:
-            self.cursor.execute("""
-                DELETE FROM giveaway_winners WHERE giveaway_id = ?
-            """, (giveaway_id,))
-            self.cursor.execute("""
-                DELETE FROM giveaway_participants WHERE giveaway_id = ?
-            """, (giveaway_id,))
-            self.cursor.execute("""
-                DELETE FROM giveaways WHERE giveaway_id = ?
-            """, (giveaway_id,))
+            self.cursor.execute("DELETE FROM giveaway_winners WHERE giveaway_id = ?", (giveaway_id,))
+            self.cursor.execute("DELETE FROM giveaway_participants WHERE giveaway_id = ?", (giveaway_id,))
+            self.cursor.execute("DELETE FROM giveaways WHERE giveaway_id = ?", (giveaway_id,))
             self.conn.commit()
             return True
         except Exception as e:
@@ -283,7 +241,6 @@ class GiveawayDatabase:
             self.conn.commit()
             return True
         except sqlite3.IntegrityError:
-            # User already joined
             return False
         except Exception as e:
             print(f"Error adding participant: {e}")
@@ -363,7 +320,7 @@ class GiveawayDatabase:
             return []
     
     def clear_winners(self, giveaway_id: str) -> bool:
-        """Clear all winners for a giveaway (for reroll)."""
+        """Clear all winners for a giveaway."""
         try:
             self.cursor.execute("""
                 DELETE FROM giveaway_winners WHERE giveaway_id = ?
@@ -384,7 +341,6 @@ class GiveawayDatabase:
             self.conn.commit()
             return True
         except sqlite3.IntegrityError:
-            # User already rigged for this giveaway
             return False
         except Exception as e:
             print(f"Error adding rigged winner: {e}")
