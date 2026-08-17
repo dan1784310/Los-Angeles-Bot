@@ -660,13 +660,18 @@ class GiveawaySystem(commands.Cog):
 
     async def _handle_enter_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the enter giveaway button click."""
+        print(f"[GIVEAWAY ENTER] User {interaction.user.id} attempting to enter giveaway {giveaway_id}")
         giveaway = db.get_giveaway(giveaway_id)
+        
         if not giveaway:
+            print(f"[GIVEAWAY ENTER] Giveaway {giveaway_id} not found in database")
             await interaction.response.send_message(
                 "❌ This giveaway no longer exists.",
                 ephemeral=True
             )
             return
+        
+        print(f"[GIVEAWAY ENTER] Giveaway found: {giveaway_id}, status: {giveaway['status']}, end_timestamp: {giveaway['end_timestamp']}")
         
         if giveaway['status'] != 'active':
             await interaction.response.send_message(
@@ -729,6 +734,20 @@ class GiveawaySystem(commands.Cog):
         )
 
     async def _handle_participants_button(self, interaction: discord.Interaction, giveaway_id: str, page: int = 1, is_navigation: bool = False):
+        """Handle the participants button click."""
+        print(f"[GIVEAWAY PARTICIPANTS] User {interaction.user.id} viewing participants for giveaway {giveaway_id}, page {page}")
+        giveaway = db.get_giveaway(giveaway_id)
+        
+        if not giveaway:
+            print(f"[GIVEAWAY PARTICIPANTS] Giveaway {giveaway_id} not found in database")
+            await interaction.response.send_message(
+                "❌ This giveaway no longer exists.",
+                ephemeral=True
+            )
+            return
+        
+        print(f"[GIVEAWAY PARTICIPANTS] Giveaway found: {giveaway_id}, status: {giveaway['status']}")
+        
         """
         Handle the participants button click.
 
@@ -737,8 +756,7 @@ class GiveawaySystem(commands.Cog):
         ephemeral message in place rather than sending a new one.
         """
         print(f"[PAGINATION] _handle_participants_button called - giveaway_id: {giveaway_id}, page: {page}")
-        giveaway = db.get_giveaway(giveaway_id)
-        print(f"[PAGINATION] Giveaway found: {giveaway is not None}")
+        
         if not giveaway:
             print(f"[PAGINATION] Giveaway not found in database")
             error_message = "❌ This giveaway no longer exists."
@@ -846,13 +864,18 @@ class GiveawaySystem(commands.Cog):
 
     async def _handle_leave_giveaway(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the leave giveaway button click."""
+        print(f"[GIVEAWAY LEAVE] User {interaction.user.id} attempting to leave giveaway {giveaway_id}")
         giveaway = db.get_giveaway(giveaway_id)
+        
         if not giveaway:
+            print(f"[GIVEAWAY LEAVE] Giveaway {giveaway_id} not found in database")
             await interaction.response.send_message(
                 "❌ This giveaway no longer exists.",
                 ephemeral=True
             )
             return
+        
+        print(f"[GIVEAWAY LEAVE] Giveaway found: {giveaway_id}, status: {giveaway['status']}")
         
         if giveaway['status'] != 'active':
             await interaction.response.send_message(
@@ -879,6 +902,8 @@ class GiveawaySystem(commands.Cog):
 
     async def _handle_remove_participants(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the remove participants button click."""
+        print(f"[GIVEAWAY REMOVE] User {interaction.user.id} attempting to remove participants from giveaway {giveaway_id}")
+        
         if not can_remove_participants(interaction.user):
             await interaction.response.send_message(
                 "❌ You don't have permission to remove participants.",
@@ -888,11 +913,14 @@ class GiveawaySystem(commands.Cog):
         
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway:
+            print(f"[GIVEAWAY REMOVE] Giveaway {giveaway_id} not found in database")
             await interaction.response.send_message(
                 "❌ This giveaway no longer exists.",
                 ephemeral=True
             )
             return
+        
+        print(f"[GIVEAWAY REMOVE] Giveaway found: {giveaway_id}, status: {giveaway['status']}")
         
         participants = db.get_participants(giveaway_id)
         
@@ -966,6 +994,8 @@ class GiveawaySystem(commands.Cog):
 
     async def _handle_add_participants(self, interaction: discord.Interaction, giveaway_id: str):
         """Handle the add participants button click."""
+        print(f"[GIVEAWAY ADD] User {interaction.user.id} attempting to add participants to giveaway {giveaway_id}")
+        
         if not can_remove_participants(interaction.user):
             await interaction.response.send_message(
                 "❌ You don't have permission to add participants.",
@@ -975,11 +1005,14 @@ class GiveawaySystem(commands.Cog):
         
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway:
+            print(f"[GIVEAWAY ADD] Giveaway {giveaway_id} not found in database")
             await interaction.response.send_message(
                 "❌ This giveaway no longer exists.",
                 ephemeral=True
             )
             return
+        
+        print(f"[GIVEAWAY ADD] Giveaway found: {giveaway_id}, status: {giveaway['status']}")
         
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
@@ -1245,15 +1278,25 @@ class GiveawaySystem(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         """Restore active giveaways on startup."""
+        print("[GIVEAWAY STARTUP] Restoring active giveaways...")
         active_giveaways = db.get_active_giveaways()
+        print(f"[GIVEAWAY STARTUP] Found {len(active_giveaways)} active giveaways")
+        
         for giveaway in active_giveaways:
             giveaway_id = giveaway['giveaway_id']
             end_timestamp = giveaway['end_timestamp']
+            current_time = datetime.now().timestamp()
             
-            if datetime.now().timestamp() >= end_timestamp:
+            print(f"[GIVEAWAY STARTUP] Processing giveaway {giveaway_id}, ends at {end_timestamp}, current time {current_time}")
+            
+            if current_time >= end_timestamp:
+                print(f"[GIVEAWAY STARTUP] Giveaway {giveaway_id} has expired, ending...")
                 asyncio.create_task(self._end_giveaway(giveaway_id))
             else:
+                print(f"[GIVEAWAY STARTUP] Giveaway {giveaway_id} is still active, starting timer...")
                 self._start_giveaway_timer(giveaway_id, end_timestamp)
+        
+        print("[GIVEAWAY STARTUP] Active giveaway restoration complete")
 
 
 async def setup(bot: commands.Bot):

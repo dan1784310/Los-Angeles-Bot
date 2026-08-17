@@ -46,19 +46,6 @@ class TicketSetup(commands.Cog):
             )
             view = discord.ui.View(timeout=None)
 
-            # Quick Edit Button
-            edit_button = discord.ui.Button(
-                label="✏️ Quick Edit",
-                style=discord.ButtonStyle.primary,
-                custom_id="quick_edit_setup"
-            )
-
-            async def on_quick_edit(button_interaction: discord.Interaction):
-                await self.show_edit_menu(button_interaction)
-
-            edit_button.callback = on_quick_edit
-            view.add_item(edit_button)
-
             # Reconfigure Button
             reconfigure_button = discord.ui.Button(
                 label="Reconfigure All",
@@ -155,43 +142,8 @@ class TicketSetup(commands.Cog):
         await self.step_1_ticket_config(interaction)
 
     # ==========================================
-    # Quick Edit Component & Handler
+    # STEP 1: Ticket Configuration
     # ==========================================
-
-    async def show_edit_menu(self, interaction: discord.Interaction):
-        """Displays a dropdown menu to select a specific setting to edit."""
-        
-        select = discord.ui.Select(
-            placeholder="Select a setting to edit...",
-            options=[
-                discord.SelectOption(label="Top Banner URL", value="banner_url", description="Change the top image banner", emoji="🖼️"),
-                discord.SelectOption(label="Bottom Banner URL", value="bottom_banner_url", description="Change the bottom image banner", emoji="🖼️"),
-            ]
-        )
-
-        async def select_callback(select_interaction: discord.Interaction):
-            selected = select.values[0]
-
-            if selected == "banner_url":
-                await select_interaction.response.send_modal(
-                    BannerURLModal(lambda i, url: self.save_quick_edit(i, 'banner_url', url))
-                )
-            elif selected == "bottom_banner_url":
-                await select_interaction.response.send_modal(
-                    BottomBannerModal(lambda i, url: self.save_quick_edit(i, 'bottom_banner_url', url))
-                )
-
-        select.callback = select_callback
-        edit_view = discord.ui.View(timeout=None)
-        edit_view.add_item(select)
-
-        await interaction.response.send_message(
-            "Select which component you want to update:",
-            view=edit_view,
-            ephemeral=True
-        )
-
-    async def save_quick_edit(self, interaction: discord.Interaction, field_key: str, value: str):
         """Saves the edited setting directly to DB and redeploys the panel."""
         await interaction.response.defer(ephemeral=True)
 
@@ -481,27 +433,6 @@ async def on_banner_submit(self, interaction: discord.Interaction, banner_url: s
             await self.categories_step(interaction)
             return
         
-        await interaction.response.send_message(
-            "Enter the **Bottom Banner Image URL** (optional):",
-            view=NavigationButtons(
-                on_back=lambda i: self.categories_step(i),
-                on_continue=lambda i: self.on_bottom_banner_continue(i),
-                on_cancel=lambda i: self.cancel_setup(i)
-            ),
-            ephemeral=True
-        )
-    
-    async def on_bottom_banner_continue(self, interaction: discord.Interaction):
-        """Continue after bottom banner configuration."""
-        await interaction.response.send_modal(
-            BottomBannerModal(lambda i, url: self.on_bottom_banner_submit(i, url))
-        )
-    
-    async def on_bottom_banner_submit(self, interaction: discord.Interaction, banner_url: str):
-        """Handle bottom banner URL submission."""
-        session = self.setup_sessions[interaction.user.id]
-        session['bottom_banner_url'] = banner_url if banner_url else None
-        
         await self.show_panel_preview(interaction)
     
     # ==========================================
@@ -535,10 +466,6 @@ async def on_banner_submit(self, interaction: discord.Interaction, banner_url: s
         components.append("📋 **Dropdown Menu:**")
         for cat in session['categories']:
             components.append(f"  • {cat}")
-        
-        if session['bottom_banner_url']:
-            components.append("────────────────────────")
-            components.append(f"🖼️ **Bottom Banner:** {session['bottom_banner_url']}")
         
         if components:
             embed.description = "\n".join(components)
@@ -677,7 +604,7 @@ async def on_banner_submit(self, interaction: discord.Interaction, banner_url: s
             'support_roles': session['support_roles'],
             'blacklisted_roles': session.get('blacklisted_roles', []),
             'banner_url': session['banner_url'],
-            'bottom_banner_url': session['bottom_banner_url'],
+            'bottom_banner_url': None,
             'text1': session['text_blocks'][1],
             'text2': session['text_blocks'][2],
             'text3': session['text_blocks'][3],
