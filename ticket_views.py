@@ -305,32 +305,46 @@ def build_ticket_management_view(
     category_name: str,
     on_close: Callable,
     on_claim: Optional[Callable] = None,
+    on_unclaim: Optional[Callable] = None,
+    claimed: bool = False,
     on_add_user: Optional[Callable] = None,
     on_remove_user: Optional[Callable] = None,
     on_transcript: Optional[Callable] = None,
-    accent_colour: Optional[discord.Colour] = None
+    accent_colour: Optional[discord.Colour] = None,
+    mention_line: Optional[str] = None
 ) -> discord.ui.LayoutView:
     """
-    Build the ticket management message using Components V2. Three
-    sections (configured text / inquiry / ticket info), each separated
-    by a Separator, with the management buttons in a row underneath
-    the last separator. Mentions/pings are NOT included here — send
-    those as a plain message alongside this one.
+    Build the ticket management message using Components V2. Mentions
+    sit at the very top (above the title), then three sections
+    (configured text / inquiry / ticket info) each separated by a
+    Separator, with the management buttons in a row underneath the
+    last separator.
+
+    This is the one and only public message — when a ticket is claimed
+    or unclaimed, the bot edits this same message in place (via
+    interaction.response.edit_message) with claimed=True/False, which
+    swaps the button between Claim and Unclaim. That swap is visible
+    to everyone looking at the channel, since it's a genuine edit of
+    the shared message.
     """
 
     view = discord.ui.LayoutView(timeout=None)
     container = discord.ui.Container(accent_colour=accent_colour)
 
-    # Section 1: configured category text
-    config_text = config_description or ''
+    # Section 1: mentions (if any), then the configured category text
+    top_lines = []
+    if mention_line:
+        top_lines.append(mention_line)
     if config_title:
-        config_text = f"**{config_title}**\n{config_text}" if config_text else f"**{config_title}**"
-    container.add_item(discord.ui.TextDisplay(config_text))
+        top_lines.append(f"## {config_title}")
+    if config_description:
+        top_lines.append(config_description)
+    container.add_item(discord.ui.TextDisplay("\n".join(top_lines)))
 
     # Section 2: the user's inquiry
     if issue_text:
         container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(f"Inquiry:\n{issue_text}"))
+        container.add_item(discord.ui.TextDisplay(f"**Inquiry:**\n**{issue_text}**"))
 
     # Section 3: ticket info
     container.add_item(discord.ui.Separator())
@@ -341,11 +355,13 @@ def build_ticket_management_view(
     )
     container.add_item(discord.ui.TextDisplay(info_text))
 
-    # Buttons
+    # Buttons — Claim swaps for Unclaim once claimed
     container.add_item(discord.ui.Separator())
     button_row = discord.ui.ActionRow()
     button_row.add_item(CloseTicketButton(on_close))
-    if on_claim:
+    if claimed and on_unclaim:
+        button_row.add_item(UnclaimButton(on_unclaim))
+    elif on_claim:
         button_row.add_item(ClaimTicketButton(on_claim))
     if on_add_user:
         button_row.add_item(AddUserButton(on_add_user))
@@ -430,13 +446,6 @@ class UnclaimButton(ui.Button):
         if self.callback_func:
             await self.callback_func(interaction)
 
-
-class UnclaimView(ui.View):
-    """Ephemeral view with a single Unclaim button, shown only to the claimant."""
-
-    def __init__(self, on_unclaim: Callable):
-        super().__init__(timeout=None)
-        self.add_item(UnclaimButton(on_unclaim))
 
 
 

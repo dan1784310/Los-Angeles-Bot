@@ -91,10 +91,14 @@ class TicketDatabase:
                 )
             """)
 
-            # Migration: add claimed_by to a pre-existing database that
-            # was created before this column existed.
+            # Migration: add claimed_by/issue_text to a pre-existing database
+            # that was created before these columns existed.
             try:
                 cursor.execute("ALTER TABLE tickets ADD COLUMN claimed_by INTEGER")
+            except Exception:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE tickets ADD COLUMN issue_text TEXT")
             except Exception:
                 pass  # Column already exists
             
@@ -222,15 +226,15 @@ class TicketDatabase:
     # Ticket Operations
     
     def create_ticket(self, guild_id: int, channel_id: int, user_id: int, 
-                     category_id: int, ticket_number: int) -> bool:
+                     category_id: int, ticket_number: int, issue_text: Optional[str] = None) -> bool:
         """Create a new ticket record."""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO tickets (guild_id, channel_id, user_id, category_id, ticket_number)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (guild_id, channel_id, user_id, category_id, ticket_number))
+                    INSERT INTO tickets (guild_id, channel_id, user_id, category_id, ticket_number, issue_text)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (guild_id, channel_id, user_id, category_id, ticket_number, issue_text))
                 
                 # Increment ticket counter
                 cursor.execute("""
@@ -259,6 +263,7 @@ class TicketDatabase:
                         'ticket_number': row['ticket_number'],
                         'status': row['status'],
                         'claimed_by': row['claimed_by'],
+                        'issue_text': row['issue_text'],
                         'created_at': row['created_at'],
                         'closed_at': row['closed_at']
                     }

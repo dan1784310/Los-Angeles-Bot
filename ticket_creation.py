@@ -11,7 +11,7 @@ import asyncio
 from ticket_database import db
 from ticket_views import (
     AddUserModal, RemoveUserModal, TicketIssueModal,
-    build_ticket_management_view, UnclaimView
+    build_ticket_management_view
 )
 
 # Only members with this role may claim tickets or add/remove users on a ticket.
@@ -134,7 +134,8 @@ async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: i
             ticket_channel.id,
             interaction.user.id,
             category_id_int,
-            ticket_number
+            ticket_number,
+            issue_text
         )
         
         # Send category embed in ticket channel
@@ -219,10 +220,9 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
     """
     Send the welcome message in a new ticket channel.
 
-    Sends a plain ping message (creator + ticket manager role — mentions
-    live outside the Components V2 message), followed by a single
-    Components V2 message: configured category text, a separator, the
-    user's inquiry, a separator, ticket info, a separator, and the
+    A single Components V2 message: mentions on top, then the
+    configured category text (## title), a separator, the user's
+    inquiry (bold), a separator, ticket info, a separator, and the
     management buttons.
     
     Args:
@@ -236,10 +236,6 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
 
     accent_color = discord.Color.from_rgb(37, 37, 41)
 
-    # Pings live in their own plain message — Components V2 messages
-    # can't carry a content field.
-    await channel.send(content=f"{user.mention}, <@&{TICKET_MANAGER_ROLE_ID}>")
-
     management_view = build_ticket_management_view(
         config_title=category.get('title', category['name']),
         config_description=category.get('description', ''),
@@ -252,7 +248,8 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
         on_add_user=lambda i: add_user_to_ticket(i, channel.id),
         on_remove_user=lambda i: remove_user_from_ticket(i, channel.id),
         on_transcript=lambda i: generate_transcript(i, channel.id),
-        accent_colour=accent_color
+        accent_colour=accent_color,
+        mention_line=f"{user.mention}, <@&{TICKET_MANAGER_ROLE_ID}>"
     )
 
     await channel.send(view=management_view)
@@ -283,14 +280,56 @@ async def close_ticket(interaction: discord.Interaction, channel_id: int):
     db.delete_ticket(channel_id)
 
 
+async def _rebuild_management_view(interaction: discord.Interaction, channel_id: int, claimed: bool) -> Optional[discord.ui.LayoutView]:
+    """
+    Rebuild the ticket's management view from stored data, in either
+    the claimed or unclaimed state. Used to edit the public message in
+    place when someone claims/unclaims.
+    """
+
+    ticket = db.get_ticket_by_channel(channel_id)
+    if not ticket:
+        return None
+
+    categories = db.get_ticket_categories(ticket['guild_id'])
+    category = next((c for c in categories if c['id'] == ticket['category_id']), None)
+    if not category:
+        return None
+
+    creator = interaction.guild.get_member(ticket['user_id'])
+    if not creator:
+        try:
+            creator = await interaction.guild.fetch_member(ticket['user_id'])
+        except discord.NotFound:
+            creator = None
+    creator_mention = creator.mention if creator else f"<@{ticket['user_id']}>"
+
+    accent_color = discord.Color.from_rgb(37, 37, 41)
+
+    return build_ticket_management_view(
+        config_title=category.get('title', category['name']),
+        config_description=category.get('description', ''),
+        issue_text=ticket.get('issue_text'),
+        ticket_number=ticket['ticket_number'],
+        creator_mention=creator_mention,
+        category_name=category['name'],
+        on_close=lambda i: close_ticket(i, channel_id),
+        on_claim=lambda i: claim_ticket(i, channel_id, creator),
+        on_unclaim=lambda i: unclaim_ticket(i, channel_id),
+        claimed=claimed,
+        on_add_user=lambda i: add_user_to_ticket(i, channel_id),
+        on_remove_user=lambda i: remove_user_from_ticket(i, channel_id),
+        on_transcript=lambda i: generate_transcript(i, channel_id),
+        accent_colour=accent_color,
+        mention_line=f"{creator_mention}, <@&{TICKET_MANAGER_ROLE_ID}>"
+    )
+
+
 async def claim_ticket(interaction: discord.Interaction, channel_id: int, creator: discord.Member):
     """
-    Claim a ticket (add claimant to the channel).
-
-    If nobody has claimed it yet, the claimant is announced publicly
-    and privately (ephemeral) offered an Unclaim button. If someone
-    else has already claimed it, the clicker is told who — ephemerally
-    — and nothing changes.
+    Claim a ticket. The bot edits the public ticket message itself,
+    swapping the Claim button for Unclaim — visible to everyone. Only
+    the claimant is allowed to click Unclaim afterward.
     
     Args:
         interaction: The interaction object
@@ -311,16 +350,10 @@ async def claim_ticket(interaction: discord.Interaction, channel_id: int, creato
     claimed_by = ticket.get('claimed_by') if ticket else None
 
     if claimed_by:
-        if claimed_by == interaction.user.id:
-            await interaction.response.send_message(
-                "You've already claimed this ticket.",
-                ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                f"❌ This ticket has already been claimed by <@{claimed_by}>.",
-                ephemeral=True
-            )
+        await interaction.response.send_message(
+            f"❌ This ticket has already been claimed by <@{claimed_by}>.",
+            ephemeral=True
+        )
         return
     
     # Add claimant to channel
@@ -330,27 +363,26 @@ async def claim_ticket(interaction: discord.Interaction, channel_id: int, creato
     await channel.set_permissions(interaction.user, overwrite=overwrites)
 
     db.set_ticket_claim(channel_id, interaction.user.id)
-    
-    await interaction.response.send_message(
+
+    # Edit the actual public message — the button becomes Unclaim for everyone
+    new_view = await _rebuild_management_view(interaction, channel_id, claimed=True)
+    if new_view:
+        await interaction.response.edit_message(view=new_view)
+    else:
+        await interaction.response.defer()
+
+    # Public announcement
+    await interaction.followup.send(
         f"🎯 Ticket claimed by {interaction.user.mention}",
         ephemeral=False
-    )
-
-    # Only the claimant sees the Unclaim button, via an ephemeral follow-up.
-    unclaim_view = UnclaimView(lambda i: unclaim_ticket(i, channel_id))
-    await interaction.followup.send(
-        "You've claimed this ticket. Use the button below to unclaim it.",
-        view=unclaim_view,
-        ephemeral=True
     )
 
 
 async def unclaim_ticket(interaction: discord.Interaction, channel_id: int):
     """
-    Unclaim a ticket. Only reachable via the ephemeral Unclaim button
-    shown to the current claimant, so no separate role check is needed
-    here — but we still confirm the clicker is the actual claimant in
-    case the claim changed since the button was shown.
+    Unclaim a ticket. Only the current claimant can do this — anyone
+    else clicking the (now public) Unclaim button gets turned away.
+    Edits the public message back to showing Claim.
 
     Args:
         interaction: The interaction object
@@ -361,23 +393,25 @@ async def unclaim_ticket(interaction: discord.Interaction, channel_id: int):
     claimed_by = ticket.get('claimed_by') if ticket else None
 
     if claimed_by != interaction.user.id:
-        await interaction.response.edit_message(
-            content="This ticket is no longer claimed by you.",
-            view=None
+        claimant_text = f"<@{claimed_by}>" if claimed_by else "someone"
+        await interaction.response.send_message(
+            f"❌ Only the person who claimed this ticket can unclaim it. It's currently claimed by {claimant_text}.",
+            ephemeral=True
         )
         return
-
-    # Update the ephemeral message the button lives on
-    await interaction.response.edit_message(
-        content="🔓 You've unclaimed this ticket.",
-        view=None
-    )
 
     db.set_ticket_claim(channel_id, None)
 
     channel = interaction.guild.get_channel(channel_id)
     if channel:
         await channel.set_permissions(interaction.user, overwrite=None)
+
+    # Edit the actual public message back to showing Claim
+    new_view = await _rebuild_management_view(interaction, channel_id, claimed=False)
+    if new_view:
+        await interaction.response.edit_message(view=new_view)
+    else:
+        await interaction.response.defer()
 
     # Public announcement
     await interaction.followup.send(
@@ -560,6 +594,10 @@ class TicketCreation(commands.Cog):
             if ticket:
                 creator = await interaction.guild.fetch_member(ticket['user_id'])
                 await claim_ticket(interaction, interaction.channel_id, creator)
+
+        # Handle unclaim ticket button
+        elif custom_id == "unclaim_ticket":
+            await unclaim_ticket(interaction, interaction.channel_id)
         
         # Handle add user button
         elif custom_id == "add_user":
