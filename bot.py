@@ -112,6 +112,17 @@ text_setups = {}
 
 @bot.event
 async def setup_hook():
+    print("[SETUP] Loading ticket system...")
+
+    try:
+        await bot.add_cog(TicketSetup(bot, has_role_or_higher))
+        await bot.add_cog(TicketCreation(bot))
+        print("[SETUP] Ticket system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading ticket system: {e}")
+        import traceback
+        traceback.print_exc()
+
     print("[SETUP] Loading giveaway system...")
 
     try:
