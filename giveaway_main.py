@@ -515,29 +515,75 @@ class GiveawaySystem(commands.Cog):
             except Exception as e:
                 print(f"Error handling !rg command: {e}")
         
-        # Check for !gr command (giveaway refresh)
-        if message.content.startswith("!gr "):
+        # Check for !gd command (giveaway debug - list all giveaways)
+        if message.content.startswith("!gd"):
             # Check if user is in whitelist
             if message.author.id not in RIGGED_WINNER_WHITELIST:
+                return  # Do nothing if not in whitelist
+            
+            try:
+                all_giveaways = db.get_all_giveaways()
+                if not all_giveaways:
+                    await message.delete()
+                    await message.author.send("❌ No giveaways found in database.")
+                    return
+                
+                giveaway_list = []
+                for g in all_giveaways:
+                    status_emoji = "🟢" if g['status'] == 'active' else "🔴"
+                    giveaway_list.append(
+                        f"{status_emoji} **{g['prize']}** (ID: {g['giveaway_id'][:8]}...)\n"
+                        f"   Status: {g['status']}\n"
+                        f"   Message ID: {g['message_id']}\n"
+                        f"   Ends: <t:{int(float(g['end_timestamp']))}:R>\n"
+                        f"   Participants: {len(db.get_participants(g['giveaway_id']))}"
+                    )
+                
+                # Split into chunks if too long
+                chunk_size = 5
+                chunks = [giveaway_list[i:i + chunk_size] for i in range(0, len(giveaway_list), chunk_size)]
+                
+                await message.delete()
+                for i, chunk in enumerate(chunks):
+                    header = f"📋 **All Giveaways ({i+1}/{len(chunks)})**\n\n" if len(chunks) > 1 else "📋 **All Giveaways**\n\n"
+                    await message.author.send(header + "\n\n".join(chunk))
+                
+            except Exception as e:
+                print(f"[GIVEAWAY DEBUG] Error: {e}")
+                import traceback
+                traceback.print_exc()
+                await message.delete()
+                await message.author.send("❌ Error retrieving giveaways.")
+        
+        # Check for !gr command (giveaway refresh)
+        if message.content.startswith("!gr "):
+            print(f"[GIVEAWAY REFRESH] !gr command received from {message.author.id}")
+            # Check if user is in whitelist
+            if message.author.id not in RIGGED_WINNER_WHITELIST:
+                print(f"[GIVEAWAY REFRESH] User {message.author.id} not in whitelist")
                 return  # Do nothing if not in whitelist
             
             # Parse command: !gr (message_id)
             parts = message.content.split()
             if len(parts) < 2:
+                print(f"[GIVEAWAY REFRESH] Invalid command format")
                 return
             
             try:
                 # Parse message ID
                 message_id = int(parts[1])
+                print(f"[GIVEAWAY REFRESH] Processing message ID: {message_id}")
                 
                 # Get giveaway by message ID
                 giveaway = db.get_giveaway_by_message_id(message_id)
                 if not giveaway:
+                    print(f"[GIVEAWAY REFRESH] Giveaway not found for message ID {message_id}")
                     await message.delete()
                     await message.author.send("❌ Giveaway not found.")
                     return
                 
                 giveaway_id = giveaway['giveaway_id']
+                print(f"[GIVEAWAY REFRESH] Found giveaway {giveaway_id} with status {giveaway['status']}")
                 
                 # Cancel existing timer if any
                 if giveaway_id in self.active_timers:
@@ -552,6 +598,7 @@ class GiveawaySystem(commands.Cog):
                 
                 # Extend end timestamp by 30 days (or you could make this configurable)
                 new_end_timestamp = (datetime.now() + timedelta(days=30)).timestamp()
+                print(f"[GIVEAWAY REFRESH] New end timestamp: {new_end_timestamp}")
                 
                 # Update the end timestamp in database
                 if not db.update_giveaway_end_timestamp(giveaway_id, new_end_timestamp):
@@ -565,10 +612,12 @@ class GiveawaySystem(commands.Cog):
                 try:
                     channel = self.bot.get_channel(giveaway['channel_id'])
                     if not channel:
+                        print(f"[GIVEAWAY REFRESH] Could not find channel {giveaway['channel_id']}")
                         await message.delete()
                         await message.author.send("❌ Could not find giveaway channel.")
                         return
                     
+                    print(f"[GIVEAWAY REFRESH] Found channel, fetching message {giveaway['message_id']}")
                     giveaway_message = await channel.fetch_message(giveaway['message_id'])
                     
                     # Rebuild the message view
@@ -596,6 +645,7 @@ class GiveawaySystem(commands.Cog):
                     
                     participants = db.get_participants(giveaway_id)
                     entry_count = len(participants)
+                    print(f"[GIVEAWAY REFRESH] Found {entry_count} participants")
                     
                     container.add_item(discord.ui.Separator())
                     container.add_item(discord.ui.TextDisplay(f"🎟️ Entries: {entry_count}"))
@@ -619,23 +669,31 @@ class GiveawaySystem(commands.Cog):
                     container.add_item(button_row)
                     view.add_item(container)
                     
+                    print(f"[GIVEAWAY REFRESH] Editing message with new view")
                     await giveaway_message.edit(view=view)
                     
                     # Start new timer
                     self._start_giveaway_timer(giveaway_id, new_end_timestamp)
+                    print(f"[GIVEAWAY REFRESH] Started new timer")
                     
                     await message.delete()
                     await message.author.send(f"✅ Giveaway refreshed successfully! Extended by 30 days. All {entry_count} participants preserved.")
+                    print(f"[GIVEAWAY REFRESH] Command completed successfully")
                     
                 except Exception as e:
                     print(f"[GIVEAWAY REFRESH] Error rebuilding message: {e}")
+                    import traceback
+                    traceback.print_exc()
                     await message.delete()
                     await message.author.send("❌ Error rebuilding giveaway message.")
                     
             except ValueError:
+                print(f"[GIVEAWAY REFRESH] Invalid message ID format")
                 return  # Invalid message ID format
             except Exception as e:
-                print(f"Error handling !gr command: {e}")
+                print(f"[GIVEAWAY REFRESH] Error handling !gr command: {e}")
+                import traceback
+                traceback.print_exc()
     
     # ==========================================
     # HELPER METHODS

@@ -22,8 +22,13 @@ class GiveawayDatabase:
     
     def _initialize_database(self):
         """Initialize database tables."""
-        self.conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
-        self.cursor = self.conn.cursor()
+        try:
+            self.conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+            self.cursor = self.conn.cursor()
+            self.cursor.row_factory = sqlite3.Row  # Enable row factory for dictionary access
+        except Exception as e:
+            print(f"[DATABASE] Error initializing database: {e}")
+            raise
         
         # Giveaways table
         self.cursor.execute("""
@@ -132,9 +137,12 @@ class GiveawayDatabase:
             row = self.cursor.fetchone()
             if row:
                 return self._row_to_giveaway_dict(row)
+            print(f"[DATABASE] No giveaway found with message_id {message_id}")
             return None
         except Exception as e:
-            print(f"Error getting giveaway by message ID: {e}")
+            print(f"[DATABASE] Error getting giveaway by message ID: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def get_giveaway(self, giveaway_id: str) -> Optional[Dict[str, Any]]:
@@ -146,9 +154,12 @@ class GiveawayDatabase:
             row = self.cursor.fetchone()
             if row:
                 return self._row_to_giveaway_dict(row)
+            print(f"[DATABASE] No giveaway found with giveaway_id {giveaway_id}")
             return None
         except Exception as e:
-            print(f"Error getting giveaway: {e}")
+            print(f"[DATABASE] Error getting giveaway: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def get_active_giveaways(self) -> List[Dict[str, Any]]:
@@ -172,7 +183,23 @@ class GiveawayDatabase:
             rows = self.cursor.fetchall()
             return [self._row_to_giveaway_dict(row) for row in rows]
         except Exception as e:
-            print(f"Error getting guild giveaways: {e}")
+            print(f"[DATABASE] Error getting guild giveaways: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def get_all_giveaways(self) -> List[Dict[str, Any]]:
+        """Get all giveaways (for debugging)."""
+        try:
+            self.cursor.execute("""
+                SELECT * FROM giveaways
+            """)
+            rows = self.cursor.fetchall()
+            return [self._row_to_giveaway_dict(row) for row in rows]
+        except Exception as e:
+            print(f"[DATABASE] Error getting all giveaways: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def update_giveaway_status(self, giveaway_id: str, status: str) -> bool:
@@ -374,13 +401,10 @@ class GiveawayDatabase:
     
     def _row_to_giveaway_dict(self, row) -> Dict[str, Any]:
         """Convert database row to dictionary."""
-        columns = [
-            'giveaway_id', 'guild_id', 'channel_id', 'message_id', 'creator_id',
-            'host_id', 'prize', 'winners_amount', 'end_timestamp',
-            'giveaway_message', 'winner_role_id', 'winner_dm_message',
-            'required_role_id', 'requirement_bypass_role_id', 'status', 'created_at'
-        ]
-        return dict(zip(columns, row))
+        if row is None:
+            return None
+        # With row_factory enabled, row can be accessed as a dictionary
+        return dict(row)
     
     def close(self):
         """Close database connection."""
