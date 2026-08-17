@@ -111,35 +111,14 @@ text_setups = {}
 # ==========================================
 
 @bot.event
-async def on_ready():
-    print(f"ONLINE AS {bot.user}")
+async def setup_hook():
+    print("[SETUP] Loading giveaway system...")
 
-    # Register persistent views for session panel
-    bot.add_view(SessionPanelView())
-
-    # Load ticket system cogs BEFORE syncing commands
     try:
-        print("Loading TicketSetup cog...")
-        await bot.add_cog(TicketSetup(bot, has_role_or_higher))
-        print("TicketSetup cog loaded")
-        
-        print("Loading TicketCreation cog...")
-        await bot.add_cog(TicketCreation(bot))
-        print("TicketCreation cog loaded")
-        
-        print("Ticket system loaded successfully")
-    except Exception as e:
-        print(f"Error loading ticket system: {e}")
-        import traceback
-        traceback.print_exc()
-
-    # Load giveaway system
-    try:
-        print("Loading Giveaway system...")
         await setup_giveaway(bot)
-        print("Giveaway system loaded successfully")
+        print("[SETUP] Giveaway system loaded successfully")
     except Exception as e:
-        print(f"Error loading giveaway system: {e}")
+        print(f"[SETUP] Error loading giveaway system: {e}")
         import traceback
         traceback.print_exc()
 
