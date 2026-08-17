@@ -379,13 +379,13 @@ class TicketSetup(commands.Cog):
             BannerURLModal(lambda i, url: self.on_banner_submit(i, url))
         )
     
-async def on_banner_submit(self, interaction: discord.Interaction, banner_url: str):
-    """Handle banner URL submission with validation."""
-    session = self.setup_sessions[interaction.user.id]
-    cleaned_url = banner_url.strip() if banner_url else ""
-    session['banner_url'] = cleaned_url if cleaned_url.startswith(("http://", "https://")) else None
-    
-    await self.text_block_step(interaction, 1)
+    async def on_banner_submit(self, interaction: discord.Interaction, banner_url: str):
+        """Handle banner URL submission with validation."""
+        session = self.setup_sessions[interaction.user.id]
+        cleaned_url = banner_url.strip() if banner_url else ""
+        session['banner_url'] = cleaned_url if cleaned_url.startswith(("http://", "https://")) else None
+        
+        await self.text_block_step(interaction, 1)
     
     async def text_block_step(self, interaction: discord.Interaction, block_number: int):
         """Handle text block configuration."""

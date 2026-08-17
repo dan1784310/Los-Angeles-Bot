@@ -135,7 +135,7 @@ async def setup_hook():
 
     try:
         synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
+        print(f"Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}")
     except Exception as e:
         print(e)
 
