@@ -1050,5 +1050,12 @@ def run_web():
 # ==========================================
 
 if __name__ == "__main__":
+    if not TOKEN:
+        raise SystemExit(
+            "TOKEN environment variable is not set. On Render, add it under "
+            "your service's Environment tab (Environment > Add Environment Variable, "
+            "key 'TOKEN', value your Discord bot token) — it is NOT read from a "
+            "committed .env file."
+        )
     threading.Thread(target=run_web, daemon=True).start()
     bot.run(TOKEN)
