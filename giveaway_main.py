@@ -554,18 +554,20 @@ class GiveawaySystem(commands.Cog):
             accent_colour=GIVEAWAY_ACCENT_COLOUR
         )
         
+        # Bundle the intro lines into one Section (up to 3 TextDisplay
+        # children) so the Thumbnail scales up to match — taller and
+        # proportionally wider than a single title line would give it.
+        header_texts = [discord.ui.TextDisplay(f"## {prize}")]
+        if host is not None:
+            header_texts.append(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
+        header_texts.append(discord.ui.TextDisplay(
+            f"🏆 Winners: {winners}\n⏰ Ends: <t:{end_timestamp}:R>"
+        ))
         header_section = discord.ui.Section(
-            discord.ui.TextDisplay(f"## {prize}"),
+            *header_texts,
             accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
         )
         container.add_item(header_section)
-        container.add_item(discord.ui.Separator())
-        
-        if host is not None:
-            container.add_item(discord.ui.TextDisplay(f"Hosted by {host.mention}"))
-        
-        container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners}"))
-        container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{end_timestamp}:R>"))
         
         if message:
             container.add_item(discord.ui.Separator())
@@ -620,18 +622,17 @@ class GiveawaySystem(commands.Cog):
                 accent_colour=GIVEAWAY_ACCENT_COLOUR
             )
             
+            header_texts = [discord.ui.TextDisplay(f"## {giveaway['prize']}")]
+            if giveaway['host_id']:
+                header_texts.append(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
+            header_texts.append(discord.ui.TextDisplay(
+                f"🏆 Winners: {giveaway['winners_amount']}\n⏰ Ends: <t:{int(float(giveaway['end_timestamp']))}:R>"
+            ))
             header_section = discord.ui.Section(
-                discord.ui.TextDisplay(f"## {giveaway['prize']}"),
+                *header_texts,
                 accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
             )
             container.add_item(header_section)
-            container.add_item(discord.ui.Separator())
-            
-            if giveaway['host_id']:
-                container.add_item(discord.ui.TextDisplay(f"Hosted by <@{giveaway['host_id']}>"))
-            
-            container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {giveaway['winners_amount']}"))
-            container.add_item(discord.ui.TextDisplay(f"⏰ Ends: <t:{int(float(giveaway['end_timestamp']))}:R>"))
             
             if giveaway['giveaway_message']:
                 container.add_item(discord.ui.Separator())
@@ -1156,17 +1157,14 @@ class GiveawaySystem(commands.Cog):
             accent_colour=GIVEAWAY_ACCENT_COLOUR
         )
         
+        winners_text = "\n".join(winner_mentions)
         header_section = discord.ui.Section(
             discord.ui.TextDisplay("🎉 Giveaway Ended!"),
+            discord.ui.TextDisplay(f"🎁 Prize: **{giveaway['prize']}**"),
+            discord.ui.TextDisplay(f"🏆 Winners: {winners_text}"),
             accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
         )
         container.add_item(header_section)
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(f"🎁 Prize: **{giveaway['prize']}**"))
-        container.add_item(discord.ui.Separator())
-        
-        winners_text = "\n".join(winner_mentions)
-        container.add_item(discord.ui.TextDisplay(f"🏆 Winners: {winners_text}"))
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay("Congratulations! 🎉"))
         
@@ -1183,11 +1181,10 @@ class GiveawaySystem(commands.Cog):
         
         header_section = discord.ui.Section(
             discord.ui.TextDisplay("❌ Giveaway Ended"),
+            discord.ui.TextDisplay("No valid entries were found."),
             accessory=discord.ui.Thumbnail(media=GIVEAWAY_IMAGE_URL)
         )
         container.add_item(header_section)
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay("No valid entries were found."))
         
         view.add_item(container)
         
