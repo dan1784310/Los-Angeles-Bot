@@ -35,19 +35,33 @@ class TicketSetup(commands.Cog):
     
     @app_commands.command(name="ticket_setup", description="Setup the ticket system")
     async def setup(self, interaction: discord.Interaction):
-        """Start the ticket system setup wizard."""
+        """Start the ticket system setup wizard or edit existing settings."""
         
         # Check if setup already exists
         if db.has_guild_settings(interaction.guild_id):
             embed = discord.Embed(
-                title="⚠️ Setup Already Exists",
-                description="Your server already has a ticket system configured. Would you like to reconfigure it?",
-                color=discord.Color.yellow()
+                title="⚙️ Ticket System Configuration",
+                description="Your server already has a ticket system configured. Choose an action below:",
+                color=discord.Color.blue()
             )
             view = discord.ui.View(timeout=None)
 
+            # Quick Edit Button
+            edit_button = discord.ui.Button(
+                label="✏️ Quick Edit",
+                style=discord.ButtonStyle.primary,
+                custom_id="quick_edit_setup"
+            )
+
+            async def on_quick_edit(button_interaction: discord.Interaction):
+                await self.show_edit_menu(button_interaction)
+
+            edit_button.callback = on_quick_edit
+            view.add_item(edit_button)
+
+            # Reconfigure Button
             reconfigure_button = discord.ui.Button(
-                label="Reconfigure",
+                label="Reconfigure All",
                 style=discord.ButtonStyle.danger,
                 custom_id="reconfigure_setup"
             )
@@ -72,15 +86,15 @@ class TicketSetup(commands.Cog):
             reconfigure_button.callback = on_reconfigure
             view.add_item(reconfigure_button)
 
+            # Refresh Button
             refresh_button = discord.ui.Button(
-                label="Refresh",
+                label="Refresh Panel",
                 style=discord.ButtonStyle.success,
                 custom_id="refresh_setup"
             )
 
             async def on_refresh(button_interaction: discord.Interaction):
                 await button_interaction.response.defer(ephemeral=True)
-
                 from ticket_panel import update_panel
 
                 try:
@@ -91,44 +105,40 @@ class TicketSetup(commands.Cog):
 
                 if success:
                     await button_interaction.followup.send(
-                        "✅ Panel refreshed — it's been rebuilt from your current settings "
-                        "(fixes broken images, stale banners, and a dropdown that stopped "
-                        "responding after a restart) without changing any of your configuration.",
+                        "✅ Panel refreshed from your saved settings!",
                         ephemeral=True
                     )
                 else:
                     await button_interaction.followup.send(
-                        "❌ Couldn't refresh the panel. Make sure the panel channel and "
-                        "at least one category are still configured correctly.",
+                        "❌ Couldn't refresh the panel. Check channel permissions.",
                         ephemeral=True
                     )
 
             refresh_button.callback = on_refresh
             view.add_item(refresh_button)
 
+            # Cancel Button
             cancel_button = discord.ui.Button(
                 label="Cancel",
                 style=discord.ButtonStyle.secondary,
                 custom_id="cancel_reconfigure"
             )
 
-            async def on_cancel_reconfigure(button_interaction: discord.Interaction):
+            async def on_cancel(button_interaction: discord.Interaction):
                 await button_interaction.response.edit_message(
-                    content="❌ Cancelled. Your existing setup was left unchanged.",
+                    content="❌ Operation cancelled.",
                     embed=None,
                     view=None
                 )
 
-            cancel_button.callback = on_cancel_reconfigure
+            cancel_button.callback = on_cancel
             view.add_item(cancel_button)
 
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             return
         
-        # Start new setup
+        # Start new setup if no configuration exists
         await interaction.response.defer(ephemeral=True)
-        
-        # Initialize setup session
         self.setup_sessions[interaction.user.id] = {
             'step': 1,
             'guild_id': interaction.guild_id,
@@ -142,8 +152,79 @@ class TicketSetup(commands.Cog):
             'categories': [],
             'category_configs': {}
         }
-        
         await self.step_1_ticket_config(interaction)
+
+    # ==========================================
+    # Quick Edit Component & Handler
+    # ==========================================
+
+    async def show_edit_menu(self, interaction: discord.Interaction):
+        """Displays a dropdown menu to select a specific setting to edit."""
+        
+        select = discord.ui.Select(
+            placeholder="Select a setting to edit...",
+            options=[
+                discord.SelectOption(label="Top Banner URL", value="banner_url", description="Change the top image banner", emoji="🖼️"),
+                discord.SelectOption(label="Bottom Banner URL", value="bottom_banner_url", description="Change the bottom image banner", emoji="🖼️"),
+            ]
+        )
+
+        async def select_callback(select_interaction: discord.Interaction):
+            selected = select.values[0]
+
+            if selected == "banner_url":
+                await select_interaction.response.send_modal(
+                    BannerURLModal(lambda i, url: self.save_quick_edit(i, 'banner_url', url))
+                )
+            elif selected == "bottom_banner_url":
+                await select_interaction.response.send_modal(
+                    BottomBannerModal(lambda i, url: self.save_quick_edit(i, 'bottom_banner_url', url))
+                )
+
+        select.callback = select_callback
+        edit_view = discord.ui.View(timeout=None)
+        edit_view.add_item(select)
+
+        await interaction.response.send_message(
+            "Select which component you want to update:",
+            view=edit_view,
+            ephemeral=True
+        )
+
+    async def save_quick_edit(self, interaction: discord.Interaction, field_key: str, value: str):
+        """Saves the edited setting directly to DB and redeploys the panel."""
+        await interaction.response.defer(ephemeral=True)
+
+        settings = db.get_guild_settings(interaction.guild_id)
+        if not settings:
+            await interaction.followup.send("❌ Settings not found in database.", ephemeral=True)
+            return
+
+        # Clean URL or set to None
+        cleaned_val = value.strip() if value else None
+        if cleaned_val and not cleaned_val.startswith(("http://", "https://")):
+            cleaned_val = None
+
+        # Update setting field
+        settings[field_key] = cleaned_val
+
+        # Save back to database
+        if db.save_guild_settings(interaction.guild_id, settings):
+            from ticket_panel import update_panel
+            success = await update_panel(interaction.guild, db)
+
+            if success:
+                await interaction.followup.send(
+                    f"✅ **{field_key.replace('_', ' ').title()}** updated! Ticket panel has been refreshed.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    f"⚠️ Saved to database, but failed to refresh the panel message automatically.",
+                    ephemeral=True
+                )
+        else:
+            await interaction.followup.send("❌ Failed to update database.", ephemeral=True)
     
     # ==========================================
     # STEP 1: Ticket Configuration
