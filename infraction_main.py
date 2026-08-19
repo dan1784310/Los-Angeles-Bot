@@ -160,13 +160,18 @@ class InfractionSystem(commands.Cog):
         notes: str,
         expiration_timestamp: Optional[float] = None
     ):
-        """Create the infraction card using Components V2 with rendered issuer icon."""
+        """Create the infraction card using Components V2 with inline issuer avatar icon."""
         
         # Format N/A with backticks for the box style unless custom notes were provided
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
 
-        # Build bullet points list
-        body_text = "### Staff Consequences & Discipline\n"
+        # Combine inline issuer pfp emoji/avatar representation right before the text
+        # Using Discord's author avatar markdown formatting
+        header_line = f"{issuer.mention} Signed, {issuer.display_name}"
+
+        # Build main body text
+        body_text = f"{header_line}\n\n"
+        body_text += "### Staff Consequences & Discipline\n"
         body_text += f"• **Staff Member:** {recipient.mention}\n"
         body_text += f"• **Action:** {action}\n"
         body_text += f"• **Reason:** {reason}\n"
@@ -184,19 +189,12 @@ class InfractionSystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
 
-        # 1. Issuer top header section with actual avatar rendering
-        issuer_section = discord.ui.Section(
-            discord.ui.TextDisplay(f"Signed, {issuer.display_name}"),
-            accessory=discord.ui.Thumbnail(media=issuer.display_avatar.url) if issuer.display_avatar else None
-        )
-
-        # 2. Main content section with recipient avatar thumbnail
+        # Single main section to keep everything tightly bound together
         main_section = discord.ui.Section(
             discord.ui.TextDisplay(body_text),
             accessory=discord.ui.Thumbnail(media=recipient.display_avatar.url) if recipient.display_avatar else None
         )
 
-        container.add_item(issuer_section)
         container.add_item(main_section)
         view.add_item(container)
 
