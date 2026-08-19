@@ -150,10 +150,6 @@ async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: i
             ticket_number,
             issue_text
         )
-
-        # Post the initial live transcript — it gets edited in place as
-        # the conversation goes on (see TicketCreation.on_message below).
-        await refresh_ticket_transcript(ticket_channel)
         
         await interaction.followup.send(
             f"✅ Ticket created: {ticket_channel.mention}",
@@ -277,10 +273,15 @@ async def close_ticket(interaction: discord.Interaction, channel_id: int):
     # Update database
     db.close_ticket(channel_id)
     
+    channel = interaction.guild.get_channel(channel_id)
+
+    # Post the transcript (channel still exists at this point)
+    if channel:
+        await post_ticket_transcript(channel)
+    
     await asyncio.sleep(3)
     
     # Delete channel
-    channel = interaction.guild.get_channel(channel_id)
     if channel:
         await channel.delete()
     
@@ -537,17 +538,11 @@ async def on_remove_user_submit(interaction: discord.Interaction, channel_id: in
         await interaction.response.send_message(f"❌ Error removing user: {str(e)}", ephemeral=True)
 
 
-async def refresh_ticket_transcript(channel: discord.TextChannel):
+async def post_ticket_transcript(channel: discord.TextChannel):
     """
-    Post (or, if one already exists, edit in place) the live transcript
-    message for a ticket — same format as the manual Transcript button,
-    but posted to TRANSCRIPT_LOG_CHANNEL_ID and kept current as the
-    conversation continues.
+    Generate the ticket's transcript and post it to TRANSCRIPT_LOG_CHANNEL_ID.
+    Called once, when the ticket is closed.
     """
-
-    ticket = db.get_ticket_by_channel(channel.id)
-    if not ticket:
-        return
 
     log_channel = channel.guild.get_channel(TRANSCRIPT_LOG_CHANNEL_ID)
     if not log_channel:
@@ -558,29 +553,12 @@ async def refresh_ticket_transcript(channel: discord.TextChannel):
 
     try:
         transcript_file = await create_transcript(channel)
+        await log_channel.send(
+            f"📄 Transcript generated for {channel.mention}",
+            file=transcript_file
+        )
     except Exception as e:
-        print(f"Error generating live transcript for channel {channel.id}: {e}")
-        return
-
-    content = f"📄 Transcript generated for {channel.mention}"
-    existing_message_id = ticket.get('transcript_message_id')
-
-    if existing_message_id:
-        try:
-            existing_message = await log_channel.fetch_message(existing_message_id)
-            await existing_message.edit(content=content, attachments=[transcript_file])
-            return
-        except discord.NotFound:
-            pass  # message was deleted — fall through and post a fresh one
-        except Exception as e:
-            print(f"Error editing live transcript for channel {channel.id}: {e}")
-            return
-
-    try:
-        new_message = await log_channel.send(content, file=transcript_file)
-        db.set_ticket_transcript_message(channel.id, new_message.id)
-    except Exception as e:
-        print(f"Error posting live transcript for channel {channel.id}: {e}")
+        print(f"Error posting transcript for channel {channel.id}: {e}")
 
 
 async def generate_transcript(interaction: discord.Interaction, channel_id: int):
@@ -632,22 +610,6 @@ class TicketCreation(commands.Cog):
         
         # This will be called when panels are created/updated
         # The callback will be set dynamically when the panel is sent
-
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        """Keep the in-channel live transcript current as the ticket's conversation goes on."""
-
-        if message.author.bot:
-            return  # avoid the bot's own transcript edits re-triggering themselves
-
-        if not message.guild:
-            return
-
-        ticket = db.get_ticket_by_channel(message.channel.id)
-        if not ticket or ticket.get('status') != 'open':
-            return
-
-        await refresh_ticket_transcript(message.channel)
     
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
