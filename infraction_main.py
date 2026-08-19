@@ -160,72 +160,37 @@ class InfractionSystem(commands.Cog):
         notes: str,
         expiration_timestamp: Optional[float] = None
     ):
-        """Create the infraction card using Components V2."""
+        """Create the infraction card using Discord embed for better layout control."""
         
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        # Create embed
+        embed = discord.Embed(
+            title="Staff Consequences & Discipline",
+            color=discord.Color.from_rgb(37, 37, 41)
         )
         
-        # Title
-        container.add_item(discord.ui.TextDisplay(
-            f"## Staff Consequences & Discipline"
-        ))
-        container.add_item(discord.ui.Separator())
+        # Set author with issuer profile picture and "Signed" text (top left)
+        embed.set_author(
+            name=f"Signed, {issuer.display_name}",
+            icon_url=issuer.display_avatar.url
+        )
         
-        # Profile pictures using MediaGallery
-        try:
-            # Create a media gallery with both profile pictures
-            media_gallery = discord.ui.MediaGallery()
-            
-            # Add issuer profile picture (left - circular)
-            media_gallery.add_item(discord.MediaGalleryItem(
-                media=issuer.display_avatar.url,
-                description=f"Signed, {issuer.display_name}"
-            ))
-            
-            # Add recipient profile picture (right - square)
-            media_gallery.add_item(discord.MediaGalleryItem(
-                media=recipient.display_avatar.url,
-                description=recipient.display_name
-            ))
-            
-            container.add_item(media_gallery)
-        except Exception as e:
-            print(f"Error adding profile pictures: {e}")
-            # Fallback to text if images fail
-            container.add_item(discord.ui.TextDisplay(
-                f"👤 **Signed, {issuer.display_name}**                    👤 **{recipient.display_name}**"
-            ))
+        # Set thumbnail for recipient profile picture (top right)
+        embed.set_thumbnail(url=recipient.display_avatar.url)
         
-        container.add_item(discord.ui.Separator())
+        # Add fields with bullet points
+        embed.add_field(name="Staff Member", value=recipient.mention, inline=False)
+        embed.add_field(name="Action", value=action, inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
         
-        # Profile names row with "Signed" label
-        container.add_item(discord.ui.TextDisplay(
-            f"**Signed, {issuer.display_name}**                    **{recipient.display_name}**"
-        ))
-        container.add_item(discord.ui.Separator())
-        
-        # Staff Member field
-        container.add_item(discord.ui.TextDisplay(f"**Staff Member:** {recipient.mention}"))
-        
-        # Action field
-        container.add_item(discord.ui.TextDisplay(f"**Action:** {action}"))
-        
-        # Reason field
-        container.add_item(discord.ui.TextDisplay(f"**Reason:** {reason}"))
-        
-        # Expiration field (only if set)
+        # Add expiration if set
         if expiration_timestamp:
             expiration_text = f"<t:{int(expiration_timestamp)}:R>"
-            container.add_item(discord.ui.TextDisplay(f"**Expiration:** {expiration_text}"))
+            embed.add_field(name="Expiration", value=expiration_text, inline=False)
         
-        # Notes field
-        container.add_item(discord.ui.TextDisplay(f"**Notes:** {notes}"))
+        # Add notes
+        embed.add_field(name="Notes", value=notes, inline=False)
         
-        view.add_item(container)
-        
-        await channel.send(view=view)
+        await channel.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
