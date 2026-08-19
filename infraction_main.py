@@ -160,45 +160,40 @@ class InfractionSystem(commands.Cog):
         notes: str,
         expiration_timestamp: Optional[float] = None
     ):
-        """Create the infraction card using Components V2 with inline issuer avatar icon."""
+        """Create the infraction card matching the exact image layout."""
         
-        # Format N/A with backticks for the box style unless custom notes were provided
+        # Create embed with dark charcoal accent
+        embed = discord.Embed(
+            title="Staff Consequences & Discipline",
+            color=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        # Author field creates the exact small pfp circle next to the sign-off text
+        embed.set_author(
+            name=f"Signed, {issuer.display_name}",
+            icon_url=issuer.display_avatar.url
+        )
+        
+        # Thumbnail pins the recipient profile picture to the top right
+        embed.set_thumbnail(url=recipient.display_avatar.url)
+        
+        # Format N/A with backticks for the inline box style
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
-
-        # Combine inline issuer pfp emoji/avatar representation right before the text
-        # Using Discord's author avatar markdown formatting
-        header_line = f"{issuer.mention} Signed, {issuer.display_name}"
-
-        # Build main body text
-        body_text = f"{header_line}\n\n"
-        body_text += "### Staff Consequences & Discipline\n"
-        body_text += f"• **Staff Member:** {recipient.mention}\n"
-        body_text += f"• **Action:** {action}\n"
-        body_text += f"• **Reason:** {reason}\n"
-
+        
+        # Build description with bold bullet points and single-line spacing
+        description = f"• **Staff Member:** {recipient.mention}\n"
+        description += f"• **Action:** {action}\n"
+        description += f"• **Reason:** {reason}\n"
+        
         if expiration_timestamp:
             expiration_text = f"<t:{int(expiration_timestamp)}:R>"
-            body_text += f"• **Expiration:** {expiration_text}\n"
-
-        body_text += f"• **Notes:** {formatted_notes}"
-
-        # Build Components V2 view
-        view = discord.ui.LayoutView(timeout=None)
+            description += f"• **Expiration:** {expiration_text}\n"
+            
+        description += f"• **Notes:** {formatted_notes}"
         
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
-        )
-
-        # Single main section to keep everything tightly bound together
-        main_section = discord.ui.Section(
-            discord.ui.TextDisplay(body_text),
-            accessory=discord.ui.Thumbnail(media=recipient.display_avatar.url) if recipient.display_avatar else None
-        )
-
-        container.add_item(main_section)
-        view.add_item(container)
-
-        await channel.send(view=view)
+        embed.description = description
+        
+        await channel.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
