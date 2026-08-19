@@ -22,6 +22,9 @@ from session_panel import setup_session_commands, SessionPanelView
 # Import giveaway system modules
 from giveaway_main import setup as setup_giveaway
 
+# Import infraction system modules
+from infraction_main import setup as setup_infraction
+
 # ==========================================
 # COMMAND ROLE PERMISSIONS CONFIGURATION
 # Format: "command_name": REQUIRED_ROLE_ID
@@ -33,6 +36,7 @@ COMMAND_ROLE_PERMISSIONS = {
     "ticket_setup":  1526959787219091486,  # Replace with actual Role ID
     "inputresults":  1527367791592607755,  # Replace with actual Role ID for results
     "feedback":      1527051350016397312,  # Replace with actual Role ID allowed to give/manage feedback
+    "infraction":    1527053497525207163,  # Replace with actual Role ID for infractions
 }
 
 # ==========================================
@@ -131,6 +135,16 @@ async def setup_hook():
         print("[SETUP] Giveaway system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading giveaway system: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print("[SETUP] Loading infraction system...")
+
+    try:
+        await setup_infraction(bot, has_role_or_higher)
+        print("[SETUP] Infraction system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading infraction system: {e}")
         import traceback
         traceback.print_exc()
 
