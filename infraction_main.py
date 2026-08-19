@@ -34,12 +34,8 @@ INFRACTION_ACTIONS = [
 class InfractionSystem(commands.Cog):
     """Main infraction system cog."""
     
-    def __init__(self, bot: commands.Bot, has_role_or_higher):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.has_role_or_higher = has_role_or_higher
-        
-        # Apply the role check dynamically to the slash command
-        self.issue = self.has_role_or_higher("infraction")(self.issue)
     
     # ==========================================
     # INFRACTION COMMAND GROUP
@@ -76,6 +72,14 @@ class InfractionSystem(commands.Cog):
         channel: Optional[discord.TextChannel] = None
     ):
         """Issue an infraction to a staff member."""
+        
+        # Check permissions
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need administrator permissions to issue infractions.",
+                ephemeral=True
+            )
+            return
         
         # Defer response
         await interaction.response.defer(ephemeral=True)
@@ -214,10 +218,6 @@ class InfractionSystem(commands.Cog):
         await channel.send(view=view)
 
 
-async def setup(bot: commands.Bot, has_role_or_higher=None):
+async def setup(bot: commands.Bot):
     """Setup the infraction cog."""
-    # Fallback function if loaded without passing permission check
-    if has_role_or_higher is None:
-        has_role_or_higher = getattr(bot, 'has_role_or_higher', None)
-        
-    await bot.add_cog(InfractionSystem(bot, has_role_or_higher))
+    await bot.add_cog(InfractionSystem(bot))

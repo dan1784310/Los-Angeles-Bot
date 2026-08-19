@@ -146,7 +146,7 @@ async def on_ready():
     print("[SETUP] Loading infraction system...")
 
     try:
-        await setup_infraction(bot, has_role_or_higher)
+        await setup_infraction(bot)
         print("[SETUP] Infraction system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading infraction system: {e}")
