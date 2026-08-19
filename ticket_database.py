@@ -157,6 +157,11 @@ class TicketDatabase:
         self.tickets.update_one({"channel_id": channel_id}, {"$set": {"claimed_by": user_id}})
         return True
 
+    def set_ticket_transcript_message(self, channel_id: int, message_id: Optional[int]) -> bool:
+        """Track the message ID of the live in-channel transcript so it can be edited in place."""
+        self.tickets.update_one({"channel_id": channel_id}, {"$set": {"transcript_message_id": message_id}})
+        return True
+
     def close_ticket(self, channel_id: int) -> bool:
         self.tickets.update_one({"channel_id": channel_id}, {"$set": {"status": "closed"}})
         return True
