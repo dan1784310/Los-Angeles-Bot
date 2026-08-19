@@ -160,7 +160,7 @@ class InfractionSystem(commands.Cog):
         notes: str,
         expiration_timestamp: Optional[float] = None
     ):
-        """Create the infraction card using Components V2 layout."""
+        """Create the infraction card using Components V2 layout with fixed tight header spacing."""
         
         # Format N/A with backticks for the box style unless custom notes were provided
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
@@ -184,19 +184,20 @@ class InfractionSystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
 
-        # 1. Top header section with Issuer text & PFP
-        issuer_section = discord.ui.Section(
-            discord.ui.TextDisplay(f"Signed, {issuer.display_name}"),
-            accessory=discord.ui.Thumbnail(media=issuer.display_avatar.url) if issuer.display_avatar else None
-        )
+        # Issuer header text with avatar on top-left
+        header_text = f"Signed, {issuer.display_name}"
+        if issuer.display_avatar:
+            # Inline image avatar for zero vertical padding/gaps
+            header_text = f"<{issuer.display_avatar.url}> Signed, {issuer.display_name}"
 
-        # 2. Main content section with Recipient PFP on the right
+        container.add_item(discord.ui.TextDisplay(header_text))
+
+        # Main content section with recipient thumbnail on the right
         main_section = discord.ui.Section(
             discord.ui.TextDisplay(body_text),
             accessory=discord.ui.Thumbnail(media=recipient.display_avatar.url) if recipient.display_avatar else None
         )
 
-        container.add_item(issuer_section)
         container.add_item(main_section)
         view.add_item(container)
 
