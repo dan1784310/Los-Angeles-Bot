@@ -47,6 +47,7 @@ class InfractionSystem(commands.Cog):
     @app_commands.describe(
         staff="The staff member to issue the infraction to",
         action="The type of infraction action",
+        reason="The reason for the infraction",
         expiration="Expiration time (e.g., 10m, 10h, 10d, 10w)",
         notes="Additional notes for the infraction",
         channel="Channel to send the infraction to"
@@ -67,6 +68,7 @@ class InfractionSystem(commands.Cog):
         interaction: discord.Interaction,
         staff: discord.Member,
         action: str,
+        reason: str,
         expiration: Optional[str] = None,
         notes: Optional[str] = None,
         channel: Optional[discord.TextChannel] = None
@@ -117,6 +119,7 @@ class InfractionSystem(commands.Cog):
                 interaction.user,  # issuer
                 staff,  # recipient
                 action,
+                reason,
                 final_notes,
                 expiration_timestamp
             )
@@ -153,6 +156,7 @@ class InfractionSystem(commands.Cog):
         issuer: discord.Member,
         recipient: discord.Member,
         action: str,
+        reason: str,
         notes: str,
         expiration_timestamp: Optional[float] = None
     ):
@@ -174,13 +178,13 @@ class InfractionSystem(commands.Cog):
             # Create a media gallery with both profile pictures
             media_gallery = discord.ui.MediaGallery()
             
-            # Add issuer profile picture (left)
+            # Add issuer profile picture (left - circular)
             media_gallery.add_item(discord.MediaGalleryItem(
                 media=issuer.display_avatar.url,
                 description=f"Signed, {issuer.display_name}"
             ))
             
-            # Add recipient profile picture (right)
+            # Add recipient profile picture (right - square)
             media_gallery.add_item(discord.MediaGalleryItem(
                 media=recipient.display_avatar.url,
                 description=recipient.display_name
@@ -196,22 +200,28 @@ class InfractionSystem(commands.Cog):
         
         container.add_item(discord.ui.Separator())
         
-        # Profile names row (text fallback or additional info)
+        # Profile names row with "Signed" label
         container.add_item(discord.ui.TextDisplay(
             f"**Signed, {issuer.display_name}**                    **{recipient.display_name}**"
         ))
         container.add_item(discord.ui.Separator())
         
-        # Action bullet point
-        container.add_item(discord.ui.TextDisplay(f"• **Action:** {action}"))
+        # Staff Member field
+        container.add_item(discord.ui.TextDisplay(f"**Staff Member:** {recipient.mention}"))
         
-        # Expiration bullet point (only if set)
+        # Action field
+        container.add_item(discord.ui.TextDisplay(f"**Action:** {action}"))
+        
+        # Reason field
+        container.add_item(discord.ui.TextDisplay(f"**Reason:** {reason}"))
+        
+        # Expiration field (only if set)
         if expiration_timestamp:
             expiration_text = f"<t:{int(expiration_timestamp)}:R>"
-            container.add_item(discord.ui.TextDisplay(f"• **Expiration:** {expiration_text}"))
+            container.add_item(discord.ui.TextDisplay(f"**Expiration:** {expiration_text}"))
         
-        # Notes bullet point
-        container.add_item(discord.ui.TextDisplay(f"• **Notes:** {notes}"))
+        # Notes field
+        container.add_item(discord.ui.TextDisplay(f"**Notes:** {notes}"))
         
         view.add_item(container)
         
