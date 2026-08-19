@@ -177,18 +177,24 @@ class InfractionSystem(commands.Cog):
         # Set thumbnail for recipient profile picture (top right)
         embed.set_thumbnail(url=recipient.display_avatar.url)
         
-        # Add fields with bullet points
-        embed.add_field(name="Staff Member", value=recipient.mention, inline=False)
-        embed.add_field(name="Action", value=action, inline=False)
-        embed.add_field(name="Reason", value=reason, inline=False)
+        # Build description with bullet points (all on single lines with colons)
+        description = f"• Staff Member: {recipient.mention}\n"
+        description += f"• Action: {action}\n"
+        description += f"• Reason: {reason}\n"
         
         # Add expiration if set
         if expiration_timestamp:
             expiration_text = f"<t:{int(expiration_timestamp)}:R>"
-            embed.add_field(name="Expiration", value=expiration_text, inline=False)
+            description += f"• Expiration: {expiration_text}\n"
         
-        # Add notes
-        embed.add_field(name="Notes", value=notes, inline=False)
+        # Add notes as bullet point
+        description += f"• Notes: {notes}"
+        
+        embed.description = description
+        
+        # If notes is N/A, also add it as a field for the "box layout"
+        if notes == "N/A":
+            embed.add_field(name="Notes", value=notes, inline=False)
         
         await channel.send(embed=embed)
 
