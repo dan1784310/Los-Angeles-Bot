@@ -17,6 +17,10 @@ from ticket_views import (
 # Only members with this role may claim tickets or add/remove users on a ticket.
 TICKET_MANAGER_ROLE_ID = 1527374021572956291
 
+# The live, auto-updating transcript for every open ticket is posted (and
+# kept edited in place) here.
+TRANSCRIPT_LOG_CHANNEL_ID = 1529155819239768164
+
 
 def _has_ticket_manager_role(interaction: discord.Interaction) -> bool:
     """Check whether the interacting member has the ticket manager role."""
@@ -536,13 +540,18 @@ async def on_remove_user_submit(interaction: discord.Interaction, channel_id: in
 async def refresh_ticket_transcript(channel: discord.TextChannel):
     """
     Post (or, if one already exists, edit in place) the live transcript
-    message for a ticket channel — same format as the manual Transcript
-    button, but it lives in the channel itself and stays current as the
+    message for a ticket — same format as the manual Transcript button,
+    but posted to TRANSCRIPT_LOG_CHANNEL_ID and kept current as the
     conversation continues.
     """
 
     ticket = db.get_ticket_by_channel(channel.id)
     if not ticket:
+        return
+
+    log_channel = channel.guild.get_channel(TRANSCRIPT_LOG_CHANNEL_ID)
+    if not log_channel:
+        print(f"Transcript log channel {TRANSCRIPT_LOG_CHANNEL_ID} not found.")
         return
 
     from ticket_transcripts import create_transcript
@@ -558,7 +567,7 @@ async def refresh_ticket_transcript(channel: discord.TextChannel):
 
     if existing_message_id:
         try:
-            existing_message = await channel.fetch_message(existing_message_id)
+            existing_message = await log_channel.fetch_message(existing_message_id)
             await existing_message.edit(content=content, attachments=[transcript_file])
             return
         except discord.NotFound:
@@ -568,7 +577,7 @@ async def refresh_ticket_transcript(channel: discord.TextChannel):
             return
 
     try:
-        new_message = await channel.send(content, file=transcript_file)
+        new_message = await log_channel.send(content, file=transcript_file)
         db.set_ticket_transcript_message(channel.id, new_message.id)
     except Exception as e:
         print(f"Error posting live transcript for channel {channel.id}: {e}")
