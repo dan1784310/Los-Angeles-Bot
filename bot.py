@@ -116,7 +116,12 @@ text_setups = {}
 # ==========================================
 
 @bot.event
-async def setup_hook():
+async def on_ready():
+    print(f"[READY] Logged in as {bot.user} ({bot.user.id})")
+    
+    # Store the has_role_or_higher function on the bot for cogs to use
+    bot.has_role_or_higher = has_role_or_higher
+    
     print("[SETUP] Loading ticket system...")
 
     try:
@@ -153,11 +158,6 @@ async def setup_hook():
         print(f"Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}")
     except Exception as e:
         print(e)
-
-
-@bot.event
-async def on_ready():
-    print(f"[READY] Logged in as {bot.user} ({bot.user.id})")
 
     try:
         await bot.change_presence(
