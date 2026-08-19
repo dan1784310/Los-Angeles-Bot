@@ -165,20 +165,17 @@ class InfractionSystem(commands.Cog):
         # Format N/A with backticks for the box style unless custom notes were provided
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
 
-        # Header / Author line
-        content = f"Signed, {issuer.display_name}\n\n"
-        content += "### Staff Consequences & Discipline\n\n"
-
-        # Bullet points with bold labels
-        content += f"• **Staff Member:** {recipient.mention}\n"
-        content += f"• **Action:** {action}\n"
-        content += f"• **Reason:** {reason}\n"
+        # Build bullet points list
+        body_text = "### Staff Consequences & Discipline\n"
+        body_text += f"• **Staff Member:** {recipient.mention}\n"
+        body_text += f"• **Action:** {action}\n"
+        body_text += f"• **Reason:** {reason}\n"
 
         if expiration_timestamp:
             expiration_text = f"<t:{int(expiration_timestamp)}:R>"
-            content += f"• **Expiration:** {expiration_text}\n"
+            body_text += f"• **Expiration:** {expiration_text}\n"
 
-        content += f"• **Notes:** {formatted_notes}"
+        body_text += f"• **Notes:** {formatted_notes}"
 
         # Build Components V2 view
         view = discord.ui.LayoutView(timeout=None)
@@ -187,13 +184,20 @@ class InfractionSystem(commands.Cog):
             accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
 
-        # Main text section with user avatar thumbnail on the right
-        section = discord.ui.Section(
-            discord.ui.TextDisplay(content),
+        # 1. Top header section with Issuer text & PFP
+        issuer_section = discord.ui.Section(
+            discord.ui.TextDisplay(f"Signed, {issuer.display_name}"),
+            accessory=discord.ui.Thumbnail(media=issuer.display_avatar.url) if issuer.display_avatar else None
+        )
+
+        # 2. Main content section with Recipient PFP on the right
+        main_section = discord.ui.Section(
+            discord.ui.TextDisplay(body_text),
             accessory=discord.ui.Thumbnail(media=recipient.display_avatar.url) if recipient.display_avatar else None
         )
 
-        container.add_item(section)
+        container.add_item(issuer_section)
+        container.add_item(main_section)
         view.add_item(container)
 
         await channel.send(view=view)
