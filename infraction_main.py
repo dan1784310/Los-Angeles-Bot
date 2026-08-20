@@ -1,6 +1,7 @@
 """
 Infraction System Module
 Contains the infraction slash command and card display functionality.
+Also contains promotion system.
 """
 
 import discord
@@ -26,6 +27,9 @@ INFRACTION_ACTIONS = [
     "Suspension"
 ]
 
+PROMOTION_CHANNEL_ID = 1526898908272263209  # Channel to send promotions to
+INFRACTION_CHANNEL_ID = 1526898975704350822  # Channel to send infractions to
+
 
 # ==========================================
 # INFRACTION COG
@@ -49,8 +53,7 @@ class InfractionSystem(commands.Cog):
         action="The type of infraction action",
         reason="The reason for the infraction",
         expiration="Expiration time (e.g., 10m, 10h, 10d, 10w)",
-        notes="Additional notes for the infraction",
-        channel="Channel to send the infraction to"
+        notes="Additional notes for the infraction"
     )
     @app_commands.choices(action=[
         app_commands.Choice(name="Activity Notice", value="Activity Notice"),
@@ -70,8 +73,7 @@ class InfractionSystem(commands.Cog):
         action: str,
         reason: str,
         expiration: Optional[str] = None,
-        notes: Optional[str] = None,
-        channel: Optional[discord.TextChannel] = None
+        notes: Optional[str] = None
     ):
         """Issue an infraction to a staff member."""
         
@@ -109,13 +111,19 @@ class InfractionSystem(commands.Cog):
         # Set default notes if not provided
         final_notes = notes if notes else "N/A"
         
-        # Determine target channel
-        target_channel = channel or interaction.channel
+        # Get the infraction channel
+        infraction_channel = interaction.guild.get_channel(INFRACTION_CHANNEL_ID)
+        if not infraction_channel:
+            await interaction.followup.send(
+                "❌ Could not find the infraction channel.",
+                ephemeral=True
+            )
+            return
         
         # Create infraction card
         try:
             await self._create_infraction_card(
-                target_channel,
+                infraction_channel,
                 interaction.user,  # issuer
                 staff,  # recipient
                 action,
@@ -125,13 +133,79 @@ class InfractionSystem(commands.Cog):
             )
             
             await interaction.followup.send(
-                f"✅ Infraction issued successfully to {staff.mention} in {target_channel.mention}!",
+                f"✅ Infraction issued successfully to {staff.mention}!",
                 ephemeral=True
             )
         except Exception as e:
             print(f"Error creating infraction card: {e}")
             await interaction.followup.send(
                 f"❌ Error creating infraction card: {e}",
+                ephemeral=True
+            )
+    
+    # ==========================================
+    # PROMOTION COMMAND
+    # ==========================================
+    
+    @app_commands.command(name="promote", description="Promote a staff member")
+    @app_commands.describe(
+        user="The user to promote",
+        updated_rank="The new role to assign",
+        reason="The reason for the promotion",
+        notes="Additional notes (optional)"
+    )
+    async def promote(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        updated_rank: discord.Role,
+        reason: str,
+        notes: Optional[str] = None
+    ):
+        """Promote a staff member."""
+        
+        # Check permissions
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need administrator permissions to promote members.",
+                ephemeral=True
+            )
+            return
+        
+        # Defer response
+        await interaction.response.defer(ephemeral=True)
+        
+        # Set default notes if not provided
+        final_notes = notes if notes else "N/A"
+        
+        # Get the promotion channel
+        promotion_channel = interaction.guild.get_channel(PROMOTION_CHANNEL_ID)
+        if not promotion_channel:
+            await interaction.followup.send(
+                "❌ Could not find the promotion channel.",
+                ephemeral=True
+            )
+            return
+        
+        # Create promotion card
+        try:
+            await self._create_promotion_card(
+                promotion_channel,
+                interaction.user,  # issuer
+                user,  # promoted user
+                updated_rank,
+                reason,
+                final_notes
+            )
+            
+            await interaction.followup.send(
+                f"✅ Promotion sent for {user.mention} to {updated_rank.mention}!",
+                ephemeral=True
+            )
+        except Exception as e:
+            print(f"Error creating promotion card: {e}")
+            await interaction.followup.send(
+                f"❌ Error creating promotion card: {e}",
                 ephemeral=True
             )
     
@@ -189,6 +263,45 @@ class InfractionSystem(commands.Cog):
             expiration_text = f"<t:{int(expiration_timestamp)}:R>"
             description += f"• **Expiration:** {expiration_text}\n"
             
+        description += f"• **Notes:** {formatted_notes}"
+        
+        embed.description = description
+        
+        await channel.send(embed=embed)
+    
+    async def _create_promotion_card(
+        self,
+        channel: discord.TextChannel,
+        issuer: discord.Member,
+        promoted_user: discord.Member,
+        new_role: discord.Role,
+        reason: str,
+        notes: str
+    ):
+        """Create the promotion card matching the exact infraction layout."""
+        
+        # Create embed with dark charcoal accent
+        embed = discord.Embed(
+            title="Staff Promotion",
+            color=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        # Author field creates the exact small pfp circle next to the sign-off text
+        embed.set_author(
+            name=f"Signed, {issuer.display_name}",
+            icon_url=issuer.display_avatar.url
+        )
+        
+        # Thumbnail pins the promoted user profile picture to the top right
+        embed.set_thumbnail(url=promoted_user.display_avatar.url)
+        
+        # Format N/A with backticks for the inline box style
+        formatted_notes = f"`{notes}`" if notes == "N/A" else notes
+        
+        # Build description with bold bullet points and single-line spacing
+        description = f"• **User:** {promoted_user.mention}\n"
+        description += f"• **Updated Rank:** {new_role.mention}\n"
+        description += f"• **Reason:** {reason}\n"
         description += f"• **Notes:** {formatted_notes}"
         
         embed.description = description

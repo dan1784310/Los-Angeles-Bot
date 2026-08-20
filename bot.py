@@ -37,6 +37,7 @@ COMMAND_ROLE_PERMISSIONS = {
     "inputresults":  1527367791592607755,  # Replace with actual Role ID for results
     "feedback":      1527051350016397312,  # Replace with actual Role ID allowed to give/manage feedback
     "infraction":    1527053497525207163,  # Replace with actual Role ID for infractions
+    "promote":       1527053497525207163,  # Replace with actual Role ID for promotions
 }
 
 # ==========================================
