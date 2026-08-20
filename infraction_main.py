@@ -254,16 +254,16 @@ class InfractionSystem(commands.Cog):
         # Format N/A with backticks for the inline box style
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
         
-        # Build description with bold bullet points and extra spacing
-        description = f"• **Staff Member:** {recipient.mention}\n\n"
-        description += f"• **Action:** {action}\n\n"
-        description += f"• **Reason:** {reason}\n\n"
+        # Build description with proper Discord bullet point formatting
+        description = f"- **Staff Member:** {recipient.mention}\n"
+        description += f"- **Action:** {action}\n"
+        description += f"- **Reason:** {reason}\n"
         
         if expiration_timestamp:
             expiration_text = f"<t:{int(expiration_timestamp)}:R>"
-            description += f"• **Expiration:** {expiration_text}\n\n"
+            description += f"- **Expiration:** {expiration_text}\n"
             
-        description += f"• **Notes:** {formatted_notes}"
+        description += f"- **Notes:** {formatted_notes}"
         
         embed.description = description
         
@@ -298,11 +298,11 @@ class InfractionSystem(commands.Cog):
         # Format N/A with backticks for the inline box style
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
         
-        # Build description with bold bullet points and extra spacing
-        description = f"• **User:** {promoted_user.mention}\n\n"
-        description += f"• **Updated Rank:** {new_role.mention}\n\n"
-        description += f"• **Reason:** {reason}\n\n"
-        description += f"• **Notes:** {formatted_notes}"
+        # Build description with proper Discord bullet point formatting
+        description = f"- **User:** {promoted_user.mention}\n"
+        description += f"- **Updated Rank:** {new_role.mention}\n"
+        description += f"- **Reason:** {reason}\n"
+        description += f"- **Notes:** {formatted_notes}"
         
         embed.description = description
         
