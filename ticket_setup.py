@@ -57,14 +57,45 @@ class TicketSetup(commands.Cog):
         """Start the ticket system setup wizard, or offer to edit/redeploy an existing one."""
         await interaction.response.defer(ephemeral=True)
 
-        if db.has_guild_settings(interaction.guild_id):
-            embed = discord.Embed(
-                title="⚙️ Ticket System Configuration",
-                description="Your server already has a ticket system configured. Choose an action below:",
-                color=discord.Color.blue()
-            )
-            view = discord.ui.View(timeout=None)
+        # Always show the menu with all options
+        embed = discord.Embed(
+            title="⚙️ Ticket System Configuration",
+            description="Choose an action below:",
+            color=discord.Color.blue()
+        )
+        view = discord.ui.View(timeout=None)
 
+        # Full setup button
+        setup_button = discord.ui.Button(
+            label="Full Setup",
+            style=discord.ButtonStyle.success,
+            custom_id="full_setup"
+        )
+
+        async def on_full_setup(button_interaction: discord.Interaction):
+            await button_interaction.response.defer(ephemeral=True)
+            self.setup_sessions[button_interaction.user.id] = _empty_session(button_interaction.guild_id)
+            await self.step_1_ticket_config(button_interaction)
+
+        setup_button.callback = on_full_setup
+        view.add_item(setup_button)
+
+        # Edit configuration button (always available)
+        edit_button = discord.ui.Button(
+            label="Edit Configuration",
+            style=discord.ButtonStyle.primary,
+            custom_id="edit_setup"
+        )
+
+        async def on_edit(button_interaction: discord.Interaction):
+            await button_interaction.response.defer(ephemeral=True)
+            await self.show_edit_dropdown(button_interaction)
+
+        edit_button.callback = on_edit
+        view.add_item(edit_button)
+
+        # Only show reconfigure/refresh if config exists
+        if db.has_guild_settings(interaction.guild_id):
             reconfigure_button = discord.ui.Button(
                 label="Reconfigure All",
                 style=discord.ButtonStyle.danger,
@@ -109,41 +140,23 @@ class TicketSetup(commands.Cog):
             refresh_button.callback = on_refresh
             view.add_item(refresh_button)
 
-            edit_button = discord.ui.Button(
-                label="Edit Configuration",
-                style=discord.ButtonStyle.primary,
-                custom_id="edit_setup"
+        cancel_button = discord.ui.Button(
+            label="Cancel",
+            style=discord.ButtonStyle.secondary,
+            custom_id="cancel_reconfigure"
+        )
+
+        async def on_cancel(button_interaction: discord.Interaction):
+            await button_interaction.response.edit_message(
+                content="❌ Operation cancelled.",
+                embed=None,
+                view=None
             )
 
-            async def on_edit(button_interaction: discord.Interaction):
-                await button_interaction.response.defer(ephemeral=True)
-                await self.show_edit_dropdown(button_interaction)
+        cancel_button.callback = on_cancel
+        view.add_item(cancel_button)
 
-            edit_button.callback = on_edit
-            view.add_item(edit_button)
-
-            cancel_button = discord.ui.Button(
-                label="Cancel",
-                style=discord.ButtonStyle.secondary,
-                custom_id="cancel_reconfigure"
-            )
-
-            async def on_cancel(button_interaction: discord.Interaction):
-                await button_interaction.response.edit_message(
-                    content="❌ Operation cancelled.",
-                    embed=None,
-                    view=None
-                )
-
-            cancel_button.callback = on_cancel
-            view.add_item(cancel_button)
-
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-            return
-
-        # Start a fresh setup if no configuration exists
-        self.setup_sessions[interaction.user.id] = _empty_session(interaction.guild_id)
-        await self.step_1_ticket_config(interaction)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     async def show_edit_dropdown(self, interaction: discord.Interaction):
         """Show dropdown for editing specific configuration items."""
@@ -185,8 +198,12 @@ class TicketSetup(commands.Cog):
         """Handle the edit selection from dropdown."""
         # Load current settings from database
         settings = db.get_guild_settings(interaction.guild_id)
+        
         if not settings:
-            await interaction.followup.send("❌ No configuration found.", ephemeral=True)
+            await interaction.followup.send(
+                "❌ No configuration found. Please run 'Full Setup' first.",
+                ephemeral=True
+            )
             return
         
         if selection == "panel_channel":
@@ -216,7 +233,7 @@ class TicketSetup(commands.Cog):
         elif selection == "banner_url":
             await interaction.followup.send(
                 "Enter the new **Banner URL** (or leave empty to remove):",
-                view=BannerURLModal(),
+                view=BannerURLModal(lambda i, u: self.edit_banner_url(i, u)),
                 ephemeral=True
             )
         elif selection == "text_blocks":
@@ -227,6 +244,11 @@ class TicketSetup(commands.Cog):
             await self.edit_category_mentions_menu(interaction)
         elif selection == "category_roles":
             await self.edit_category_roles_menu(interaction)
+
+    async def edit_banner_url(self, interaction: discord.Interaction, banner_url: Optional[str]):
+        """Edit banner URL."""
+        db.update_setting(interaction.guild_id, 'banner_url', banner_url)
+        await interaction.followup.send("✅ Banner URL updated!", ephemeral=True)
 
     async def edit_panel_channel(self, interaction: discord.Interaction, channel_id: int):
         """Edit panel channel."""

@@ -38,12 +38,16 @@ class BannerURLModal(ui.Modal, title='Banner Image'):
         style=discord.TextStyle.short
     )
     
-    def __init__(self, on_submit: Callable):
+    def __init__(self, on_submit: Callable = None):
         super().__init__()
         self.on_submit_callback = on_submit
     
     async def on_submit(self, interaction: discord.Interaction):
-        await self.on_submit_callback(interaction, self.banner_url.value)
+        if self.on_submit_callback:
+            await self.on_submit_callback(interaction, self.banner_url.value)
+        else:
+            # Fallback for backward compatibility
+            await interaction.response.send("Banner URL received (not saved - missing callback)", ephemeral=True)
 
 
 class TextBlockModal(ui.Modal, title='Text Block'):
