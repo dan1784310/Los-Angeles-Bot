@@ -315,6 +315,43 @@ async def card(ctx):
 
 
 # ==========================================
+# PURGE COMMAND
+# ==========================================
+
+@bot.command()
+async def purge(ctx, amount: int):
+    """Delete a specified number of messages from the channel."""
+    
+    # Check if user has permission to manage messages
+    if not ctx.author.guild_permissions.manage_messages:
+        await ctx.send("❌ You need 'Manage Messages' permission to use this command.")
+        return
+    
+    # Validate amount
+    if amount <= 0:
+        await ctx.send("❌ Please provide a positive number.")
+        return
+    
+    if amount > 100:
+        await ctx.send("❌ You can only delete up to 100 messages at a time.")
+        return
+    
+    try:
+        # Delete the specified number of messages (plus the command message)
+        deleted = await ctx.channel.purge(limit=amount + 1)
+        
+        # Send confirmation message
+        confirm_msg = await ctx.send(f"✅ Deleted {len(deleted) - 1} messages.")
+        
+        # Delete the confirmation message after 3 seconds
+        await asyncio.sleep(3)
+        await confirm_msg.delete()
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error deleting messages: {e}")
+
+
+# ==========================================
 # DROPDOWN SETUP HELPERS
 # ==========================================
 
