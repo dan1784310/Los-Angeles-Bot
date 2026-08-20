@@ -178,9 +178,9 @@ class TicketSetup(commands.Cog):
                 discord.SelectOption(label="Blacklisted Roles", value="blacklisted_roles"),
                 discord.SelectOption(label="Banner URL", value="banner_url"),
                 discord.SelectOption(label="Text Blocks", value="text_blocks"),
-                discord.SelectOption(label="Categories", value="categories"),
-                discord.SelectOption(label="Category Mentions", value="category_mentions"),
-                discord.SelectOption(label="Category Roles", value="category_roles")
+                discord.SelectOption(label="Ticket Types (Dropdown Buttons)", value="categories"),
+                discord.SelectOption(label="Ticket Type Messages", value="category_mentions"),
+                discord.SelectOption(label="Ticket Type Roles", value="category_roles")
             ]
         )
         
@@ -239,11 +239,11 @@ class TicketSetup(commands.Cog):
         elif selection == "text_blocks":
             await self.edit_text_blocks_menu(interaction)
         elif selection == "categories":
-            await self.edit_categories_menu(interaction)
+            await self.edit_ticket_types_menu(interaction)
         elif selection == "category_mentions":
-            await self.edit_category_mentions_menu(interaction)
+            await self.edit_ticket_type_messages_menu(interaction)
         elif selection == "category_roles":
-            await self.edit_category_roles_menu(interaction)
+            await self.edit_ticket_type_roles_menu(interaction)
 
     async def edit_banner_url(self, interaction: discord.Interaction, banner_url: Optional[str]):
         """Edit banner URL."""
