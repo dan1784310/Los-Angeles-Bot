@@ -122,9 +122,11 @@ class CategoryConfigModal(ui.Modal):
         required=True
     )
     
-    def __init__(self, category_name: str, on_submit: Callable):
+    def __init__(self, category_name: str, current_title: str, current_description: str, on_submit: Callable):
         super().__init__(title=f"Configure: {category_name}")
         self.category_name = category_name
+        self.title_input.value = current_title
+        self.description_input.value = current_description
         self.on_submit_callback = on_submit
     
     async def on_submit(self, interaction: discord.Interaction):
@@ -134,6 +136,25 @@ class CategoryConfigModal(ui.Modal):
             self.title_input.value, 
             self.description_input.value
         )
+
+
+class CategoryMentionModal(ui.Modal):
+    """Modal for editing category mention message"""
+    mention_input = ui.TextInput(
+        label='Mention Message',
+        placeholder='e.g., Staff has been notified of your ticket',
+        style=discord.TextStyle.paragraph,
+        required=False
+    )
+    
+    def __init__(self, category_name: str, current_mention: str, on_submit: Callable):
+        super().__init__(title=f"Mention: {category_name}")
+        self.category_name = category_name
+        self.mention_input.value = current_mention
+        self.on_submit_callback = on_submit
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.on_submit_callback(interaction, self.category_name, self.mention_input.value)
 
 
 # ==========================================

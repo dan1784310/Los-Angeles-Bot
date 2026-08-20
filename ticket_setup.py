@@ -12,7 +12,7 @@ import asyncio
 from ticket_database import db
 from ticket_views import (
     ChannelSelectView, RoleSelectView, BannerURLModal, TextBlockModal,
-    CategoryInputModal, CategoryConfigModal,
+    CategoryInputModal, CategoryConfigModal, CategoryMentionModal,
     NavigationButtons, CategoryConfigView, ModalStepView,
     BlacklistRoleSelectView
 )
@@ -30,7 +30,9 @@ def _empty_session(guild_id: int) -> Dict[str, Any]:
         'bottom_banner_url': None,
         'text_blocks': {1: None, 2: None, 3: None, 4: None, 5: None},
         'categories': [],
-        'category_configs': {}
+        'category_configs': {},
+        'category_mentions': {},  # New: category -> mention message
+        'category_roles': {}      # New: category -> list of role IDs
     }
 
 
@@ -107,6 +109,19 @@ class TicketSetup(commands.Cog):
             refresh_button.callback = on_refresh
             view.add_item(refresh_button)
 
+            edit_button = discord.ui.Button(
+                label="Edit Configuration",
+                style=discord.ButtonStyle.primary,
+                custom_id="edit_setup"
+            )
+
+            async def on_edit(button_interaction: discord.Interaction):
+                await button_interaction.response.defer(ephemeral=True)
+                await self.show_edit_dropdown(button_interaction)
+
+            edit_button.callback = on_edit
+            view.add_item(edit_button)
+
             cancel_button = discord.ui.Button(
                 label="Cancel",
                 style=discord.ButtonStyle.secondary,
@@ -129,6 +144,259 @@ class TicketSetup(commands.Cog):
         # Start a fresh setup if no configuration exists
         self.setup_sessions[interaction.user.id] = _empty_session(interaction.guild_id)
         await self.step_1_ticket_config(interaction)
+
+    async def show_edit_dropdown(self, interaction: discord.Interaction):
+        """Show dropdown for editing specific configuration items."""
+        embed = discord.Embed(
+            title="✏️ Edit Configuration",
+            description="Select which part of the configuration you want to edit:",
+            color=discord.Color.blue()
+        )
+        
+        view = discord.ui.View(timeout=None)
+        
+        # Create dropdown with all editable configuration items
+        select = discord.ui.Select(
+            placeholder="Select configuration to edit...",
+            options=[
+                discord.SelectOption(label="Panel Channel", value="panel_channel"),
+                discord.SelectOption(label="Ticket Category", value="ticket_category"),
+                discord.SelectOption(label="Support Roles", value="support_roles"),
+                discord.SelectOption(label="Blacklisted Roles", value="blacklisted_roles"),
+                discord.SelectOption(label="Banner URL", value="banner_url"),
+                discord.SelectOption(label="Text Blocks", value="text_blocks"),
+                discord.SelectOption(label="Categories", value="categories"),
+                discord.SelectOption(label="Category Mentions", value="category_mentions"),
+                discord.SelectOption(label="Category Roles", value="category_roles")
+            ]
+        )
+        
+        async def on_select(select_interaction: discord.Interaction):
+            await select_interaction.response.defer(ephemeral=True)
+            selected = select_interaction.data['values'][0]
+            await self.handle_edit_selection(select_interaction, selected)
+        
+        select.callback = on_select
+        view.add_item(select)
+        
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    async def handle_edit_selection(self, interaction: discord.Interaction, selection: str):
+        """Handle the edit selection from dropdown."""
+        # Load current settings from database
+        settings = db.get_guild_settings(interaction.guild_id)
+        if not settings:
+            await interaction.followup.send("❌ No configuration found.", ephemeral=True)
+            return
+        
+        if selection == "panel_channel":
+            await interaction.followup.send(
+                "Select the new **Ticket Panel Channel**:",
+                view=ChannelSelectView('panel', lambda i, c: self.edit_panel_channel(i, c)),
+                ephemeral=True
+            )
+        elif selection == "ticket_category":
+            await interaction.followup.send(
+                "Select the new **Ticket Category**:",
+                view=ChannelSelectView('category', lambda i, c: self.edit_ticket_category(i, c)),
+                ephemeral=True
+            )
+        elif selection == "support_roles":
+            await interaction.followup.send(
+                "Select the new **Support Roles**:",
+                view=RoleSelectView('support', lambda i, r: self.edit_support_roles(i, r)),
+                ephemeral=True
+            )
+        elif selection == "blacklisted_roles":
+            await interaction.followup.send(
+                "Select the new **Blacklisted Roles**:",
+                view=RoleSelectView('blacklist', lambda i, r: self.edit_blacklisted_roles(i, r)),
+                ephemeral=True
+            )
+        elif selection == "banner_url":
+            await interaction.followup.send(
+                "Enter the new **Banner URL** (or leave empty to remove):",
+                view=BannerURLModal(),
+                ephemeral=True
+            )
+        elif selection == "text_blocks":
+            await self.edit_text_blocks_menu(interaction)
+        elif selection == "categories":
+            await self.edit_categories_menu(interaction)
+        elif selection == "category_mentions":
+            await self.edit_category_mentions_menu(interaction)
+        elif selection == "category_roles":
+            await self.edit_category_roles_menu(interaction)
+
+    async def edit_panel_channel(self, interaction: discord.Interaction, channel_id: int):
+        """Edit panel channel."""
+        db.update_setting(interaction.guild_id, 'panel_channel_id', channel_id)
+        await interaction.followup.send("✅ Panel channel updated!", ephemeral=True)
+
+    async def edit_ticket_category(self, interaction: discord.Interaction, category_id: int):
+        """Edit ticket category."""
+        db.update_setting(interaction.guild_id, 'ticket_category_id', category_id)
+        await interaction.followup.send("✅ Ticket category updated!", ephemeral=True)
+
+    async def edit_support_roles(self, interaction: discord.Interaction, role_ids: List[int]):
+        """Edit support roles."""
+        db.update_setting(interaction.guild_id, 'support_roles', role_ids)
+        await interaction.followup.send("✅ Support roles updated!", ephemeral=True)
+
+    async def edit_blacklisted_roles(self, interaction: discord.Interaction, role_ids: List[int]):
+        """Edit blacklisted roles."""
+        db.update_setting(interaction.guild_id, 'blacklisted_roles', role_ids)
+        await interaction.followup.send("✅ Blacklisted roles updated!", ephemeral=True)
+
+    async def edit_text_blocks_menu(self, interaction: discord.Interaction):
+        """Show menu for editing text blocks."""
+        view = discord.ui.View(timeout=None)
+        
+        for i in range(1, 6):
+            button = discord.ui.Button(
+                label=f"Text Block {i}",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"edit_text_block_{i}"
+            )
+            
+            async def on_edit_button(button_interaction: discord.Interaction, block_num=i):
+                await button_interaction.response.defer(ephemeral=True)
+                await button_interaction.followup.send(
+                    f"Edit **Text Block {block_num}**:",
+                    view=TextBlockModal(block_num, lambda i, t: self.edit_text_block(i, block_num, t)),
+                    ephemeral=True
+                )
+            
+            button.callback = lambda i, b=button, bn=i: on_edit_button(i, bn)
+            view.add_item(button)
+        
+        await interaction.followup.send("Select which text block to edit:", view=view, ephemeral=True)
+
+    async def edit_text_block(self, interaction: discord.Interaction, block_number: int, text: Optional[str]):
+        """Edit a specific text block."""
+        settings = db.get_guild_settings(interaction.guild_id)
+        text_blocks = settings.get('text_blocks', {})
+        text_blocks[str(block_number)] = text
+        db.update_setting(interaction.guild_id, 'text_blocks', text_blocks)
+        await interaction.followup.send(f"✅ Text Block {block_number} updated!", ephemeral=True)
+
+    async def edit_categories_menu(self, interaction: discord.Interaction):
+        """Show menu for editing categories."""
+        settings = db.get_guild_settings(interaction.guild_id)
+        categories = settings.get('categories', [])
+        
+        if not categories:
+            await interaction.followup.send("❌ No categories configured.", ephemeral=True)
+            return
+        
+        view = discord.ui.View(timeout=None)
+        
+        for category in categories:
+            button = discord.ui.Button(
+                label=category,
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"edit_category_{category}"
+            )
+            
+            async def on_edit_category(button_interaction: discord.Interaction, cat_name=category):
+                await button_interaction.response.defer(ephemeral=True)
+                config = settings.get('category_configs', {}).get(cat_name, {})
+                await button_interaction.followup.send(
+                    f"Edit **{cat_name}** configuration:",
+                    view=CategoryConfigModal(cat_name, config.get('title', ''), config.get('description', ''), 
+                                            lambda i, t, d: self.edit_category_config(i, cat_name, t, d)),
+                    ephemeral=True
+                )
+            
+            button.callback = lambda i, b=button, cn=category: on_edit_category(i, cn)
+            view.add_item(button)
+        
+        await interaction.followup.send("Select which category to edit:", view=view, ephemeral=True)
+
+    async def edit_category_config(self, interaction: discord.Interaction, category_name: str, title: str, description: str):
+        """Edit category configuration."""
+        settings = db.get_guild_settings(interaction.guild_id)
+        category_configs = settings.get('category_configs', {})
+        category_configs[category_name] = {'title': title, 'description': description}
+        db.update_setting(interaction.guild_id, 'category_configs', category_configs)
+        await interaction.followup.send(f"✅ {category_name} configuration updated!", ephemeral=True)
+
+    async def edit_category_mentions_menu(self, interaction: discord.Interaction):
+        """Show menu for editing category mentions."""
+        settings = db.get_guild_settings(interaction.guild_id)
+        categories = settings.get('categories', [])
+        
+        if not categories:
+            await interaction.followup.send("❌ No categories configured.", ephemeral=True)
+            return
+        
+        view = discord.ui.View(timeout=None)
+        
+        for category in categories:
+            button = discord.ui.Button(
+                label=f"Mention: {category}",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"edit_mention_{category}"
+            )
+            
+            async def on_edit_mention(button_interaction: discord.Interaction, cat_name=category):
+                current_mention = settings.get('category_mentions', {}).get(cat_name, '')
+                await button_interaction.response.send_modal(
+                    CategoryMentionModal(cat_name, current_mention, lambda i, m: self.edit_category_mention(i, cat_name, m))
+                )
+            
+            button.callback = lambda i, b=button, cn=category: on_edit_mention(i, cn)
+            view.add_item(button)
+        
+        await interaction.followup.send("Select which category mention to edit:", view=view, ephemeral=True)
+
+    async def edit_category_mention(self, interaction: discord.Interaction, category_name: str, mention: str):
+        """Edit category mention message."""
+        settings = db.get_guild_settings(interaction.guild_id)
+        category_mentions = settings.get('category_mentions', {})
+        category_mentions[category_name] = mention
+        db.update_setting(interaction.guild_id, 'category_mentions', category_mentions)
+        await interaction.followup.send(f"✅ {category_name} mention updated!", ephemeral=True)
+
+    async def edit_category_roles_menu(self, interaction: discord.Interaction):
+        """Show menu for editing category roles."""
+        settings = db.get_guild_settings(interaction.guild_id)
+        categories = settings.get('categories', [])
+        
+        if not categories:
+            await interaction.followup.send("❌ No categories configured.", ephemeral=True)
+            return
+        
+        view = discord.ui.View(timeout=None)
+        
+        for category in categories:
+            button = discord.ui.Button(
+                label=f"Roles: {category}",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"edit_roles_{category}"
+            )
+            
+            async def on_edit_roles(button_interaction: discord.Interaction, cat_name=category):
+                current_roles = settings.get('category_roles', {}).get(cat_name, [])
+                await button_interaction.response.defer(ephemeral=True)
+                await button_interaction.followup.send(
+                    f"Select roles for **{cat_name}** (multiple allowed):",
+                    view=RoleSelectView('category', lambda i, r: self.edit_category_roles(i, cat_name, r)),
+                    ephemeral=True
+                )
+            
+            button.callback = lambda i, b=button, cn=category: on_edit_roles(i, cn)
+            view.add_item(button)
+        
+        await interaction.followup.send("Select which category roles to edit:", view=view, ephemeral=True)
+
+    async def edit_category_roles(self, interaction: discord.Interaction, category_name: str, role_ids: List[int]):
+        """Edit category roles."""
+        settings = db.get_guild_settings(interaction.guild_id)
+        category_roles = settings.get('category_roles', {})
+        category_roles[category_name] = role_ids
+        db.update_setting(interaction.guild_id, 'category_roles', category_roles)
+        await interaction.followup.send(f"✅ {category_name} roles updated!", ephemeral=True)
 
     # ==========================================
     # STEP 1: Ticket Configuration
