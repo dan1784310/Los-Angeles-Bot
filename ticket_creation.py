@@ -129,8 +129,7 @@ async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: i
             interaction.guild,
             interaction.user,
             settings,
-            ticket_number,
-            category['name']  # Pass category name for per-category settings
+            ticket_number
         )
         
         # Save ticket to database
@@ -148,7 +147,6 @@ async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: i
             ticket_channel,
             interaction.user,
             category,
-            settings,  # Pass settings for category mentions
             ticket_number,
             issue_text
         )
@@ -170,8 +168,16 @@ async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: i
         )
 
 
+def _build_ping_line(user_mention: str, category: dict) -> str:
+    """Build the mention line for a ticket — always pings the user, plus
+    whichever role(s) are configured for that specific category."""
+    role_ids = category.get('ping_role_ids') or []
+    role_mentions = [f"<@&{role_id}>" for role_id in role_ids]
+    return ", ".join([user_mention] + role_mentions)
+
+
 async def create_ticket_channel(guild: discord.Guild, user: discord.Member, 
-                                settings: dict, ticket_number: int, category_name: str = None) -> discord.TextChannel:
+                                settings: dict, ticket_number: int) -> discord.TextChannel:
     """
     Create a ticket channel with proper permissions.
     
@@ -180,7 +186,6 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
         user: The user creating the ticket
         settings: Guild settings from database
         ticket_number: The ticket number
-        category_name: The category name for per-category settings
     
     Returns:
         The created ticket channel
@@ -196,19 +201,17 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
         guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
     }
     
-    # Add category-specific roles if available, otherwise use global support roles
-    if category_name:
-        category_roles = settings.get('category_roles', {}).get(category_name, [])
-        role_ids_to_add = category_roles if category_roles else settings.get('support_roles', [])
-    else:
-        role_ids_to_add = settings.get('support_roles', [])
-    
-    for role_id in role_ids_to_add:
+    # Add support roles
+    support_role_ids = settings.get('support_roles', [])
+    for role_id in support_role_ids:
         role = guild.get_role(role_id)
         if role:
             overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
     
-    # Add administrator roles
+    # Add administrator roles — utils.get(..., permissions=X) does an exact
+    # equality match against the whole permission set, so it will basically
+    # never match a real admin role (which usually has other bits set too).
+    # Check the .administrator flag on each role instead, and add all of them.
     for role in guild.roles:
         if role.permissions.administrator:
             overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
@@ -225,7 +228,7 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
 
 
 async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member, 
-                            category: dict, settings: dict, ticket_number: int, issue_text: Optional[str] = None):
+                            category: dict, ticket_number: int, issue_text: Optional[str] = None):
     """
     Send the welcome message in a new ticket channel.
 
@@ -238,25 +241,12 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
         channel: The ticket channel
         user: The user who created the ticket
         category: The category information
-        settings: Guild settings for category mentions
         ticket_number: The ticket number
         issue_text: What the user described in the "What seems to be the
             issue?" modal, if any.
     """
 
     accent_color = discord.Color.from_rgb(37, 37, 41)
-
-    # Build mentions - always include user mention + category-specific roles
-    mentions = f"{user.mention} "
-    
-    # Get category-specific roles if available
-    category_name = category.get('name', '')
-    category_roles = settings.get('category_roles', {}).get(category_name, [])
-    
-    for role_id in category_roles:
-        role = channel.guild.get_role(role_id)
-        if role:
-            mentions += f"{role.mention} "
 
     management_view = build_ticket_management_view(
         config_title=category.get('title', category['name']),
@@ -271,7 +261,7 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
         on_remove_user=lambda i: remove_user_from_ticket(i, channel.id),
         on_transcript=lambda i: generate_transcript(i, channel.id),
         accent_colour=accent_color,
-        mention_line=mentions
+        mention_line=_build_ping_line(user.mention, category)
     )
 
     await channel.send(view=management_view)
@@ -354,7 +344,7 @@ async def _rebuild_management_view(interaction: discord.Interaction, channel_id:
         on_remove_user=lambda i: remove_user_from_ticket(i, channel_id),
         on_transcript=lambda i: generate_transcript(i, channel_id),
         accent_colour=accent_color,
-        mention_line=f"{creator_mention}, <@&{TICKET_MANAGER_ROLE_ID}>"
+        mention_line=_build_ping_line(creator_mention, category)
     )
 
 

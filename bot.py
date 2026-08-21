@@ -36,8 +36,7 @@ COMMAND_ROLE_PERMISSIONS = {
     "ticket_setup":  1526959787219091486,  # Replace with actual Role ID
     "inputresults":  1527367791592607755,  # Replace with actual Role ID for results
     "feedback":      1527051350016397312,  # Replace with actual Role ID allowed to give/manage feedback
-    "infraction":    1527050504733986987,  # Replace with actual Role ID for infractions
-    "promote":       1526948289994297394,  # Replace with actual Role ID for promotions
+    "infraction":    1527053497525207163,  # Replace with actual Role ID for infractions
 }
 
 # ==========================================
@@ -147,7 +146,7 @@ async def on_ready():
     print("[SETUP] Loading infraction system...")
 
     try:
-        await setup_infraction(bot, has_role_or_higher)
+        await setup_infraction(bot)
         print("[SETUP] Infraction system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading infraction system: {e}")
@@ -313,43 +312,6 @@ async def card(ctx):
         "test"
     )
     await ctx.send(view=view)
-
-
-# ==========================================
-# PURGE COMMAND
-# ==========================================
-
-@bot.command()
-async def purge(ctx, amount: int):
-    """Delete a specified number of messages from the channel."""
-    
-    # Check if user has permission to manage messages
-    if not ctx.author.guild_permissions.manage_messages:
-        await ctx.send("❌ You need 'Manage Messages' permission to use this command.")
-        return
-    
-    # Validate amount
-    if amount <= 0:
-        await ctx.send("❌ Please provide a positive number.")
-        return
-    
-    if amount > 100:
-        await ctx.send("❌ You can only delete up to 100 messages at a time.")
-        return
-    
-    try:
-        # Delete the specified number of messages (plus the command message)
-        deleted = await ctx.channel.purge(limit=amount + 1)
-        
-        # Send confirmation message
-        confirm_msg = await ctx.send(f"✅ Deleted {len(deleted) - 1} messages.")
-        
-        # Delete the confirmation message after 3 seconds
-        await asyncio.sleep(3)
-        await confirm_msg.delete()
-        
-    except Exception as e:
-        await ctx.send(f"❌ Error deleting messages: {e}")
 
 
 # ==========================================

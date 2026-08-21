@@ -38,16 +38,12 @@ class BannerURLModal(ui.Modal, title='Banner Image'):
         style=discord.TextStyle.short
     )
     
-    def __init__(self, on_submit: Callable = None):
+    def __init__(self, on_submit: Callable):
         super().__init__()
         self.on_submit_callback = on_submit
     
     async def on_submit(self, interaction: discord.Interaction):
-        if self.on_submit_callback:
-            await self.on_submit_callback(interaction, self.banner_url.value)
-        else:
-            # Fallback for backward compatibility
-            await interaction.response.send("Banner URL received (not saved - missing callback)", ephemeral=True)
+        await self.on_submit_callback(interaction, self.banner_url.value)
 
 
 class TextBlockModal(ui.Modal, title='Text Block'):
@@ -111,7 +107,7 @@ class BottomBannerModal(ui.Modal, title='Bottom Banner Image'):
 # ==========================================
 
 class CategoryConfigModal(ui.Modal):
-    """Category Config Modal - accepts category_name"""
+    """Fixed Category Config Modal"""
     title_input = ui.TextInput(
         label='Embed Title',
         placeholder='e.g., General Questions',
@@ -126,11 +122,9 @@ class CategoryConfigModal(ui.Modal):
         required=True
     )
     
-    def __init__(self, category_name: str, current_title: str, current_description: str, on_submit: Callable):
+    def __init__(self, category_name: str, on_submit: Callable):
         super().__init__(title=f"Configure: {category_name}")
         self.category_name = category_name
-        self.title_input.value = current_title
-        self.description_input.value = current_description
         self.on_submit_callback = on_submit
     
     async def on_submit(self, interaction: discord.Interaction):
@@ -140,25 +134,6 @@ class CategoryConfigModal(ui.Modal):
             self.title_input.value, 
             self.description_input.value
         )
-
-
-class CategoryMentionModal(ui.Modal):
-    """Modal for editing category mention message"""
-    mention_input = ui.TextInput(
-        label='Mention Message',
-        placeholder='e.g., Staff has been notified of your ticket',
-        style=discord.TextStyle.paragraph,
-        required=False
-    )
-    
-    def __init__(self, category_name: str, current_mention: str, on_submit: Callable):
-        super().__init__(title=f"Mention: {category_name}")
-        self.category_name = category_name
-        self.mention_input.value = current_mention
-        self.on_submit_callback = on_submit
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        await self.on_submit_callback(interaction, self.category_name, self.mention_input.value)
 
 
 # ==========================================
@@ -653,6 +628,43 @@ class SupportRoleSelect(ui.RoleSelect):
         )
         self.callback_func = callback
     
+    async def callback(self, interaction: discord.Interaction):
+        if self.callback_func:
+            await self.callback_func(interaction, [role.id for role in self.values])
+
+
+class CategoryPingRoleSelectView(ui.View):
+    """View for selecting which role(s) to ping for a specific ticket category (optional)."""
+
+    def __init__(self, on_select: Callable):
+        super().__init__(timeout=None)
+        self.on_select = on_select
+        self.add_item(CategoryPingRoleSelect(self.on_select))
+
+        skip_button = ui.Button(
+            label="Skip",
+            style=discord.ButtonStyle.secondary,
+            custom_id="category_ping_skip"
+        )
+
+        async def on_skip(interaction: discord.Interaction):
+            await self.on_select(interaction, [])
+
+        skip_button.callback = on_skip
+        self.add_item(skip_button)
+
+
+class CategoryPingRoleSelect(ui.RoleSelect):
+    """Select for a category's ping role(s). Selecting none means no role ping."""
+
+    def __init__(self, callback: Callable):
+        super().__init__(
+            placeholder='Select role(s) to ping for this category',
+            min_values=1,
+            max_values=25
+        )
+        self.callback_func = callback
+
     async def callback(self, interaction: discord.Interaction):
         if self.callback_func:
             await self.callback_func(interaction, [role.id for role in self.values])

@@ -97,7 +97,8 @@ class TicketDatabase:
         return list(self.categories.find({"guild_id": guild_id}, {"_id": 0}))
 
     def save_ticket_category(self, guild_id: int, name: str,
-                             title: Optional[str] = None, description: Optional[str] = None) -> int:
+                             title: Optional[str] = None, description: Optional[str] = None,
+                             ping_role_ids: Optional[List[int]] = None) -> int:
         """Add a new ticket category for this guild, returning its sequential id."""
         cat_id = self.categories.count_documents({"guild_id": guild_id}) + 1
         self.categories.insert_one({
@@ -105,7 +106,8 @@ class TicketDatabase:
             "guild_id": guild_id,
             "name": name,
             "title": title,
-            "description": description
+            "description": description,
+            "ping_role_ids": ping_role_ids or []
         })
         return cat_id
 
@@ -125,27 +127,6 @@ class TicketDatabase:
     def delete_category(self, guild_id: int, category_id: int) -> bool:
         res = self.categories.delete_one({"guild_id": guild_id, "id": category_id})
         return res.deleted_count > 0
-
-    def update_category(self, category_id: int, guild_id: int, title: Optional[str] = None, 
-                       description: Optional[str] = None) -> bool:
-        """Update an existing category."""
-        try:
-            update_data = {}
-            if title is not None:
-                update_data["title"] = title
-            if description is not None:
-                update_data["description"] = description
-            
-            if update_data:
-                res = self.categories.update_one(
-                    {"guild_id": guild_id, "id": category_id},
-                    {"$set": update_data}
-                )
-                return res.modified_count > 0
-            return True
-        except Exception as e:
-            print(f"Error updating category: {e}")
-            return False
 
     # ==========================================
     # Tickets
