@@ -1,5 +1,6 @@
 import discord
 import asyncio
+import datetime
 import threading
 import os
 
@@ -1061,6 +1062,89 @@ async def inputresults(
 
 
 # ==========================================
+# LOW LETTER COMMAND (LLC) LOGS
+# ==========================================
+
+# Global variable to hold the channel ID where logs should be sent
+target_llc_channel_id = None
+
+def has_llc_role():
+    """Custom check for the LLC command using role ID 1526714098706940086."""
+    async def predicate(ctx):
+        REQUIRED_ROLE_ID = 1526714098706940086
+        if not ctx.guild or not isinstance(ctx.author, discord.Member):
+            return False
+        if ctx.author.id == ctx.guild.owner_id or ctx.author.guild_permissions.administrator:
+            return True
+        target_role = ctx.guild.get_role(REQUIRED_ROLE_ID)
+        if not target_role:
+            return False
+        return ctx.author.top_role >= target_role
+    return commands.check(predicate)
+
+
+@bot.command(name="set_llc")
+@has_llc_role()
+async def set_llc(ctx):
+    global target_llc_channel_id
+    target_llc_channel_id = ctx.channel.id
+    channel_name = ctx.channel.name
+
+    # Delete the command invocation message
+    try:
+        await ctx.message.delete()
+    except discord.Forbidden:
+        pass
+
+    # Send confirmation DM to user
+    try:
+        await ctx.author.send(f"successfully set low letter command logs in channel {channel_name}")
+    except discord.Forbidden:
+        pass
+
+
+async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str):
+    """Sends the Components V2 card if the word/argument after the command has fewer than 5 letters."""
+    global target_llc_channel_id
+    if not target_llc_channel_id:
+        return
+
+    target_channel = bot.get_channel(target_llc_channel_id)
+    if not target_channel:
+        return
+
+    parts = full_command.strip().split()
+    if len(parts) < 2:
+        return
+
+    target_word = parts[1]
+
+    # Check if word after command has less than 5 letters
+    if len(target_word) < 5:
+        now = datetime.datetime.now()
+        date_str = now.strftime("%d/%m/%Y")
+        time_str = now.strftime("%I:%M %p").lower()
+
+        roblox_profile_url = f"https://www.roblox.com/users/{roblox_id}/profile"
+
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(0, 162, 232)
+        )
+
+        content = (
+            "### Low Letter Command Executed\n\n"
+            f"[{roblox_username}:{roblox_id}]({roblox_profile_url}) used the command `{full_command}`\n\n"
+            f"-# AZRP Command Logs | {date_str}, {time_str}"
+        )
+
+        container.add_item(discord.ui.TextDisplay(content))
+        view.add_item(container)
+
+        await target_channel.send(view=view)
+
+
+# ==========================================
 # REGISTER SESSIONS COMMANDS
 # ==========================================
 
@@ -1080,7 +1164,33 @@ def home():
 @app.route("/erlc/events", methods=["POST"])
 def erlc_events():
     """Receive and verify ER:LC Event Webhooks."""
-    return handle_erlc_webhook(request)
+    try:
+        payload = request.get_json(silent=True) or {}
+    except Exception:
+        return "Invalid JSON", 400
+
+    # Extract command log data from ER:LC webhook
+    event_type = payload.get("EventType") or payload.get("event")
+    data = payload.get("Data") or payload.get("data") or {}
+
+    if event_type == "CommandLog" or "Command" in data:
+        player_info = data.get("Player", {})
+        username = player_info.get("Name") or data.get("PlayerName", "Unknown")
+        roblox_id = player_info.get("UserId") or data.get("PlayerId", 0)
+        command_text = data.get("Command") or data.get("command_text", "")
+
+        if command_text and bot.is_ready():
+            # Send log asynchronously to the Discord bot loop
+            asyncio.run_coroutine_threadsafe(
+                send_llc_log(
+                    roblox_username=username,
+                    roblox_id=roblox_id,
+                    full_command=command_text
+                ),
+                bot.loop
+            )
+
+    return "OK", 200
 
 @app.route("/erlc/status")
 def erlc_status():
