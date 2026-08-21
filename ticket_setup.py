@@ -41,6 +41,7 @@ class TicketSetup(commands.Cog):
         self.bot = bot
         self.has_role_or_higher = has_role_or_higher
         self.setup_sessions: Dict[int, Dict[str, Any]] = {}
+        self.quick_edit_sessions: Dict[int, Dict[str, Any]] = {}
 
         # Apply the role check dynamically if a wrapper was provided
         if self.has_role_or_higher:
@@ -76,6 +77,18 @@ class TicketSetup(commands.Cog):
 
             reconfigure_button.callback = on_reconfigure
             view.add_item(reconfigure_button)
+
+            addedit_button = discord.ui.Button(
+                label="Add/Edit",
+                style=discord.ButtonStyle.primary,
+                custom_id="addedit_setup"
+            )
+
+            async def on_addedit(button_interaction: discord.Interaction):
+                await self.show_quick_edit_menu(button_interaction)
+
+            addedit_button.callback = on_addedit
+            view.add_item(addedit_button)
 
             refresh_button = discord.ui.Button(
                 label="Refresh Panel",
@@ -422,11 +435,35 @@ class TicketSetup(commands.Cog):
 
     async def on_category_ping_roles_submit(self, interaction: discord.Interaction, category_name: str,
                                             role_ids: List[int]):
-        """Handle a category's ping role selection (or skip), then advance."""
+        """Handle a category's ping role selection (or skip), then ask about visibility."""
+        session = self.setup_sessions[interaction.user.id]
+        session['category_configs'][category_name]['ping_role_ids'] = role_ids
+
+        await self.prompt_category_visible_roles(interaction, category_name)
+
+    async def prompt_category_visible_roles(self, interaction: discord.Interaction, category_name: str):
+        """Ask which role(s), if any, can SEE this category's tickets."""
+
+        message = (
+            f"Select role(s) that can **see** **{category_name}** tickets "
+            f"(optional — click **Skip** to just use the global Support Roles):"
+        )
+        view = CategoryPingRoleSelectView(
+            lambda i, role_ids: self.on_category_visible_roles_submit(i, category_name, role_ids)
+        )
+
+        if interaction.response.is_done():
+            await interaction.followup.send(message, view=view, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, view=view, ephemeral=True)
+
+    async def on_category_visible_roles_submit(self, interaction: discord.Interaction, category_name: str,
+                                                role_ids: List[int]):
+        """Handle a category's visibility role selection (or skip), then advance."""
         await interaction.response.defer(ephemeral=True)
 
         session = self.setup_sessions[interaction.user.id]
-        session['category_configs'][category_name]['ping_role_ids'] = role_ids
+        session['category_configs'][category_name]['visible_role_ids'] = role_ids
 
         current_index = session['categories'].index(category_name)
         if current_index < len(session['categories']) - 1:
@@ -455,12 +492,15 @@ class TicketSetup(commands.Cog):
             description_preview = (config.get('description') or 'N/A')[:100]
             ping_role_ids = config.get('ping_role_ids', [])
             ping_text = ", ".join(f"<@&{rid}>" for rid in ping_role_ids) if ping_role_ids else "None"
+            visible_role_ids = config.get('visible_role_ids', [])
+            visible_text = ", ".join(f"<@&{rid}>" for rid in visible_role_ids) if visible_role_ids else "Global Support Roles"
             embed.add_field(
                 name=f"📌 {category_name}",
                 value=(
                     f"**Title:** {config.get('title', 'N/A')}\n"
                     f"**Description:** {description_preview}...\n"
-                    f"**Ping Roles:** {ping_text}"
+                    f"**Ping Roles:** {ping_text}\n"
+                    f"**Visible To:** {visible_text}"
                 ),
                 inline=False
             )
@@ -484,6 +524,284 @@ class TicketSetup(commands.Cog):
         """Edit a specific category configuration."""
         await interaction.response.defer(ephemeral=True)
         await self.configure_category(interaction, category_name)
+
+    # ==========================================
+    # Add/Edit (quick edit without restarting setup)
+    # ==========================================
+
+    QUICK_EDIT_FIELDS = [
+        ("panel_channel", "Panel Channel"),
+        ("ticket_category", "Ticket Category (Discord Category)"),
+        ("support_roles", "Support Roles (global)"),
+        ("blacklisted_roles", "Blacklisted Roles"),
+        ("banner", "Banner Image"),
+        ("text1", "Text Block 1"),
+        ("text2", "Text Block 2"),
+        ("text3", "Text Block 3"),
+        ("text4", "Text Block 4"),
+        ("text5", "Text Block 5"),
+        ("categories", "Ticket Categories (add/edit)"),
+    ]
+
+    async def show_quick_edit_menu(self, interaction: discord.Interaction):
+        """Show a dropdown with every setting from setup, to add/edit individually."""
+        view = discord.ui.View(timeout=None)
+        select = discord.ui.Select(
+            placeholder="Choose what to add/edit...",
+            options=[
+                discord.SelectOption(label=label, value=key)
+                for key, label in self.QUICK_EDIT_FIELDS
+            ]
+        )
+
+        async def on_select(select_interaction: discord.Interaction):
+            await self.on_quick_edit_select(select_interaction, select.values[0])
+
+        select.callback = on_select
+        view.add_item(select)
+
+        if interaction.response.is_done():
+            await interaction.followup.send("What would you like to add or edit?", view=view, ephemeral=True)
+        else:
+            await interaction.response.send_message("What would you like to add or edit?", view=view, ephemeral=True)
+
+    async def on_quick_edit_select(self, interaction: discord.Interaction, field_key: str):
+        """Route the dropdown choice to the right selector/modal."""
+
+        if field_key == "panel_channel":
+            await interaction.response.send_message(
+                "Select the new **Ticket Panel Channel**:",
+                view=ChannelSelectView(
+                    'panel',
+                    lambda i, c: self.quick_save_setting(i, 'panel_channel_id', c, "Panel channel")
+                ),
+                ephemeral=True
+            )
+        elif field_key == "ticket_category":
+            await interaction.response.send_message(
+                "Select the new **Ticket Category**:",
+                view=ChannelSelectView(
+                    'category',
+                    lambda i, c: self.quick_save_setting(i, 'ticket_category_id', c, "Ticket category")
+                ),
+                ephemeral=True
+            )
+        elif field_key == "support_roles":
+            await interaction.response.send_message(
+                "Select the new **Support Roles**:",
+                view=RoleSelectView(
+                    lambda i, r: self.quick_save_setting(i, 'support_roles', r, "Support roles")
+                ),
+                ephemeral=True
+            )
+        elif field_key == "blacklisted_roles":
+            await interaction.response.send_message(
+                "Select the new **Blacklisted Roles** (or click **No Blacklist** for none):",
+                view=BlacklistRoleSelectView(
+                    lambda i, r: self.quick_save_setting(i, 'blacklisted_roles', r, "Blacklisted roles")
+                ),
+                ephemeral=True
+            )
+        elif field_key == "banner":
+            await interaction.response.send_modal(
+                BannerURLModal(lambda i, url: self.quick_save_banner(i, url))
+            )
+        elif field_key.startswith("text") and field_key[-1].isdigit():
+            block_number = int(field_key[-1])
+            await interaction.response.send_modal(
+                TextBlockModal(
+                    block_number,
+                    lambda i, num, text: self.quick_save_text_block(i, num, text)
+                )
+            )
+        elif field_key == "categories":
+            await self.show_quick_edit_categories(interaction)
+
+    async def quick_save_setting(self, interaction: discord.Interaction, field_key: str, value, label: str):
+        """Save a single top-level setting immediately and refresh the live panel."""
+        await interaction.response.defer(ephemeral=True)
+
+        if db.save_guild_settings(interaction.guild_id, {field_key: value}):
+            from ticket_panel import update_panel
+            try:
+                await update_panel(interaction.guild, db)
+            except Exception as e:
+                print(f"Error refreshing panel after quick edit: {e}")
+            await interaction.followup.send(f"✅ {label} updated and panel refreshed!", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ Failed to update {label.lower()}.", ephemeral=True)
+
+    async def quick_save_banner(self, interaction: discord.Interaction, banner_url: Optional[str]):
+        cleaned_url = banner_url.strip() if banner_url else ""
+        final_url = cleaned_url if cleaned_url.startswith(("http://", "https://")) else None
+        await self.quick_save_setting(interaction, 'banner_url', final_url, "Banner image")
+
+    async def quick_save_text_block(self, interaction: discord.Interaction, block_number: int, text: Optional[str]):
+        cleaned = text.strip() if text else None
+        await self.quick_save_setting(interaction, f'text{block_number}', cleaned, f"Text block {block_number}")
+
+    async def show_quick_edit_categories(self, interaction: discord.Interaction):
+        """List existing categories to edit, plus an option to add a new one."""
+        categories = db.get_ticket_categories(interaction.guild_id)
+
+        view = discord.ui.View(timeout=None)
+
+        if categories:
+            select = discord.ui.Select(
+                placeholder="Select a category to edit...",
+                options=[
+                    discord.SelectOption(label=cat['name'], value=str(cat['id']))
+                    for cat in categories[:25]
+                ]
+            )
+
+            async def on_select(select_interaction: discord.Interaction):
+                await self.start_quick_edit_category(select_interaction, int(select.values[0]))
+
+            select.callback = on_select
+            view.add_item(select)
+
+        add_button = discord.ui.Button(label="➕ Add New Category", style=discord.ButtonStyle.success)
+
+        async def on_add(button_interaction: discord.Interaction):
+            await button_interaction.response.send_modal(
+                CategoryInputModal(lambda i, name: self.start_quick_add_category(i, name))
+            )
+
+        add_button.callback = on_add
+        view.add_item(add_button)
+
+        message = "Select an existing category to edit, or add a new one:" if categories else "No categories yet — add one:"
+
+        if interaction.response.is_done():
+            await interaction.followup.send(message, view=view, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, view=view, ephemeral=True)
+
+    async def start_quick_edit_category(self, interaction: discord.Interaction, category_id: int):
+        """Begin editing an existing category's title/description/ping/visibility."""
+        category = db.get_ticket_category_by_id(interaction.guild_id, category_id)
+        if not category:
+            await interaction.response.send_message("❌ Category not found.", ephemeral=True)
+            return
+
+        self.quick_edit_sessions[interaction.user.id] = {
+            'guild_id': interaction.guild_id,
+            'category_id': category_id,
+            'name': category['name'],
+            'is_new': False
+        }
+
+        await interaction.response.send_modal(
+            CategoryConfigModal(
+                category['name'],
+                lambda i, name, title, description: self.on_quick_category_config_submit(i, title, description),
+                existing_title=category.get('title'),
+                existing_description=category.get('description')
+            )
+        )
+
+    async def start_quick_add_category(self, interaction: discord.Interaction, category_name: str):
+        """Begin adding a brand new category."""
+        name = category_name.strip()
+
+        if not name:
+            await interaction.response.send_message("❌ Category name can't be empty.", ephemeral=True)
+            return
+
+        existing = db.get_ticket_categories(interaction.guild_id)
+        if any(c['name'] == name for c in existing):
+            await interaction.response.send_message("❌ That category already exists.", ephemeral=True)
+            return
+
+        self.quick_edit_sessions[interaction.user.id] = {
+            'guild_id': interaction.guild_id,
+            'category_id': None,
+            'name': name,
+            'is_new': True
+        }
+
+        await interaction.response.send_modal(
+            CategoryConfigModal(
+                name,
+                lambda i, cat_name, title, description: self.on_quick_category_config_submit(i, title, description)
+            )
+        )
+
+    async def on_quick_category_config_submit(self, interaction: discord.Interaction, title: str, description: str):
+        """Handle title/description submission for a quick-edit category, then ask for ping roles."""
+        session = self.quick_edit_sessions.get(interaction.user.id)
+        if not session:
+            await interaction.response.send_message("❌ Something went wrong — session expired.", ephemeral=True)
+            return
+
+        session['title'] = title
+        session['description'] = description
+
+        message = (
+            f"Select role(s) to **ping** when a **{session['name']}** ticket is opened "
+            f"(optional — click **Skip** for none):"
+        )
+        view = CategoryPingRoleSelectView(
+            lambda i, role_ids: self.on_quick_category_ping_roles_submit(i, role_ids)
+        )
+        await interaction.response.send_message(message, view=view, ephemeral=True)
+
+    async def on_quick_category_ping_roles_submit(self, interaction: discord.Interaction, role_ids: List[int]):
+        """Handle ping role selection for a quick-edit category, then ask for visibility roles."""
+        session = self.quick_edit_sessions.get(interaction.user.id)
+        if not session:
+            await interaction.response.send_message("❌ Something went wrong — session expired.", ephemeral=True)
+            return
+
+        session['ping_role_ids'] = role_ids
+
+        message = (
+            f"Select role(s) that can **see** **{session['name']}** tickets "
+            f"(optional — click **Skip** to just use the global Support Roles):"
+        )
+        view = CategoryPingRoleSelectView(
+            lambda i, r: self.on_quick_category_visible_roles_submit(i, r)
+        )
+        await interaction.response.send_message(message, view=view, ephemeral=True)
+
+    async def on_quick_category_visible_roles_submit(self, interaction: discord.Interaction, role_ids: List[int]):
+        """Handle visibility role selection for a quick-edit category, then save it."""
+        await interaction.response.defer(ephemeral=True)
+
+        session = self.quick_edit_sessions.pop(interaction.user.id, None)
+        if not session:
+            await interaction.followup.send("❌ Something went wrong — session expired.", ephemeral=True)
+            return
+
+        session['visible_role_ids'] = role_ids
+
+        if session['is_new']:
+            db.save_ticket_category(
+                session['guild_id'],
+                session['name'],
+                session['title'],
+                session['description'],
+                session['ping_role_ids'],
+                session['visible_role_ids']
+            )
+        else:
+            db.update_ticket_category(
+                session['guild_id'],
+                session['category_id'],
+                title=session['title'],
+                description=session['description'],
+                ping_role_ids=session['ping_role_ids'],
+                visible_role_ids=session['visible_role_ids']
+            )
+
+        from ticket_panel import update_panel
+        try:
+            await update_panel(interaction.guild, db)
+        except Exception as e:
+            print(f"Error refreshing panel after category quick edit: {e}")
+
+        await interaction.followup.send(f"✅ **{session['name']}** saved and panel refreshed!", ephemeral=True)
 
     # ==========================================
     # STEP 4: Finish Setup
@@ -519,7 +837,8 @@ class TicketSetup(commands.Cog):
                     category_name,
                     config.get('title', category_name),
                     config.get('description', ''),
-                    config.get('ping_role_ids', [])
+                    config.get('ping_role_ids', []),
+                    config.get('visible_role_ids', [])
                 )
 
             await self.deploy_panel(interaction)

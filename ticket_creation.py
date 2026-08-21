@@ -129,7 +129,8 @@ async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: i
             interaction.guild,
             interaction.user,
             settings,
-            ticket_number
+            ticket_number,
+            ticket_category_info=category
         )
         
         # Save ticket to database
@@ -177,7 +178,8 @@ def _build_ping_line(user_mention: str, category: dict) -> str:
 
 
 async def create_ticket_channel(guild: discord.Guild, user: discord.Member, 
-                                settings: dict, ticket_number: int) -> discord.TextChannel:
+                                settings: dict, ticket_number: int,
+                                ticket_category_info: Optional[dict] = None) -> discord.TextChannel:
     """
     Create a ticket channel with proper permissions.
     
@@ -186,13 +188,17 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
         user: The user creating the ticket
         settings: Guild settings from database
         ticket_number: The ticket number
+        ticket_category_info: The selected ticket category's info (name, title,
+            description, ping_role_ids, visible_role_ids). Used to decide which
+            roles can see this channel — falls back to the guild's global
+            support roles if the category doesn't specify its own.
     
     Returns:
         The created ticket channel
     """
     
-    # Get category
-    category = guild.get_channel(settings['ticket_category_id'])
+    # Discord channel category (the folder) tickets get created under
+    channel_category = guild.get_channel(settings['ticket_category_id'])
     
     # Build permissions
     overwrites = {
@@ -201,9 +207,17 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
         guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
     }
     
-    # Add support roles
-    support_role_ids = settings.get('support_roles', [])
-    for role_id in support_role_ids:
+    # Which roles can see this ticket: this category's own visibility roles
+    # if it has any configured, otherwise fall back to the guild's global
+    # support roles (so categories that haven't set anything keep working
+    # exactly like before).
+    visible_role_ids = None
+    if ticket_category_info:
+        visible_role_ids = ticket_category_info.get('visible_role_ids')
+    if not visible_role_ids:
+        visible_role_ids = settings.get('support_roles', [])
+
+    for role_id in visible_role_ids:
         role = guild.get_role(role_id)
         if role:
             overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
@@ -221,7 +235,7 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
     ticket_channel = await guild.create_text_channel(
         channel_name,
         overwrites=overwrites,
-        category=category
+        category=channel_category
     )
     
     return ticket_channel

@@ -96,9 +96,13 @@ class TicketDatabase:
     def get_ticket_categories(self, guild_id: int) -> List[Dict[str, Any]]:
         return list(self.categories.find({"guild_id": guild_id}, {"_id": 0}))
 
+    def get_ticket_category_by_id(self, guild_id: int, category_id: int) -> Optional[Dict[str, Any]]:
+        return self.categories.find_one({"guild_id": guild_id, "id": category_id}, {"_id": 0})
+
     def save_ticket_category(self, guild_id: int, name: str,
                              title: Optional[str] = None, description: Optional[str] = None,
-                             ping_role_ids: Optional[List[int]] = None) -> int:
+                             ping_role_ids: Optional[List[int]] = None,
+                             visible_role_ids: Optional[List[int]] = None) -> int:
         """Add a new ticket category for this guild, returning its sequential id."""
         cat_id = self.categories.count_documents({"guild_id": guild_id}) + 1
         self.categories.insert_one({
@@ -107,9 +111,25 @@ class TicketDatabase:
             "name": name,
             "title": title,
             "description": description,
-            "ping_role_ids": ping_role_ids or []
+            "ping_role_ids": ping_role_ids or [],
+            "visible_role_ids": visible_role_ids or []
         })
         return cat_id
+
+    def update_ticket_category(self, guild_id: int, category_id: int, **fields) -> bool:
+        """Partially update an existing category (only keys with a non-None value are applied)."""
+        updates = {k: v for k, v in fields.items() if v is not None}
+        if not updates:
+            return True
+        try:
+            self.categories.update_one(
+                {"guild_id": guild_id, "id": category_id},
+                {"$set": updates}
+            )
+            return True
+        except Exception as e:
+            print(f"Error updating ticket category: {e}")
+            return False
 
     # Kept as an alias — some older call sites use this name.
     def add_category(self, guild_id: int, name: str, emoji: Optional[str] = None,

@@ -122,10 +122,15 @@ class CategoryConfigModal(ui.Modal):
         required=True
     )
     
-    def __init__(self, category_name: str, on_submit: Callable):
+    def __init__(self, category_name: str, on_submit: Callable,
+                 existing_title: Optional[str] = None, existing_description: Optional[str] = None):
         super().__init__(title=f"Configure: {category_name}")
         self.category_name = category_name
         self.on_submit_callback = on_submit
+        if existing_title:
+            self.title_input.default = existing_title
+        if existing_description:
+            self.description_input.default = existing_description
     
     async def on_submit(self, interaction: discord.Interaction):
         await self.on_submit_callback(
