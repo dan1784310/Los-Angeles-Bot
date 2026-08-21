@@ -38,8 +38,14 @@ INFRACTION_CHANNEL_ID = 1526898975704350822  # Channel to send infractions to
 class InfractionSystem(commands.Cog):
     """Main infraction system cog."""
     
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, has_role_or_higher=None):
         self.bot = bot
+        self.has_role_or_higher = has_role_or_higher
+        
+        # Apply the role check dynamically if a wrapper was provided
+        if self.has_role_or_higher:
+            self.issue = self.has_role_or_higher("infraction")(self.issue)
+            self.promote = self.has_role_or_higher("promote")(self.promote)
     
     # ==========================================
     # INFRACTION COMMAND GROUP
@@ -76,14 +82,6 @@ class InfractionSystem(commands.Cog):
         notes: Optional[str] = None
     ):
         """Issue an infraction to a staff member."""
-        
-        # Check permissions
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "❌ You need administrator permissions to issue infractions.",
-                ephemeral=True
-            )
-            return
         
         # Defer response
         await interaction.response.defer(ephemeral=True)
@@ -163,14 +161,6 @@ class InfractionSystem(commands.Cog):
         notes: Optional[str] = None
     ):
         """Promote a staff member."""
-        
-        # Check permissions
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "❌ You need administrator permissions to promote members.",
-                ephemeral=True
-            )
-            return
         
         # Defer response
         await interaction.response.defer(ephemeral=True)
@@ -309,6 +299,6 @@ class InfractionSystem(commands.Cog):
         await channel.send(embed=embed)
 
 
-async def setup(bot: commands.Bot):
+async def setup(bot: commands.Bot, has_role_or_higher=None):
     """Setup the infraction cog."""
-    await bot.add_cog(InfractionSystem(bot))
+    await bot.add_cog(InfractionSystem(bot, has_role_or_higher))
