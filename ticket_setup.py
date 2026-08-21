@@ -199,7 +199,16 @@ class TicketSetup(commands.Cog):
         # Load current settings from database
         settings = db.get_guild_settings(interaction.guild_id)
         
-        if not settings:
+        # For categories/mentions/roles, check if categories exist even if settings don't
+        if selection in ["categories", "category_mentions", "category_roles"]:
+            categories = db.get_ticket_categories(interaction.guild_id)
+            if not categories:
+                await interaction.followup.send(
+                    "❌ No ticket types configured. Please run 'Full Setup' first.",
+                    ephemeral=True
+                )
+                return
+        elif not settings:
             await interaction.followup.send(
                 "❌ No configuration found. Please run 'Full Setup' first.",
                 ephemeral=True
@@ -304,8 +313,8 @@ class TicketSetup(commands.Cog):
 
     async def edit_ticket_types_menu(self, interaction: discord.Interaction):
         """Show menu for editing ticket types (dropdown buttons)."""
-        settings = db.get_guild_settings(interaction.guild_id)
-        categories = settings.get('categories', [])
+        # Get categories from the categories collection, not guild_settings
+        categories = db.get_ticket_categories(interaction.guild_id)
         
         if not categories:
             await interaction.followup.send("❌ No ticket types configured.", ephemeral=True)
@@ -315,59 +324,68 @@ class TicketSetup(commands.Cog):
         
         for category in categories:
             button = discord.ui.Button(
-                label=category,
+                label=category['name'],
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"edit_category_{category}"
+                custom_id=f"edit_category_{category['id']}"
             )
             
-            async def on_edit_category(button_interaction: discord.Interaction, cat_name=category):
+            async def on_edit_category(button_interaction: discord.Interaction, cat_data=category):
                 await button_interaction.response.defer(ephemeral=True)
-                config = settings.get('category_configs', {}).get(cat_name, {})
                 await button_interaction.followup.send(
-                    f"Edit **{cat_name}** ticket type configuration:",
-                    view=CategoryConfigModal(cat_name, config.get('title', ''), config.get('description', ''), 
-                                            lambda i, t, d: self.edit_category_config(i, cat_name, t, d)),
+                    f"Edit **{cat_data['name']}** ticket type configuration:",
+                    view=CategoryConfigModal(cat_data['name'], cat_data.get('title', ''), cat_data.get('description', ''), 
+                                            lambda i, t, d: self.edit_category_config(i, cat_data['name'], t, d)),
                     ephemeral=True
                 )
             
-            button.callback = lambda i, b=button, cn=category: on_edit_category(i, cn)
+            button.callback = lambda i, b=button, cd=category: on_edit_category(i, cd)
             view.add_item(button)
         
         await interaction.followup.send("Select which ticket type to edit:", view=view, ephemeral=True)
 
     async def edit_category_config(self, interaction: discord.Interaction, category_name: str, title: str, description: str):
         """Edit ticket type configuration."""
-        settings = db.get_guild_settings(interaction.guild_id)
-        category_configs = settings.get('category_configs', {})
-        category_configs[category_name] = {'title': title, 'description': description}
-        db.update_setting(interaction.guild_id, 'category_configs', category_configs)
-        await interaction.followup.send(f"✅ {category_name} ticket type updated!", ephemeral=True)
+        # Find the category by name and get its ID
+        categories = db.get_ticket_categories(interaction.guild_id)
+        category = next((cat for cat in categories if cat['name'] == category_name), None)
+        if category:
+            success = db.update_category(category['id'], interaction.guild_id, title=title, description=description)
+            if success:
+                await interaction.followup.send("✅ Ticket type updated!", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Failed to update ticket type.", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Ticket type not found.", ephemeral=True)
 
     async def edit_ticket_type_messages_menu(self, interaction: discord.Interaction):
         """Show menu for editing ticket type messages."""
-        settings = db.get_guild_settings(interaction.guild_id)
-        categories = settings.get('categories', [])
+        # Get categories from the categories collection
+        categories = db.get_ticket_categories(interaction.guild_id)
         
         if not categories:
             await interaction.followup.send("❌ No ticket types configured.", ephemeral=True)
             return
         
+        # Get custom mentions from guild_settings
+        settings = db.get_guild_settings(interaction.guild_id)
+        category_mentions = settings.get('category_mentions', {}) if settings else {}
+        
         view = discord.ui.View(timeout=None)
         
         for category in categories:
             button = discord.ui.Button(
-                label=f"Message: {category}",
+                label=f"Message: {category['name']}",
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"edit_mention_{category}"
+                custom_id=f"edit_mention_{category['id']}"
             )
             
-            async def on_edit_mention(button_interaction: discord.Interaction, cat_name=category):
-                current_mention = settings.get('category_mentions', {}).get(cat_name, '')
+            async def on_edit_mention(button_interaction: discord.Interaction, cat_data=category):
+                current_mention = category_mentions.get(cat_data['name'], '')
                 await button_interaction.response.send_modal(
-                    CategoryMentionModal(cat_name, current_mention, lambda i, m: self.edit_category_mention(i, cat_name, m))
+                    CategoryMentionModal(cat_data['name'], current_mention, lambda i, m: self.edit_category_mention(i, cat_data['name'], m))
                 )
             
-            button.callback = lambda i, b=button, cn=category: on_edit_mention(i, cn)
+            button.callback = lambda i, b=button, cd=category: on_edit_mention(i, cd)
             view.add_item(button)
         
         await interaction.followup.send("Select which ticket type message to edit:", view=view, ephemeral=True)
@@ -375,6 +393,10 @@ class TicketSetup(commands.Cog):
     async def edit_category_mention(self, interaction: discord.Interaction, category_name: str, mention: str):
         """Edit ticket type mention message."""
         settings = db.get_guild_settings(interaction.guild_id)
+        if not settings:
+            # Create basic settings if they don't exist
+            settings = {'guild_id': interaction.guild_id}
+        
         category_mentions = settings.get('category_mentions', {})
         category_mentions[category_name] = mention
         db.update_setting(interaction.guild_id, 'category_mentions', category_mentions)
@@ -382,32 +404,36 @@ class TicketSetup(commands.Cog):
 
     async def edit_ticket_type_roles_menu(self, interaction: discord.Interaction):
         """Show menu for editing ticket type roles."""
-        settings = db.get_guild_settings(interaction.guild_id)
-        categories = settings.get('categories', [])
+        # Get categories from the categories collection
+        categories = db.get_ticket_categories(interaction.guild_id)
         
         if not categories:
             await interaction.followup.send("❌ No ticket types configured.", ephemeral=True)
             return
         
+        # Get custom roles from guild_settings
+        settings = db.get_guild_settings(interaction.guild_id)
+        category_roles = settings.get('category_roles', {}) if settings else {}
+        
         view = discord.ui.View(timeout=None)
         
         for category in categories:
             button = discord.ui.Button(
-                label=f"Roles: {category}",
+                label=f"Roles: {category['name']}",
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"edit_roles_{category}"
+                custom_id=f"edit_roles_{category['id']}"
             )
             
-            async def on_edit_roles(button_interaction: discord.Interaction, cat_name=category):
-                current_roles = settings.get('category_roles', {}).get(cat_name, [])
+            async def on_edit_roles(button_interaction: discord.Interaction, cat_data=category):
+                current_roles = category_roles.get(cat_data['name'], [])
                 await button_interaction.response.defer(ephemeral=True)
                 await button_interaction.followup.send(
-                    f"Select roles for **{cat_name}** ticket type (multiple allowed):",
-                    view=RoleSelectView('category', lambda i, r: self.edit_category_roles(i, cat_name, r)),
+                    f"Select roles for **{cat_data['name']}** ticket type (multiple allowed):",
+                    view=RoleSelectView('category', lambda i, r: self.edit_category_roles(i, cat_data['name'], r)),
                     ephemeral=True
                 )
             
-            button.callback = lambda i, b=button, cn=category: on_edit_roles(i, cn)
+            button.callback = lambda i, b=button, cd=category: on_edit_roles(i, cd)
             view.add_item(button)
         
         await interaction.followup.send("Select which ticket type roles to edit:", view=view, ephemeral=True)
@@ -415,6 +441,10 @@ class TicketSetup(commands.Cog):
     async def edit_category_roles(self, interaction: discord.Interaction, category_name: str, role_ids: List[int]):
         """Edit ticket type roles."""
         settings = db.get_guild_settings(interaction.guild_id)
+        if not settings:
+            # Create basic settings if they don't exist
+            settings = {'guild_id': interaction.guild_id}
+        
         category_roles = settings.get('category_roles', {})
         category_roles[category_name] = role_ids
         db.update_setting(interaction.guild_id, 'category_roles', category_roles)

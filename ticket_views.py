@@ -111,7 +111,7 @@ class BottomBannerModal(ui.Modal, title='Bottom Banner Image'):
 # ==========================================
 
 class CategoryConfigModal(ui.Modal):
-    """Fixed Category Config Modal"""
+    """Category Config Modal - accepts category_name"""
     title_input = ui.TextInput(
         label='Embed Title',
         placeholder='e.g., General Questions',

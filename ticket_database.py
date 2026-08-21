@@ -126,6 +126,27 @@ class TicketDatabase:
         res = self.categories.delete_one({"guild_id": guild_id, "id": category_id})
         return res.deleted_count > 0
 
+    def update_category(self, category_id: int, guild_id: int, title: Optional[str] = None, 
+                       description: Optional[str] = None) -> bool:
+        """Update an existing category."""
+        try:
+            update_data = {}
+            if title is not None:
+                update_data["title"] = title
+            if description is not None:
+                update_data["description"] = description
+            
+            if update_data:
+                res = self.categories.update_one(
+                    {"guild_id": guild_id, "id": category_id},
+                    {"$set": update_data}
+                )
+                return res.modified_count > 0
+            return True
+        except Exception as e:
+            print(f"Error updating category: {e}")
+            return False
+
     # ==========================================
     # Tickets
     # ==========================================
