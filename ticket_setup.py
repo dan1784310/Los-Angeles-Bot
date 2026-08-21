@@ -810,7 +810,13 @@ class TicketSetup(commands.Cog):
     async def step_4_finish_setup(self, interaction: discord.Interaction):
         """STEP 4 - Save all settings and deploy the panel."""
 
-        session = self.setup_sessions[interaction.user.id]
+        session = self.setup_sessions.get(interaction.user.id)
+        if not session:
+            if interaction.response.is_done():
+                await interaction.followup.send("❌ Setup session expired.", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ Setup session expired.", ephemeral=True)
+            return
 
         settings = {
             'panel_channel_id': session['panel_channel_id'],
@@ -843,20 +849,33 @@ class TicketSetup(commands.Cog):
 
             await self.deploy_panel(interaction)
 
-            if interaction.user.id in self.setup_sessions:
-                del self.setup_sessions[interaction.user.id]
+            self.setup_sessions.pop(interaction.user.id, None)
 
-            await interaction.response.edit_message(
-                content="✅ **Setup Complete!** Your ticket system is now ready to use.",
-                embed=None,
-                view=None
-            )
+            if interaction.response.is_done():
+                await interaction.edit_original_response(
+                    content="✅ **Setup Complete!** Your ticket system is now ready to use.",
+                    embed=None,
+                    view=None
+                )
+            else:
+                await interaction.response.edit_message(
+                    content="✅ **Setup Complete!** Your ticket system is now ready to use.",
+                    embed=None,
+                    view=None
+                )
         else:
-            await interaction.response.edit_message(
-                content="❌ Failed to save settings. Please try again.",
-                embed=None,
-                view=None
-            )
+            if interaction.response.is_done():
+                await interaction.edit_original_response(
+                    content="❌ Failed to save settings. Please try again.",
+                    embed=None,
+                    view=None
+                )
+            else:
+                await interaction.response.edit_message(
+                    content="❌ Failed to save settings. Please try again.",
+                    embed=None,
+                    view=None
+                )
 
     async def deploy_panel(self, interaction: discord.Interaction):
         """Deploy the ticket panel to the configured channel."""
@@ -905,8 +924,7 @@ class TicketSetup(commands.Cog):
     async def cancel_setup(self, interaction: discord.Interaction):
         """Cancel the setup process."""
 
-        if interaction.user.id in self.setup_sessions:
-            del self.setup_sessions[interaction.user.id]
+        self.setup_sessions.pop(interaction.user.id, None)
 
         if interaction.response.is_done():
             await interaction.edit_original_response(

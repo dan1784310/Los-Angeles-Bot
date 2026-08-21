@@ -638,25 +638,30 @@ class SupportRoleSelect(ui.RoleSelect):
             await self.callback_func(interaction, [role.id for role in self.values])
 
 
-class CategoryPingRoleSelectView(ui.View):
-    """View for selecting which role(s) to ping for a specific ticket category (optional)."""
-
-    def __init__(self, on_select: Callable):
+class CategoryPingRoleSelectView(discord.ui.View):
+    def __init__(self, callback):
         super().__init__(timeout=None)
-        self.on_select = on_select
-        self.add_item(CategoryPingRoleSelect(self.on_select))
+        self.callback = callback
 
-        skip_button = ui.Button(
-            label="Skip",
-            style=discord.ButtonStyle.secondary,
-            custom_id="category_ping_skip"
+        select = discord.ui.RoleSelect(
+            placeholder="Select roles...",
+            min_values=1,
+            max_values=25
         )
+        select.callback = self.on_select
+        self.add_item(select)
 
-        async def on_skip(interaction: discord.Interaction):
-            await self.on_select(interaction, [])
+        skip_btn = discord.ui.Button(label="Skip", style=discord.ButtonStyle.secondary)
+        skip_btn.callback = self.on_skip
+        self.add_item(skip_btn)
 
-        skip_button.callback = on_skip
-        self.add_item(skip_button)
+    async def on_select(self, interaction: discord.Interaction):
+        select_component = self.children[0]
+        role_ids = [role.id for role in select_component.values]
+        await self.callback(interaction, role_ids)
+
+    async def on_skip(self, interaction: discord.Interaction):
+        await self.callback(interaction, [])
 
 
 class CategoryPingRoleSelect(ui.RoleSelect):
