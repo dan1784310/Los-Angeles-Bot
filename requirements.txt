@@ -3,3 +3,5 @@ Flask
 pymongo
 dnspython
 python-dotenv
+requests
+cryptography

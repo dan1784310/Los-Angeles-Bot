@@ -3,13 +3,14 @@ import asyncio
 import threading
 import os
 
-from flask import Flask
+from flask import Flask, request
+from erlc_api import handle_erlc_webhook, ERLCClient
 
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 
-from config import TOKEN
+from config import TOKEN, ERLC_SERVER_KEY
 
 # Import ticket system modules
 from ticket_database import db
@@ -1076,6 +1077,19 @@ app = Flask(__name__)
 def home():
     return "Bot is running!"
 
+@app.route("/erlc/events", methods=["POST"])
+def erlc_events():
+    """Receive and verify ER:LC Event Webhooks."""
+    return handle_erlc_webhook(request)
+
+@app.route("/erlc/status")
+def erlc_status():
+    """Simple integration health endpoint; never exposes the server key."""
+    return {
+        "configured": bool(ERLC_SERVER_KEY),
+        "webhook_endpoint": "/erlc/events",
+    }
+
 def run_web():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
@@ -1092,4 +1106,11 @@ if __name__ == "__main__":
             "committed .env file."
         )
     threading.Thread(target=run_web, daemon=True).start()
+
+    if ERLC_SERVER_KEY:
+        print("[ERLC] Server key configured successfully.")
+        print("[ERLC] Event webhook endpoint: /erlc/events")
+    else:
+        print("[ERLC] WARNING: ERLC_SERVER_KEY is not configured.")
+
     bot.run(TOKEN)
