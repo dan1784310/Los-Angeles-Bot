@@ -525,7 +525,7 @@ class TicketSetup(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         await self.configure_category(interaction, category_name)
 
-    # ==========================================
+   # ==========================================
     # Add/Edit (quick edit without restarting setup)
     # ==========================================
 
@@ -544,7 +544,7 @@ class TicketSetup(commands.Cog):
     ]
 
     async def show_quick_edit_menu(self, interaction: discord.Interaction):
-        """Show a dropdown with every setting from setup, to add/edit individually."""
+        """Show a dropdown with all settings to add/edit individually."""
         view = discord.ui.View(timeout=None)
         select = discord.ui.Select(
             placeholder="Choose what to add/edit...",
