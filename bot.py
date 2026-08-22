@@ -7,7 +7,7 @@ import time
 import sys
 
 from flask import Flask, request
-from erlc_api import handle_erlc_webhook, ERLCClient
+from erlc_api import handle_erlc_webhook, ERLCClient, ERLCAPIError
 
 from discord.ext import commands
 from discord import app_commands
@@ -170,6 +170,11 @@ async def on_ready():
         )
     except Exception as e:
         print(f"[READY] Could not set presence: {e}")
+
+    # Start ER:LC command log polling exactly once (on_ready can fire again
+    # after a reconnect — guard against starting a second copy of the loop).
+    if not getattr(bot, "_erlc_poll_task", None):
+        bot._erlc_poll_task = bot.loop.create_task(poll_erlc_command_logs())
 
     # Refresh ticket panels
     try:
@@ -1185,6 +1190,82 @@ async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str):
                 else:
                     print(f"[Discord Error] Could not send LLC log: {e}")
                     break
+
+
+# ==========================================
+# ER:LC COMMAND LOG POLLING
+# ==========================================
+# ER:LC's Event Webhook only ever sends two kinds of events: in-game chat
+# messages that start with ";" and Emergency Calls. It does NOT deliver
+# command-log events, no matter what payload shape you wait for — see
+# https://apidocs.erlc.gg/event-webhooks ("What events are sent?").
+# Command logs are only available by polling GET /v2/server?CommandLogs=true
+# with the server key, so that's what this background task does.
+
+_erlc_seen_commands = set()
+_erlc_command_poll_first_run = True
+
+ERLC_COMMAND_POLL_INTERVAL = 15  # seconds
+
+
+async def poll_erlc_command_logs():
+    """Background task: periodically pull command logs from the ER:LC API
+    and forward new ones through send_llc_log."""
+    global _erlc_seen_commands, _erlc_command_poll_first_run
+
+    await bot.wait_until_ready()
+
+    erlc_client = ERLCClient()
+    if not erlc_client.configured:
+        print("[ERLC] Command log polling disabled — ERLC_SERVER_KEY is not set.")
+        return
+
+    print(f"[ERLC] Polling command logs every {ERLC_COMMAND_POLL_INTERVAL}s...")
+
+    while not bot.is_closed():
+        try:
+            data = await asyncio.to_thread(erlc_client.get_server, CommandLogs=True)
+            logs = data.get("CommandLogs", []) or []
+
+            if _erlc_command_poll_first_run:
+                # Don't replay everything that already happened before the
+                # bot started — just remember what's already there.
+                _erlc_seen_commands = {
+                    (log.get("Player"), log.get("Timestamp"), log.get("Command"))
+                    for log in logs
+                }
+                _erlc_command_poll_first_run = False
+            else:
+                for log in logs:
+                    key = (log.get("Player"), log.get("Timestamp"), log.get("Command"))
+                    if key in _erlc_seen_commands:
+                        continue
+                    _erlc_seen_commands.add(key)
+
+                    player_field = log.get("Player") or "Unknown:0"
+                    username, _, roblox_id_str = player_field.partition(":")
+                    command_text = log.get("Command") or ""
+
+                    if command_text:
+                        try:
+                            await send_llc_log(
+                                roblox_username=username or "Unknown",
+                                roblox_id=int(roblox_id_str) if roblox_id_str.isdigit() else 0,
+                                full_command=command_text
+                            )
+                        except Exception as e:
+                            print(f"[ERLC] Error forwarding command log: {e}")
+
+                # Keep the dedupe set from growing forever
+                if len(_erlc_seen_commands) > 1000:
+                    _erlc_seen_commands = set(list(_erlc_seen_commands)[-500:])
+
+        except ERLCAPIError as e:
+            print(f"[ERLC] Error polling command logs: {e}")
+        except Exception as e:
+            print(f"[ERLC] Unexpected error polling command logs: {e}")
+
+        await asyncio.sleep(ERLC_COMMAND_POLL_INTERVAL)
 
 
 # ==========================================

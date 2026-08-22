@@ -19,6 +19,7 @@ class TicketDatabase:
         self.guild_settings = self.db["guild_settings"]
         self.categories = self.db["categories"]
         self.tickets = self.db["tickets"]
+        self.settings = self.db["settings"]  # generic key/value store (e.g. LLC channel id)
 
     # ==========================================
     # Guild settings
