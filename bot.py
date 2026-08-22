@@ -1065,8 +1065,9 @@ async def inputresults(
 # LOW LETTER COMMAND (LLC) LOGS
 # ==========================================
 
-# Global variable to hold the channel ID where logs should be sent
+# Global variable fallback
 target_llc_channel_id = None
+
 
 def has_llc_role():
     """Custom check for the LLC command using role ID 1526714098706940086."""
@@ -1090,6 +1091,16 @@ async def set_llc(ctx):
     target_llc_channel_id = ctx.channel.id
     channel_name = ctx.channel.name
 
+    # Save channel ID to MongoDB so it persists across restarts
+    try:
+        db.settings.update_one(
+            {"_id": "llc_channel"},
+            {"$set": {"channel_id": ctx.channel.id}},
+            upsert=True
+        )
+    except Exception as e:
+        print(f"[MongoDB Error] Could not save LLC channel: {e}")
+
     # Delete the command invocation message
     try:
         await ctx.message.delete()
@@ -1098,7 +1109,7 @@ async def set_llc(ctx):
 
     # Send confirmation DM to user
     try:
-        await ctx.author.send(f"successfully set low letter command logs in channel {channel_name}")
+        await ctx.author.send(f"successfully set low letter command logs in channel #{channel_name}")
     except discord.Forbidden:
         pass
 
@@ -1106,10 +1117,28 @@ async def set_llc(ctx):
 async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str):
     """Sends the Components V2 card if the word/argument after the command has fewer than 5 letters."""
     global target_llc_channel_id
-    if not target_llc_channel_id:
+
+    # 1. Check environment variable first
+    channel_id = os.getenv("LLC_CHANNEL_ID")
+
+    # 2. Check global in-memory variable
+    if not channel_id and target_llc_channel_id:
+        channel_id = target_llc_channel_id
+
+    # 3. Fallback: Lookup in MongoDB Atlas
+    if not channel_id:
+        try:
+            doc = db.settings.find_one({"_id": "llc_channel"})
+            if doc:
+                channel_id = doc.get("channel_id")
+                target_llc_channel_id = channel_id
+        except Exception as e:
+            print(f"[MongoDB Error] Failed to fetch LLC channel: {e}")
+
+    if not channel_id:
         return
 
-    target_channel = bot.get_channel(target_llc_channel_id)
+    target_channel = bot.get_channel(int(channel_id))
     if not target_channel:
         return
 
@@ -1141,7 +1170,19 @@ async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str):
         container.add_item(discord.ui.TextDisplay(content))
         view.add_item(container)
 
-        await target_channel.send(view=view)
+        # Retry loop to catch rate limits (429) without crashing
+        for attempt in range(3):
+            try:
+                await target_channel.send(view=view)
+                break
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    retry_after = getattr(e, 'retry_after', 5)
+                    print(f"[Rate Limit] Discord 429 hit. Retrying in {retry_after}s...")
+                    await asyncio.sleep(retry_after)
+                else:
+                    print(f"[Discord Error] Could not send LLC log: {e}")
+                    break
 
 
 # ==========================================
