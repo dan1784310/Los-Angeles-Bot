@@ -3,6 +3,8 @@ import asyncio
 import datetime
 import threading
 import os
+import time
+import sys
 
 from flask import Flask, request
 from erlc_api import handle_erlc_webhook, ERLCClient
@@ -1256,6 +1258,8 @@ if __name__ == "__main__":
             "key 'TOKEN', value your Discord bot token) — it is NOT read from a "
             "committed .env file."
         )
+    
+    # Start the Flask web server thread for ER:LC webhook endpoint
     threading.Thread(target=run_web, daemon=True).start()
 
     if ERLC_SERVER_KEY:
@@ -1264,4 +1268,18 @@ if __name__ == "__main__":
     else:
         print("[ERLC] WARNING: ERLC_SERVER_KEY is not configured.")
 
-    bot.run(TOKEN)
+    # Protected Discord login loop to safely handle Cloudflare 429 rate limits
+    while True:
+        try:
+            print("[Discord] Attempting to log in...")
+            bot.run(TOKEN)
+        except discord.HTTPException as e:
+            if e.status == 429:
+                print("[Rate Limit] Hit 429 during bot login. Waiting 60s before retrying...")
+                time.sleep(60)
+            else:
+                print(f"[Discord Error] Startup failed: {e}")
+                time.sleep(10)
+        except Exception as e:
+            print(f"[Fatal Error] Unexpected error during bot startup: {e}")
+            time.sleep(10)
