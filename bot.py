@@ -1121,9 +1121,28 @@ async def set_llc(ctx):
         pass
 
 
-async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str):
-    """Sends the Components V2 card if the word/argument after the command has fewer than 5 letters."""
+async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str,
+                       live_player_usernames: Optional[set] = None):
+    """
+    Sends the Components V2 card if the word/argument after the command has
+    fewer than 5 letters.
+
+    ER:LC's API has no field indicating whether a command actually succeeded
+    (e.g. whether ":kill bob" found a real player named "bob") — CommandLogs
+    entries are just {Player, Timestamp, Command}, nothing more. The closest
+    real check available is cross-referencing the target word against who is
+    actually online right now: if live_player_usernames is provided and the
+    target word doesn't match (by prefix, same as how ER:LC itself matches
+    player names in-game) any currently-online player, the command almost
+    certainly did nothing, so it's skipped.
+    """
     global target_llc_channel_id
+
+    # Commands issued via the API's own remote-command endpoint (not typed
+    # by an actual player in-game) show up in ER:LC's command logs with
+    # "Remote Server" as the player — never alert on those.
+    if roblox_username.strip().lower().startswith("remote server"):
+        return
 
     # 1. Check environment variable first
     channel_id = os.getenv("LLC_CHANNEL_ID")
@@ -1156,40 +1175,50 @@ async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str):
     target_word = parts[1]
 
     # Check if word after command has less than 5 letters
-    if len(target_word) < 5:
-        now = datetime.datetime.now()
-        date_str = now.strftime("%d/%m/%Y")
-        time_str = now.strftime("%I:%M %p").lower()
+    if len(target_word) >= 5:
+        return
 
-        roblox_profile_url = f"https://www.roblox.com/users/{roblox_id}/profile"
+    # Only alert if that word actually matches someone currently online —
+    # ER:LC matches player names by prefix in-game, so mirror that here.
+    if live_player_usernames is not None:
+        target_lower = target_word.lower()
+        matched = any(name.lower().startswith(target_lower) for name in live_player_usernames)
+        if not matched:
+            return
 
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(0, 162, 232)
-        )
+    now = datetime.datetime.now()
+    date_str = now.strftime("%d/%m/%Y")
+    time_str = now.strftime("%I:%M %p").lower()
 
-        content = (
-            "### Low Letter Command Executed\n\n"
-            f"[{roblox_username}:{roblox_id}]({roblox_profile_url}) used the command `{full_command}`\n\n"
-            f"-# AZRP Command Logs | {date_str}, {time_str}"
-        )
+    roblox_profile_url = f"https://www.roblox.com/users/{roblox_id}/profile"
 
-        container.add_item(discord.ui.TextDisplay(content))
-        view.add_item(container)
+    view = discord.ui.LayoutView(timeout=None)
+    container = discord.ui.Container(
+        accent_colour=discord.Color.from_rgb(0, 162, 232)
+    )
 
-        # Retry loop to catch rate limits (429) without crashing
-        for attempt in range(3):
-            try:
-                await target_channel.send(view=view)
+    content = (
+        "### Low Letter Command Executed\n\n"
+        f"[{roblox_username}:{roblox_id}]({roblox_profile_url}) used the command `{full_command}`\n\n"
+        f"-# AZRP Command Logs | {date_str}, {time_str}"
+    )
+
+    container.add_item(discord.ui.TextDisplay(content))
+    view.add_item(container)
+
+    # Retry loop to catch rate limits (429) without crashing
+    for attempt in range(3):
+        try:
+            await target_channel.send(view=view)
+            break
+        except discord.HTTPException as e:
+            if e.status == 429:
+                retry_after = getattr(e, 'retry_after', 5)
+                print(f"[Rate Limit] Discord 429 hit. Retrying in {retry_after}s...")
+                await asyncio.sleep(retry_after)
+            else:
+                print(f"[Discord Error] Could not send LLC log: {e}")
                 break
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    retry_after = getattr(e, 'retry_after', 5)
-                    print(f"[Rate Limit] Discord 429 hit. Retrying in {retry_after}s...")
-                    await asyncio.sleep(retry_after)
-                else:
-                    print(f"[Discord Error] Could not send LLC log: {e}")
-                    break
 
 
 # ==========================================
@@ -1224,8 +1253,14 @@ async def poll_erlc_command_logs():
 
     while not bot.is_closed():
         try:
-            data = await asyncio.to_thread(erlc_client.get_server, CommandLogs=True)
+            data = await asyncio.to_thread(erlc_client.get_server, CommandLogs=True, Players=True)
             logs = data.get("CommandLogs", []) or []
+
+            live_player_usernames = {
+                (player.get("Player") or "").split(":")[0]
+                for player in (data.get("Players") or [])
+                if player.get("Player")
+            }
 
             if _erlc_command_poll_first_run:
                 # Don't replay everything that already happened before the
@@ -1251,7 +1286,8 @@ async def poll_erlc_command_logs():
                             await send_llc_log(
                                 roblox_username=username or "Unknown",
                                 roblox_id=int(roblox_id_str) if roblox_id_str.isdigit() else 0,
-                                full_command=command_text
+                                full_command=command_text,
+                                live_player_usernames=live_player_usernames
                             )
                         except Exception as e:
                             print(f"[ERLC] Error forwarding command log: {e}")
