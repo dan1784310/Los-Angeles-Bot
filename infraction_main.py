@@ -26,6 +26,27 @@ INFRACTION_ACTIONS = [
     "Suspension"
 ]
 
+# Anyone with this role, or a role positioned higher than it in the server's
+# role hierarchy, can use /infraction issue — no administrator permission
+# required for that.
+INFRACTION_ROLE_ID = 1539201630161993728
+
+
+def _can_issue_infraction(interaction: discord.Interaction) -> bool:
+    """Server owner, administrators, or anyone whose top role is at or above
+    INFRACTION_ROLE_ID in the role hierarchy."""
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return False
+
+    if interaction.user.id == interaction.guild.owner_id or interaction.user.guild_permissions.administrator:
+        return True
+
+    required_role = interaction.guild.get_role(INFRACTION_ROLE_ID)
+    if not required_role:
+        return False
+
+    return interaction.user.top_role >= required_role
+
 
 # ==========================================
 # INFRACTION COG
@@ -76,9 +97,9 @@ class InfractionSystem(commands.Cog):
         """Issue an infraction to a staff member."""
         
         # Check permissions
-        if not interaction.user.guild_permissions.administrator:
+        if not _can_issue_infraction(interaction):
             await interaction.response.send_message(
-                "❌ You need administrator permissions to issue infractions.",
+                "❌ You don't have permission to issue infractions.",
                 ephemeral=True
             )
             return
