@@ -340,38 +340,58 @@ async def send_shop(ctx):
         await ctx.send("❌ You don't have permission to use this command.")
         return
     
-    # Create Components V2 view
-    view = discord.ui.LayoutView(timeout=None)
-    container = discord.ui.Container(
-        accent_colour=discord.Color.gold()
-    )
-    
-    # Add banner image at the very top
-    container.add_item(discord.ui.MediaGallery(
-        discord.MediaGalleryItem(media=SHOP_BANNER_URL)
-    ))
-    
-    # Add separator
-    container.add_item(discord.ui.Separator())
-    
-    # Add icon image (small shop icon) above title
-    icon_gallery = discord.ui.MediaGallery()
-    icon_gallery.add_item(discord.MediaGalleryItem(media=SHOP_ICON_URL))
-    container.add_item(icon_gallery)
-    
-    # Add title text
-    container.add_item(discord.ui.TextDisplay("### Marketplace"))
-    
-    # Add separator
-    container.add_item(discord.ui.Separator())
-    
-    # Add description
-    container.add_item(discord.ui.TextDisplay(
-        "Welcome to the marketplace! Here, you can purchase various perks to boost your server experience—including paid ads, sponsored giveaways, premium subscriptions, and more. Browse all our offerings and check current pricing by visiting the shop below:"
-    ))
-    
-    # Add separator
-    container.add_item(discord.ui.Separator())
+    try:
+        # Create Components V2 view
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.gold()
+        )
+        
+        # Add banner image at the very top
+        container.add_item(discord.ui.MediaGallery(
+            discord.MediaGalleryItem(media=SHOP_BANNER_URL)
+        ))
+        
+        # Add separator
+        container.add_item(discord.ui.Separator())
+        
+        # Add icon image (small shop icon) above title
+        icon_gallery = discord.ui.MediaGallery()
+        icon_gallery.add_item(discord.MediaGalleryItem(media=SHOP_ICON_URL))
+        container.add_item(icon_gallery)
+        
+        # Add title text
+        container.add_item(discord.ui.TextDisplay("### Marketplace"))
+        
+        # Add separator
+        container.add_item(discord.ui.Separator())
+        
+        # Add description
+        container.add_item(discord.ui.TextDisplay(
+            "Welcome to the marketplace! Here, you can purchase various perks to boost your server experience—including paid ads, sponsored giveaways, premium subscriptions, and more. Browse all our offerings and check current pricing by visiting the shop below:"
+        ))
+        
+        # Add separator
+        container.add_item(discord.ui.Separator())
+        
+        # Add dropdown (empty for now)
+        dropdown_row = discord.ui.ActionRow()
+        dropdown = discord.ui.Select(
+            placeholder="Select an option...",
+            options=[
+                discord.SelectOption(label="Coming Soon", value="coming_soon")
+            ]
+        )
+        dropdown.disabled = True
+        dropdown_row.add_item(dropdown)
+        container.add_item(dropdown_row)
+        
+        view.add_item(container)
+        
+        await ctx.send(view=view)
+    except Exception as e:
+        print(f"Error in send_shop command: {e}")
+        await ctx.send(f"❌ Error creating shop: {e}")
     
     # Add dropdown (empty for now)
     dropdown_row = discord.ui.ActionRow()
