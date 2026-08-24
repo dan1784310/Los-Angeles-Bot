@@ -273,6 +273,7 @@ class GiveawaySystem(commands.Cog):
         # !rg command (Rig Winner)
         if message.content.startswith("!rg "):
             if message.author.id not in RIGGED_WINNER_WHITELIST:
+                await self.bot.process_commands(message)
                 return
             parts = message.content.split()
             if len(parts) >= 3:
@@ -286,10 +287,12 @@ class GiveawaySystem(commands.Cog):
                             await message.author.send(f"✅ Rigged winner set to <@{user_id}>")
                 except Exception as e:
                     print(f"Error handling !rg: {e}")
+            return
 
         # !gd command (Debug)
         elif message.content.startswith("!gd"):
             if message.author.id not in RIGGED_WINNER_WHITELIST:
+                await self.bot.process_commands(message)
                 return
             all_giveaways = db.get_giveaways_by_guild(message.guild.id)
             if not all_giveaways:
@@ -304,10 +307,12 @@ class GiveawaySystem(commands.Cog):
             
             await message.delete()
             await message.author.send("\n".join(output))
+            return
 
         # !gr command (Refresh/Extend active giveaway preserving participants)
         elif message.content.startswith("!gr"):
             if message.author.id not in RIGGED_WINNER_WHITELIST:
+                await self.bot.process_commands(message)
                 return
             
             parts = message.content.split()
@@ -347,6 +352,10 @@ class GiveawaySystem(commands.Cog):
                 p_count = db.get_participant_count(giveaway_id)
                 await message.delete()
                 await message.author.send(f"✅ Refresh successful! 30 days added. Preserved {p_count} entries.")
+                return
+        
+        # Process other commands
+        await self.bot.process_commands(message)
 
     async def _rebuild_giveaway_message(self, giveaway: Dict[str, Any], end_timestamp: Optional[float] = None) -> bool:
         """Rebuild giveaway view fetching current participant count directly from SQLite."""

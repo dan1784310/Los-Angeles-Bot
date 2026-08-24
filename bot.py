@@ -151,9 +151,8 @@ text_setups = {}
 @bot.event
 async def on_ready():
     print(f"[READY] Logged in as {bot.user} ({bot.user.id})")
-
+    
     print("[COMMANDS] Registered prefix commands:")
-
     for command in bot.commands:
         print(f"  !{command.name}")
     
