@@ -104,6 +104,11 @@ bot = commands.Bot(
     intents=intents
 )
 
+@bot.command()
+async def test(ctx):
+    print("[TEST] !test received")
+    await ctx.send("✅ Prefix commands are working!")
+
 
 # Global Error Handler for Role Permission Failure
 @bot.tree.error
@@ -137,6 +142,11 @@ text_setups = {}
 @bot.event
 async def on_ready():
     print(f"[READY] Logged in as {bot.user} ({bot.user.id})")
+
+    print("[COMMANDS] Registered prefix commands:")
+
+    for command in bot.commands:
+        print(f"  !{command.name}")
     
     # Store the has_role_or_higher function on the bot for cogs to use
     bot.has_role_or_higher = has_role_or_higher
