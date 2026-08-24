@@ -51,7 +51,7 @@ SHOP_BANNER_URL = "https://ibb.co/bggwPrCc"
 
 # Your Discord custom emoji
 # Upload the basket PNG to Server Settings > Emoji
-SHOP_EMOJI = "<:shop:1541539059392843776>"
+SHOP_EMOJI = "<:shoppingcart:1541538882212986931>"
 
 # Only this user can use !send_shop
 AUTHORIZED_USER_ID = 1488252011374710958
@@ -376,13 +376,8 @@ async def send_shop(ctx):
         # TITLE + CUSTOM SHOP EMOJI
         container.add_item(
             discord.ui.TextDisplay(
-                f"### {SHOP_EMOJI} Marketplace"
+                f"## {SHOP_EMOJI} Marketplace"
             )
-        )
-
-        # SEPARATOR
-        container.add_item(
-            discord.ui.Separator()
         )
 
         # DESCRIPTION
