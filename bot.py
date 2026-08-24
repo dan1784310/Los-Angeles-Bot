@@ -47,7 +47,9 @@ COMMAND_ROLE_PERMISSIONS = {
 # ==========================================
 # MARKETPLACE CONFIGURATION
 # ==========================================
-SHOP_BANNER_URL = "https://ibb.co/bggwPrCc"
+# Use direct image URLs (not page URLs like ibb.co)
+# Get direct URLs by right-clicking image > "Copy Image Address"
+SHOP_BANNER_URL = "https://i.postimg.cc/Rh7J6tk4/Gemini-Generated-Image-kxz78gkxz78gkxz7.jpg"  # Replace with direct image URL
 
 # Your Discord custom emoji
 # Upload the basket PNG to Server Settings > Emoji
@@ -376,7 +378,7 @@ async def send_shop(ctx):
         # TITLE + CUSTOM SHOP EMOJI
         container.add_item(
             discord.ui.TextDisplay(
-                f"## {SHOP_EMOJI} Marketplace"
+                f"# {SHOP_EMOJI} Marketplace"
             )
         )
 
