@@ -53,7 +53,7 @@ SHOP_BANNER_URL = "https://i.postimg.cc/Rh7J6tk4/Gemini-Generated-Image-kxz78gkx
 
 # Your Discord custom emoji
 # Upload the basket PNG to Server Settings > Emoji
-SHOP_EMOJI = "<:shoppingcart:1541538882212986931>"
+SHOP_EMOJI = "<:shopping_cart:1541552477910990899>"
 
 # Only this user can use !send_shop
 AUTHORIZED_USER_ID = 1488252011374710958
@@ -399,24 +399,65 @@ async def send_shop(ctx):
             discord.ui.Separator()
         )
 
-        # DROPDOWN
-        dropdown_row = discord.ui.ActionRow()
-
-        dropdown = discord.ui.Select(
-            placeholder="Select an option...",
+        # DROPDOWN 1: Donations
+        dropdown_row1 = discord.ui.ActionRow()
+        dropdown1 = discord.ui.Select(
+            placeholder="<:robux:1541552732937265305> Donations",
             options=[
                 discord.SelectOption(
                     label="Coming Soon",
-                    value="coming_soon"
+                    value="donations_coming_soon"
                 )
             ]
         )
+        dropdown1.disabled = True
+        dropdown_row1.add_item(dropdown1)
+        container.add_item(dropdown_row1)
 
-        # Disabled until marketplace options are ready
-        dropdown.disabled = True
+        # DROPDOWN 2: Server Advertisements
+        dropdown_row2 = discord.ui.ActionRow()
+        dropdown2 = discord.ui.Select(
+            placeholder="<:announcement:1541253550997504020> Server Advertisements",
+            options=[
+                discord.SelectOption(
+                    label="Coming Soon",
+                    value="ads_coming_soon"
+                )
+            ]
+        )
+        dropdown2.disabled = True
+        dropdown_row2.add_item(dropdown2)
+        container.add_item(dropdown_row2)
 
-        dropdown_row.add_item(dropdown)
-        container.add_item(dropdown_row)
+        # DROPDOWN 3: Server Memberships
+        dropdown_row3 = discord.ui.ActionRow()
+        dropdown3 = discord.ui.Select(
+            placeholder="<:star:1541552889993101323> Server Memberships",
+            options=[
+                discord.SelectOption(
+                    label="Coming Soon",
+                    value="memberships_coming_soon"
+                )
+            ]
+        )
+        dropdown3.disabled = True
+        dropdown_row3.add_item(dropdown3)
+        container.add_item(dropdown_row3)
+
+        # DROPDOWN 4: Nitro Boost
+        dropdown_row4 = discord.ui.ActionRow()
+        dropdown4 = discord.ui.Select(
+            placeholder="<:nitro_gem:1541553100547162132> Nitro Boost",
+            options=[
+                discord.SelectOption(
+                    label="Coming Soon",
+                    value="nitro_coming_soon"
+                )
+            ]
+        )
+        dropdown4.disabled = True
+        dropdown_row4.add_item(dropdown4)
+        container.add_item(dropdown_row4)
 
         # Add container to view
         view.add_item(container)
