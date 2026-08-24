@@ -40,7 +40,7 @@ COMMAND_ROLE_PERMISSIONS = {
     "ticket_setup":  1526959787219091486,  # Replace with actual Role ID
     "inputresults":  1527367791592607755,  # Replace with actual Role ID for results
     "feedback":      1527051350016397312,  # Replace with actual Role ID allowed to give/manage feedback
-    "infraction":    1527053497525207163,  # Replace with actual Role ID for infractions
+    "infraction":    1539201630161993728,  # Replace with actual Role ID for infractions
 }
 
 # ==========================================
@@ -321,6 +321,54 @@ async def card(ctx):
         "test"
     )
     await ctx.send(view=view)
+
+
+# ==========================================
+# SHOP COMMAND
+# ==========================================
+
+SHOP_BANNER_URL = "https://ibb.co/bggwPrCc"  # Replace with actual banner URL
+SHOP_ICON_URL = "https://ibb.co/ddq0dVm"  # Replace with actual basket image URL
+AUTHORIZED_USER_ID = 1488252011374710958  # Only this user can use the command
+
+@bot.command()
+async def send_shop(ctx):
+    """Send the marketplace embed with dropdown."""
+    
+    # Check if user is authorized
+    if ctx.author.id != AUTHORIZED_USER_ID:
+        await ctx.send("❌ You don't have permission to use this command.")
+        return
+    
+    # Create embed
+    embed = discord.Embed(
+        title="Marketplace",
+        description="Welcome to the marketplace! Here, you can purchase various perks to boost your server experience—including paid ads, sponsored giveaways, premium subscriptions, and more. Browse all our offerings and check current pricing by visiting the shop below:",
+        color=discord.Color.gold()
+    )
+    
+    # Set banner image (top banner)
+    embed.set_image(url=SHOP_BANNER_URL)
+    
+    # Set icon (small basket image next to title)
+    embed.set_thumbnail(url=SHOP_ICON_URL)
+    
+    # Create empty dropdown (placeholder only)
+    view = discord.ui.View(timeout=None)
+    
+    dropdown = discord.ui.Select(
+        placeholder="Select an option...",
+        options=[
+            discord.SelectOption(label="Coming Soon", value="coming_soon")
+        ]
+    )
+    
+    # Disable dropdown since it's empty for now
+    dropdown.disabled = True
+    
+    view.add_item(dropdown)
+    
+    await ctx.send(embed=embed, view=view)
 
 
 # ==========================================
@@ -1121,28 +1169,9 @@ async def set_llc(ctx):
         pass
 
 
-async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str,
-                       live_player_usernames: Optional[set] = None):
-    """
-    Sends the Components V2 card if the word/argument after the command has
-    fewer than 5 letters.
-
-    ER:LC's API has no field indicating whether a command actually succeeded
-    (e.g. whether ":kill bob" found a real player named "bob") — CommandLogs
-    entries are just {Player, Timestamp, Command}, nothing more. The closest
-    real check available is cross-referencing the target word against who is
-    actually online right now: if live_player_usernames is provided and the
-    target word doesn't match (by prefix, same as how ER:LC itself matches
-    player names in-game) any currently-online player, the command almost
-    certainly did nothing, so it's skipped.
-    """
+async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str):
+    """Sends the Components V2 card if the word/argument after the command has fewer than 5 letters."""
     global target_llc_channel_id
-
-    # Commands issued via the API's own remote-command endpoint (not typed
-    # by an actual player in-game) show up in ER:LC's command logs with
-    # "Remote Server" as the player — never alert on those.
-    if roblox_username.strip().lower().startswith("remote server"):
-        return
 
     # 1. Check environment variable first
     channel_id = os.getenv("LLC_CHANNEL_ID")
@@ -1175,50 +1204,40 @@ async def send_llc_log(roblox_username: str, roblox_id: int, full_command: str,
     target_word = parts[1]
 
     # Check if word after command has less than 5 letters
-    if len(target_word) >= 5:
-        return
+    if len(target_word) < 5:
+        now = datetime.datetime.now()
+        date_str = now.strftime("%d/%m/%Y")
+        time_str = now.strftime("%I:%M %p").lower()
 
-    # Only alert if that word actually matches someone currently online —
-    # ER:LC matches player names by prefix in-game, so mirror that here.
-    if live_player_usernames is not None:
-        target_lower = target_word.lower()
-        matched = any(name.lower().startswith(target_lower) for name in live_player_usernames)
-        if not matched:
-            return
+        roblox_profile_url = f"https://www.roblox.com/users/{roblox_id}/profile"
 
-    now = datetime.datetime.now()
-    date_str = now.strftime("%d/%m/%Y")
-    time_str = now.strftime("%I:%M %p").lower()
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(0, 162, 232)
+        )
 
-    roblox_profile_url = f"https://www.roblox.com/users/{roblox_id}/profile"
+        content = (
+            "### Low Letter Command Executed\n\n"
+            f"[{roblox_username}:{roblox_id}]({roblox_profile_url}) used the command `{full_command}`\n\n"
+            f"-# AZRP Command Logs | {date_str}, {time_str}"
+        )
 
-    view = discord.ui.LayoutView(timeout=None)
-    container = discord.ui.Container(
-        accent_colour=discord.Color.from_rgb(0, 162, 232)
-    )
+        container.add_item(discord.ui.TextDisplay(content))
+        view.add_item(container)
 
-    content = (
-        "### Low Letter Command Executed\n\n"
-        f"[{roblox_username}:{roblox_id}]({roblox_profile_url}) used the command `{full_command}`\n\n"
-        f"-# AZRP Command Logs | {date_str}, {time_str}"
-    )
-
-    container.add_item(discord.ui.TextDisplay(content))
-    view.add_item(container)
-
-    # Retry loop to catch rate limits (429) without crashing
-    for attempt in range(3):
-        try:
-            await target_channel.send(view=view)
-            break
-        except discord.HTTPException as e:
-            if e.status == 429:
-                retry_after = getattr(e, 'retry_after', 5)
-                print(f"[Rate Limit] Discord 429 hit. Retrying in {retry_after}s...")
-                await asyncio.sleep(retry_after)
-            else:
-                print(f"[Discord Error] Could not send LLC log: {e}")
+        # Retry loop to catch rate limits (429) without crashing
+        for attempt in range(3):
+            try:
+                await target_channel.send(view=view)
                 break
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    retry_after = getattr(e, 'retry_after', 5)
+                    print(f"[Rate Limit] Discord 429 hit. Retrying in {retry_after}s...")
+                    await asyncio.sleep(retry_after)
+                else:
+                    print(f"[Discord Error] Could not send LLC log: {e}")
+                    break
 
 
 # ==========================================
@@ -1253,14 +1272,8 @@ async def poll_erlc_command_logs():
 
     while not bot.is_closed():
         try:
-            data = await asyncio.to_thread(erlc_client.get_server, CommandLogs=True, Players=True)
+            data = await asyncio.to_thread(erlc_client.get_server, CommandLogs=True)
             logs = data.get("CommandLogs", []) or []
-
-            live_player_usernames = {
-                (player.get("Player") or "").split(":")[0]
-                for player in (data.get("Players") or [])
-                if player.get("Player")
-            }
 
             if _erlc_command_poll_first_run:
                 # Don't replay everything that already happened before the
@@ -1286,8 +1299,7 @@ async def poll_erlc_command_logs():
                             await send_llc_log(
                                 roblox_username=username or "Unknown",
                                 roblox_id=int(roblox_id_str) if roblox_id_str.isdigit() else 0,
-                                full_command=command_text,
-                                live_player_usernames=live_player_usernames
+                                full_command=command_text
                             )
                         except Exception as e:
                             print(f"[ERLC] Error forwarding command log: {e}")
