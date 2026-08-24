@@ -47,16 +47,15 @@ COMMAND_ROLE_PERMISSIONS = {
 # ==========================================
 # MARKETPLACE CONFIGURATION
 # ==========================================
-# Use direct image URLs (not page URLs like ibb.co)
-# Get direct URLs by right-clicking image > "Copy Image Address"
-SHOP_BANNER_URL = "https://i.postimg.cc/Rh7J6tk4/Gemini-Generated-Image-kxz78gkxz78gkxz7.jpg"  # Replace with direct image URL
-
-# Your Discord custom emoji
-# Upload the basket PNG to Server Settings > Emoji
+SHOP_BANNER_URL = "https://i.postimg.cc/Rh7J6tk4/Gemini-Generated-Image-kxz78gkxz78gkxz7.jpg"
 SHOP_EMOJI = "<:shopping_cart:1541552477910990899>"
-
-# Only this user can use !send_shop
 AUTHORIZED_USER_ID = 1488252011374710958
+
+# Custom Emojis for Select Options
+EMOJI_ROBUX = discord.PartialEmoji.from_str("<:robux:1541552732937265305>")
+EMOJI_ADS = discord.PartialEmoji.from_str("<:announcement:1541253550997504020>")
+EMOJI_STAR = discord.PartialEmoji.from_str("<:star:1541552889993101323>")
+EMOJI_NITRO = discord.PartialEmoji.from_str("<:nitro_gem:1541553100547162132>")
 
 
 # ==========================================
@@ -345,133 +344,100 @@ async def card(ctx):
 
 @bot.command()
 async def send_shop(ctx):
-    """Send the marketplace panel using Components V2."""
+    """Send the marketplace panel."""
 
-    # Check if user is authorized
     if ctx.author.id != AUTHORIZED_USER_ID:
         await ctx.send("❌ You don't have permission to use this command.")
         return
 
     try:
-
-        # CREATE COMPONENTS V2 VIEW
-        view = discord.ui.LayoutView(timeout=None)
-
-        container = discord.ui.Container(
-            accent_colour=discord.Color.gold()
-        )
-
-        # BANNER
-        container.add_item(
-            discord.ui.MediaGallery(
-                discord.MediaGalleryItem(
-                    media=SHOP_BANNER_URL
-                )
-            )
-        )
-
-        # SEPARATOR
-        container.add_item(
-            discord.ui.Separator()
-        )
-
-        # TITLE + CUSTOM SHOP EMOJI
-        container.add_item(
-            discord.ui.TextDisplay(
-                f"# {SHOP_EMOJI} Marketplace"
-            )
-        )
-
-        # DESCRIPTION
-        container.add_item(
-            discord.ui.TextDisplay(
+        # Create Main Embed
+        embed = discord.Embed(
+            title=f"{SHOP_EMOJI} Marketplace",
+            description=(
                 "Welcome to the marketplace! Here, you can purchase "
                 "various perks to boost your server experience—including "
                 "paid ads, sponsored giveaways, premium subscriptions, "
                 "and more.\n\n"
                 "Browse all our offerings and check current pricing "
                 "by visiting the shop below:"
-            )
+            ),
+            color=discord.Color.gold()
         )
+        embed.set_image(url=SHOP_BANNER_URL)
 
-        # SEPARATOR
-        container.add_item(
-            discord.ui.Separator()
-        )
+        # Create View
+        view = discord.ui.View(timeout=None)
 
         # DROPDOWN 1: Donations
         dropdown1 = discord.ui.Select(
-            placeholder="<:robux:1541552732937265305> Donations",
+            placeholder="Donations",
+            disabled=True,
             options=[
                 discord.SelectOption(
                     label="Coming Soon",
-                    value="donations_coming_soon"
+                    value="donations_coming_soon",
+                    emoji=EMOJI_ROBUX
                 )
             ]
         )
-        dropdown1.disabled = True
-        dropdown_row1 = discord.ui.ActionRow()
-        dropdown_row1.add_item(dropdown1)
-        container.add_item(dropdown_row1)
 
         # DROPDOWN 2: Server Advertisements
         dropdown2 = discord.ui.Select(
-            placeholder="<:announcement:1541253550997504020> Server Advertisements",
+            placeholder="Server Advertisements",
+            disabled=True,
             options=[
                 discord.SelectOption(
                     label="Coming Soon",
-                    value="ads_coming_soon"
+                    value="ads_coming_soon",
+                    emoji=EMOJI_ADS
                 )
             ]
         )
-        dropdown2.disabled = True
-        dropdown_row2 = discord.ui.ActionRow()
-        dropdown_row2.add_item(dropdown2)
-        container.add_item(dropdown_row2)
 
         # DROPDOWN 3: Server Memberships
         dropdown3 = discord.ui.Select(
-            placeholder="<:star:1541552889993101323> Server Memberships",
+            placeholder="Server Memberships",
+            disabled=True,
             options=[
                 discord.SelectOption(
                     label="Coming Soon",
-                    value="memberships_coming_soon"
+                    value="memberships_coming_soon",
+                    emoji=EMOJI_STAR
                 )
             ]
         )
-        dropdown3.disabled = True
-        dropdown_row3 = discord.ui.ActionRow()
-        dropdown_row3.add_item(dropdown3)
-        container.add_item(dropdown_row3)
 
         # DROPDOWN 4: Nitro Boost
         dropdown4 = discord.ui.Select(
-            placeholder="<:nitro_gem:1541553100547162132> Nitro Boost",
+            placeholder="Nitro Boost",
+            disabled=True,
             options=[
                 discord.SelectOption(
                     label="Coming Soon",
-                    value="nitro_coming_soon"
+                    value="nitro_coming_soon",
+                    emoji=EMOJI_NITRO
                 )
             ]
         )
-        dropdown4.disabled = True
-        dropdown_row4 = discord.ui.ActionRow()
-        dropdown_row4.add_item(dropdown4)
-        container.add_item(dropdown_row4)
 
-        # Add container to view
-        view.add_item(container)
+        # Add items to view
+        view.add_item(dropdown1)
+        view.add_item(dropdown2)
+        view.add_item(dropdown3)
+        view.add_item(dropdown4)
 
         # Send marketplace
-        await ctx.send(view=view)
+        await ctx.send(embed=embed, view=view)
+        
+        # Delete the command message (only for authorized user)
+        await ctx.message.delete()
 
     except Exception as e:
         print(f"[SHOP] Error creating marketplace: {e}")
         import traceback
         traceback.print_exc()
-        await ctx.send(
-            f"❌ Error creating marketplace: `{e}`"
-        )
+        await ctx.send(f"❌ Error creating marketplace: `{e}`")
 
 
 # ==========================================
