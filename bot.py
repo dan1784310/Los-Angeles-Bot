@@ -333,42 +333,61 @@ AUTHORIZED_USER_ID = 1488252011374710958  # Only this user can use the command
 
 @bot.command()
 async def send_shop(ctx):
-    """Send the marketplace embed with dropdown."""
+    """Send the marketplace embed with dropdown using Components V2."""
     
     # Check if user is authorized
     if ctx.author.id != AUTHORIZED_USER_ID:
         await ctx.send("❌ You don't have permission to use this command.")
         return
     
-    # Create embed
-    embed = discord.Embed(
-        title="Marketplace",
-        description="Welcome to the marketplace! Here, you can purchase various perks to boost your server experience—including paid ads, sponsored giveaways, premium subscriptions, and more. Browse all our offerings and check current pricing by visiting the shop below:",
-        color=discord.Color.gold()
+    # Create Components V2 view
+    view = discord.ui.LayoutView(timeout=None)
+    container = discord.ui.Container(
+        accent_colour=discord.Color.gold()
     )
     
-    # Set banner image (top banner)
-    embed.set_image(url=SHOP_BANNER_URL)
+    # Add banner image at the very top
+    container.add_item(discord.ui.MediaGallery(
+        discord.MediaGalleryItem(media=SHOP_BANNER_URL)
+    ))
     
-    # Set icon (small basket image next to title)
-    embed.set_thumbnail(url=SHOP_ICON_URL)
+    # Add separator
+    container.add_item(discord.ui.Separator())
     
-    # Create empty dropdown (placeholder only)
-    view = discord.ui.View(timeout=None)
+    # Add icon image (small shop icon) above title
+    icon_gallery = discord.ui.MediaGallery()
+    icon_gallery.add_item(discord.MediaGalleryItem(media=SHOP_ICON_URL))
+    container.add_item(icon_gallery)
     
+    # Add title text
+    container.add_item(discord.ui.TextDisplay("### Marketplace"))
+    
+    # Add separator
+    container.add_item(discord.ui.Separator())
+    
+    # Add description
+    container.add_item(discord.ui.TextDisplay(
+        "Welcome to the marketplace! Here, you can purchase various perks to boost your server experience—including paid ads, sponsored giveaways, premium subscriptions, and more. Browse all our offerings and check current pricing by visiting the shop below:"
+    ))
+    
+    # Add separator
+    container.add_item(discord.ui.Separator())
+    
+    # Add dropdown (empty for now)
+    dropdown_row = discord.ui.ActionRow()
     dropdown = discord.ui.Select(
         placeholder="Select an option...",
         options=[
             discord.SelectOption(label="Coming Soon", value="coming_soon")
         ]
     )
-    
-    # Disable dropdown since it's empty for now
     dropdown.disabled = True
+    dropdown_row.add_item(dropdown)
+    container.add_item(dropdown_row)
     
-    view.add_item(dropdown)
+    view.add_item(container)
     
-    await ctx.send(embed=embed, view=view)
+    await ctx.send(view=view)
 
 
 # ==========================================
