@@ -410,7 +410,9 @@ async def send_shop(ctx):
             ]
         )
         dropdown1.disabled = True
-        container.add_item(dropdown1)
+        dropdown_row1 = discord.ui.ActionRow()
+        dropdown_row1.add_item(dropdown1)
+        container.add_item(dropdown_row1)
 
         # DROPDOWN 2: Server Advertisements
         dropdown2 = discord.ui.Select(
@@ -423,7 +425,9 @@ async def send_shop(ctx):
             ]
         )
         dropdown2.disabled = True
-        container.add_item(dropdown2)
+        dropdown_row2 = discord.ui.ActionRow()
+        dropdown_row2.add_item(dropdown2)
+        container.add_item(dropdown_row2)
 
         # DROPDOWN 3: Server Memberships
         dropdown3 = discord.ui.Select(
@@ -436,7 +440,9 @@ async def send_shop(ctx):
             ]
         )
         dropdown3.disabled = True
-        container.add_item(dropdown3)
+        dropdown_row3 = discord.ui.ActionRow()
+        dropdown_row3.add_item(dropdown3)
+        container.add_item(dropdown_row3)
 
         # DROPDOWN 4: Nitro Boost
         dropdown4 = discord.ui.Select(
@@ -449,7 +455,9 @@ async def send_shop(ctx):
             ]
         )
         dropdown4.disabled = True
-        container.add_item(dropdown4)
+        dropdown_row4 = discord.ui.ActionRow()
+        dropdown_row4.add_item(dropdown4)
+        container.add_item(dropdown_row4)
 
         # Add container to view
         view.add_item(container)
