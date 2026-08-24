@@ -344,32 +344,51 @@ async def card(ctx):
 
 @bot.command()
 async def send_shop(ctx):
-    """Send the marketplace panel."""
+    """Send the marketplace panel using Components V2."""
 
+    # Authorization Check
     if ctx.author.id != AUTHORIZED_USER_ID:
         await ctx.send("❌ You don't have permission to use this command.")
         return
 
     try:
-        # Create Main Embed
-        embed = discord.Embed(
-            title=f"{SHOP_EMOJI} Marketplace",
-            description=(
+        # 1. CREATE LAYOUT VIEW
+        view = discord.ui.LayoutView(timeout=None)
+
+        # 2. CREATE CONTAINER
+        container = discord.ui.Container(color=discord.Color.gold())
+
+        # 3. ADD BANNER
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(media=SHOP_BANNER_URL)
+            )
+        )
+
+        # 4. ADD SEPARATOR
+        container.add_item(discord.ui.Separator())
+
+        # 5. ADD TITLE
+        container.add_item(
+            discord.ui.TextDisplay(f"# {SHOP_EMOJI} Marketplace")
+        )
+
+        # 6. ADD DESCRIPTION
+        container.add_item(
+            discord.ui.TextDisplay(
                 "Welcome to the marketplace! Here, you can purchase "
                 "various perks to boost your server experience—including "
                 "paid ads, sponsored giveaways, premium subscriptions, "
                 "and more.\n\n"
                 "Browse all our offerings and check current pricing "
                 "by visiting the shop below:"
-            ),
-            color=discord.Color.gold()
+            )
         )
-        embed.set_image(url=SHOP_BANNER_URL)
 
-        # Create View
-        view = discord.ui.View(timeout=None)
+        # 7. ADD SEPARATOR
+        container.add_item(discord.ui.Separator())
 
-        # DROPDOWN 1: Donations
+        # 8. ADD SELECT DROPDOWNS DIRECTLY TO CONTAINER (NO ActionRow)
         dropdown1 = discord.ui.Select(
             placeholder="Donations",
             disabled=True,
@@ -381,8 +400,8 @@ async def send_shop(ctx):
                 )
             ]
         )
+        container.add_item(dropdown1)
 
-        # DROPDOWN 2: Server Advertisements
         dropdown2 = discord.ui.Select(
             placeholder="Server Advertisements",
             disabled=True,
@@ -394,8 +413,8 @@ async def send_shop(ctx):
                 )
             ]
         )
+        container.add_item(dropdown2)
 
-        # DROPDOWN 3: Server Memberships
         dropdown3 = discord.ui.Select(
             placeholder="Server Memberships",
             disabled=True,
@@ -407,8 +426,8 @@ async def send_shop(ctx):
                 )
             ]
         )
+        container.add_item(dropdown3)
 
-        # DROPDOWN 4: Nitro Boost
         dropdown4 = discord.ui.Select(
             placeholder="Nitro Boost",
             disabled=True,
@@ -420,18 +439,11 @@ async def send_shop(ctx):
                 )
             ]
         )
+        container.add_item(dropdown4)
 
-        # Add items to view
-        view.add_item(dropdown1)
-        view.add_item(dropdown2)
-        view.add_item(dropdown3)
-        view.add_item(dropdown4)
-
-        # Send marketplace
-        await ctx.send(embed=embed, view=view)
-        
-        # Delete the command message (only for authorized user)
-        await ctx.message.delete()
+        # 9. ATTACH CONTAINER TO LAYOUT VIEW & SEND
+        view.add_item(container)
+        await ctx.send(view=view)
 
     except Exception as e:
         print(f"[SHOP] Error creating marketplace: {e}")
