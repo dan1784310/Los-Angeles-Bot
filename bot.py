@@ -104,6 +104,15 @@ bot = commands.Bot(
     intents=intents
 )
 
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    print(f"[MESSAGE DEBUG] {message.content}")
+
+    await bot.process_commands(message)
+
 @bot.command()
 async def test(ctx):
     print("[TEST] !test received")
