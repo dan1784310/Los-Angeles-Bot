@@ -375,7 +375,7 @@ async def send_shop(ctx):
             accent_colour=discord.Color.gold()
         )
 
-        # Banner
+        # BANNER
         container.add_item(
             discord.ui.MediaGallery(
                 discord.MediaGalleryItem(
@@ -386,14 +386,14 @@ async def send_shop(ctx):
 
         container.add_item(discord.ui.Separator())
 
-        # Title
+        # TITLE
         container.add_item(
             discord.ui.TextDisplay(
                 f"# {SHOP_EMOJI} Marketplace"
             )
         )
 
-        # Description
+        # DESCRIPTION
         container.add_item(
             discord.ui.TextDisplay(
                 "Welcome to the marketplace! Here, you can purchase "
@@ -401,81 +401,52 @@ async def send_shop(ctx):
                 "paid ads, sponsored giveaways, premium subscriptions, "
                 "and more.\n\n"
                 "Browse all our offerings and check current pricing "
-                "by visiting the shop below:"
+                "by selecting a category below:"
             )
         )
 
         container.add_item(discord.ui.Separator())
 
-        # Donations
-        dropdown1 = discord.ui.Select(
-            placeholder="Donations",
-            disabled=True,
+        # ==========================================
+        # MARKETPLACE DROPDOWN
+        # ==========================================
+
+        marketplace_dropdown = discord.ui.Select(
+            placeholder="Select a marketplace category...",
+            custom_id="marketplace_category",
+            min_values=1,
+            max_values=1,
             options=[
                 discord.SelectOption(
-                    label="Coming Soon",
-                    value="donations_coming_soon",
+                    label="Donations",
+                    value="donations",
                     emoji=EMOJI_ROBUX
-                )
-            ]
-        )
-
-        row1 = discord.ui.ActionRow()
-        row1.add_item(dropdown1)
-        container.add_item(row1)
-
-        # Server Advertisements
-        dropdown2 = discord.ui.Select(
-            placeholder="Server Advertisements",
-            disabled=True,
-            options=[
+                ),
                 discord.SelectOption(
-                    label="Coming Soon",
-                    value="ads_coming_soon",
+                    label="Server Advertisements",
+                    value="server_advertisements",
                     emoji=EMOJI_ADS
-                )
-            ]
-        )
-
-        row2 = discord.ui.ActionRow()
-        row2.add_item(dropdown2)
-        container.add_item(row2)
-
-        # Server Memberships
-        dropdown3 = discord.ui.Select(
-            placeholder="Server Memberships",
-            disabled=True,
-            options=[
+                ),
                 discord.SelectOption(
-                    label="Coming Soon",
-                    value="memberships_coming_soon",
+                    label="Server Memberships",
+                    value="server_memberships",
                     emoji=EMOJI_STAR
-                )
-            ]
-        )
-
-        row3 = discord.ui.ActionRow()
-        row3.add_item(dropdown3)
-        container.add_item(row3)
-
-        # Nitro Boost
-        dropdown4 = discord.ui.Select(
-            placeholder="Nitro Boost",
-            disabled=True,
-            options=[
+                ),
                 discord.SelectOption(
-                    label="Coming Soon",
-                    value="nitro_coming_soon",
+                    label="Nitro Boost",
+                    value="nitro_boost",
                     emoji=EMOJI_NITRO
                 )
             ]
         )
 
-        row4 = discord.ui.ActionRow()
-        row4.add_item(dropdown4)
-        container.add_item(row4)
+        # Put the dropdown into one ActionRow
+        dropdown_row = discord.ui.ActionRow()
+        dropdown_row.add_item(marketplace_dropdown)
 
-        # Add container to view
+        container.add_item(dropdown_row)
+
+        # ADD CONTAINER & SEND
         view.add_item(container)
 
         await ctx.send(view=view)
@@ -484,6 +455,7 @@ async def send_shop(ctx):
 
     except Exception as e:
         print(f"[SHOP] Error creating marketplace: {e}")
+
         import traceback
         traceback.print_exc()
 
@@ -492,13 +464,12 @@ async def send_shop(ctx):
                 f"❌ Error creating marketplace:\n```{e}```"
             )
         except Exception as send_error:
-            print(f"[SHOP] Could not send error message: {send_error}")
+            print(
+                f"[SHOP] Could not send error message: {send_error}"
+            ))
 
 
-# ==========================================
 # DROPDOWN SETUP HELPERS
-# ==========================================
-
 def build_simple_v2_view(message: str) -> discord.ui.LayoutView:
     """Builds a simple Components V2 message view."""
     view = discord.ui.LayoutView(timeout=None)
