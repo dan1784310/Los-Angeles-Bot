@@ -466,7 +466,7 @@ async def send_shop(ctx):
         except Exception as send_error:
             print(
                 f"[SHOP] Could not send error message: {send_error}"
-            ))
+            )
 
 
 # DROPDOWN SETUP HELPERS
