@@ -41,6 +41,7 @@ COMMAND_ROLE_PERMISSIONS = {
     "inputresults":  1527367791592607755,  # Replace with actual Role ID for results
     "feedback":      1527051350016397312,  # Replace with actual Role ID allowed to give/manage feedback
     "infraction":    1539201630161993728,  # Replace with actual Role ID for infractions
+    "ticket_rename": 1527374021572956291,  # Role ID for ticket rename command
 }
 
 
@@ -91,6 +92,33 @@ def has_role_or_higher(command_name: str):
     return app_commands.check(predicate)
 
 
+def has_role_or_higher_prefix(command_name: str):
+    """Decorator for prefix commands requiring specific role or higher in hierarchy."""
+    def predicate(ctx):
+        required_role_id = COMMAND_ROLE_PERMISSIONS.get(command_name)
+        # If no role ID is configured for this command, allow usage by default
+        if not required_role_id:
+            return True
+
+        # Ensure command is run inside a server
+        if not ctx.guild or not isinstance(ctx.author, discord.Member):
+            return False
+
+        # Server owner & Administrators always bypass permission checks
+        if ctx.author.id == ctx.guild.owner_id or ctx.author.guild_permissions.administrator:
+            return True
+
+        target_role = ctx.guild.get_role(required_role_id)
+        if not target_role:
+            # Block command if configured role doesn't exist in server
+            return False
+
+        # Compare member's top role against target role hierarchy position
+        return ctx.author.top_role.position >= target_role.position
+
+    return commands.check(predicate)
+
+
 # ==========================================
 # BOT SETUP
 # ==========================================
@@ -131,6 +159,20 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     else:
         # Re-raise unhandled errors to console
         print(f"[ERROR] App Command Error: {error}")
+        raise error
+
+
+# Global Error Handler for Prefix Command Permission Failure
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have the required role or higher to use this command.")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"❌ Missing required argument: `{error.param.name}`")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send(f"❌ Invalid argument: `{error}`")
+    else:
+        print(f"[ERROR] Prefix Command Error: {error}")
         raise error
 
 
@@ -372,7 +414,7 @@ async def send_shop(ctx):
         view = discord.ui.LayoutView(timeout=None)
 
         container = discord.ui.Container(
-            accent_colour=discord.Color.gold()
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
         )
 
         # BANNER
@@ -467,6 +509,44 @@ async def send_shop(ctx):
             print(
                 f"[SHOP] Could not send error message: {send_error}"
             )
+
+
+# ==========================================
+# TICKET RENAME COMMAND
+# ==========================================
+
+@bot.command()
+@has_role_or_higher_prefix("ticket_rename")
+async def tr(ctx, *, new_name: str):
+    """Rename the current ticket channel. Usage: !tr (new name)"""
+    
+    # Check if current channel is a ticket channel
+    from ticket_database import db
+    ticket = db.get_ticket_by_channel(ctx.channel.id)
+    
+    if not ticket:
+        await ctx.send("❌ This command can only be used in ticket channels.")
+        return
+    
+    # Clean the new name (remove special characters, keep basic ones)
+    clean_name = "".join(c for c in new_name if c.isalnum() or c in ["-", "_", " "])
+    clean_name = clean_name.replace(" ", "-").lower()
+    
+    if len(clean_name) < 1:
+        await ctx.send("❌ Invalid channel name.")
+        return
+    
+    if len(clean_name) > 100:
+        await ctx.send("❌ Channel name too long (max 100 characters).")
+        return
+    
+    try:
+        await ctx.channel.edit(name=clean_name)
+        await ctx.send(f"✅ Ticket channel renamed to `{clean_name}`")
+        print(f"[TICKET RENAME] {ctx.author} renamed ticket {ctx.channel.id} to {clean_name}")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to rename channel: `{e}`")
+        print(f"[TICKET RENAME ERROR] {e}")
 
 
 # DROPDOWN SETUP HELPERS
