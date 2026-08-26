@@ -49,6 +49,7 @@ COMMAND_ROLE_PERMISSIONS = {
 # MARKETPLACE CONFIGURATION
 # ==========================================
 SHOP_BANNER_URL = "https://i.postimg.cc/Rh7J6tk4/Gemini-Generated-Image-kxz78gkxz78gkxz7.jpg"
+SHOP_BOTTOM_THUMBNAIL_URL = "https://i.postimg.cc/cHBtzhj4/AZRP-bottom-thumbnail.png"
 SHOP_EMOJI = "<:shopping_cart:1541552477910990899>"
 AUTHORIZED_USER_ID = 1488252011374710958
 
@@ -487,6 +488,18 @@ async def send_shop(ctx):
         dropdown_row.add_item(marketplace_dropdown)
 
         container.add_item(dropdown_row)
+
+        # SEPARATOR AFTER DROPDOWN
+        container.add_item(discord.ui.Separator())
+
+        # BOTTOM THUMBNAIL
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(
+                    media=SHOP_BOTTOM_THUMBNAIL_URL
+                )
+            )
+        )
 
         # ADD CONTAINER & SEND
         view.add_item(container)
