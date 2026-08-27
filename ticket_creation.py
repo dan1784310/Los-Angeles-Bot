@@ -231,7 +231,7 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
             overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
     
     # Create channel
-    channel_name = f"ticket-{ticket_number:04d}"
+    channel_name = "🔴unclaimed"
     ticket_channel = await guild.create_text_channel(
         channel_name,
         overwrites=overwrites,
@@ -401,6 +401,15 @@ async def claim_ticket(interaction: discord.Interaction, channel_id: int, creato
 
     db.set_ticket_claim(channel_id, interaction.user.id)
 
+    # Auto-rename channel to show claimed status
+    username_part = interaction.user.display_name[:5].lower()
+    new_name = f"🟢claimed-{username_part}"
+    try:
+        await channel.edit(name=new_name)
+        print(f"[TICKET RENAME] Claimed: {channel.name} -> {new_name}")
+    except Exception as e:
+        print(f"[TICKET RENAME ERROR] Failed to rename on claim: {e}")
+
     # Edit the actual public message — the button becomes Unclaim for everyone
     new_view = await _rebuild_management_view(interaction, channel_id, claimed=True)
     if new_view:
@@ -442,6 +451,14 @@ async def unclaim_ticket(interaction: discord.Interaction, channel_id: int):
     channel = interaction.guild.get_channel(channel_id)
     if channel:
         await channel.set_permissions(interaction.user, overwrite=None)
+
+    # Auto-rename channel to show unclaimed status
+    new_name = "🔴unclaimed"
+    try:
+        await channel.edit(name=new_name)
+        print(f"[TICKET RENAME] Unclaimed: {channel.name} -> {new_name}")
+    except Exception as e:
+        print(f"[TICKET RENAME ERROR] Failed to rename on unclaim: {e}")
 
     # Edit the actual public message back to showing Claim
     new_view = await _rebuild_management_view(interaction, channel_id, claimed=False)

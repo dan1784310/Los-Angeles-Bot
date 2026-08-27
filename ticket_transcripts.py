@@ -26,12 +26,18 @@ async def create_transcript(channel: discord.TextChannel) -> discord.File:
     async for message in channel.history(limit=None, oldest_first=True):
         messages.append(message)
     
+    # Get ticket number from database for proper filename
+    from ticket_database import db
+    ticket = db.get_ticket_by_channel(channel.id)
+    ticket_number = ticket.get('ticket_number', 0) if ticket else 0
+    ticket_name = f"ticket-{ticket_number:04d}"
+    
     # Build transcript content
     transcript_lines = []
     
     # Header
     transcript_lines.append("=" * 50)
-    transcript_lines.append(f"TRANSCRIPT - {channel.name}")
+    transcript_lines.append(f"TRANSCRIPT - {ticket_name}")
     transcript_lines.append(f"Guild: {channel.guild.name}")
     transcript_lines.append(f"Channel ID: {channel.id}")
     transcript_lines.append(f"Generated: {datetime.datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
@@ -75,7 +81,7 @@ async def create_transcript(channel: discord.TextChannel) -> discord.File:
     
     return discord.File(
         transcript_file,
-        filename=f"transcript_{channel.name}_{datetime.datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
+        filename=f"transcript_{ticket_name}_{datetime.datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
     )
 
 
@@ -95,13 +101,19 @@ async def create_html_transcript(channel: discord.TextChannel) -> discord.File:
     async for message in channel.history(limit=None, oldest_first=True):
         messages.append(message)
     
+    # Get ticket number from database for proper filename
+    from ticket_database import db
+    ticket = db.get_ticket_by_channel(channel.id)
+    ticket_number = ticket.get('ticket_number', 0) if ticket else 0
+    ticket_name = f"ticket-{ticket_number:04d}"
+    
     # Build HTML content
     html_content = f"""
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Transcript - {channel.name}</title>
+    <title>Transcript - {ticket_name}</title>
     <style>
         body {{
             font-family: Arial, sans-serif;
@@ -203,5 +215,5 @@ async def create_html_transcript(channel: discord.TextChannel) -> discord.File:
     
     return discord.File(
         html_file,
-        filename=f"transcript_{channel.name}_{datetime.datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.html"
+        filename=f"transcript_{ticket_name}_{datetime.datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.html"
     )
