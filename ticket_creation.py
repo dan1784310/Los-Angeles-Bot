@@ -402,13 +402,13 @@ async def claim_ticket(interaction: discord.Interaction, channel_id: int, creato
     db.set_ticket_claim(channel_id, interaction.user.id)
 
     # Auto-rename channel to show claimed status
-username_part = interaction.user.name[:5].lower()
-new_name = f"🟢claimed-{username_part}"
-try:
-    await channel.edit(name=new_name)
-    print(f"[TICKET RENAME] Claimed: {channel.name} -> {new_name}")
-except Exception as e:
-    print(f"[TICKET RENAME ERROR] Failed to rename on claim: {e}")
+    username_part = interaction.user.name[:10].lower()
+    new_name = f"🟢claimed-{username_part}"
+    try:
+        await channel.edit(name=new_name)
+        print(f"[TICKET RENAME] Claimed: {channel.name} -> {new_name}")
+    except Exception as e:
+        print(f"[TICKET RENAME ERROR] Failed to rename on claim: {e}")
 
     # Edit the actual public message — the button becomes Unclaim for everyone
     new_view = await _rebuild_management_view(interaction, channel_id, claimed=True)
