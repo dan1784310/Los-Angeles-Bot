@@ -97,13 +97,16 @@ class PromotionSystem(commands.Cog):
         assigned_role = None
         
         # Search for role by name (case-insensitive)
+        print(f"[PROMOTION] Searching for role: '{rank}'")
+        print(f"[PROMOTION] Available roles: {[role.name for role in interaction.guild.roles]}")
+        
         for role in interaction.guild.roles:
             if role.name.lower() == rank.lower():
                 try:
                     await user.add_roles(role)
                     role_assigned = True
                     assigned_role = role
-                    print(f"[PROMOTION] Assigned role '{role.name}' to {user.display_name}")
+                    print(f"[PROMOTION] Assigned role '{role.name}' (ID: {role.id}) to {user.display_name}")
                     break
                 except discord.Forbidden:
                     await interaction.followup.send(
@@ -122,7 +125,7 @@ class PromotionSystem(commands.Cog):
         if not role_assigned:
             print(f"[PROMOTION] Could not find role matching '{rank}'")
             await interaction.followup.send(
-                f"⚠️ Could not find a role matching '{rank}'. The promotion card will still be sent.",
+                f"⚠️ Could not find a role matching '{rank}'. Available roles: {', '.join([r.name for r in interaction.guild.roles[:10]])}...",
                 ephemeral=True
             )
         
@@ -179,15 +182,14 @@ class PromotionSystem(commands.Cog):
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
         
         # Build description with bold bullet points and single-line spacing
-        description = f"{recipient.mention}\n\n"
-        description += f"- **User:** {recipient.mention}\n"
+        description = f"- **User:** {recipient.mention}\n"
         description += f"- **Updated Rank:** {rank}\n"
         description += f"- **Reason:** {reason}\n"
         description += f"- **Notes:** {formatted_notes}"
         
         embed.description = description
         
-        await channel.send(embed=embed)
+        await channel.send(content=f"{recipient.mention}", embed=embed)
 
 
 async def setup(bot: commands.Bot):

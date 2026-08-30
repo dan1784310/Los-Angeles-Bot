@@ -209,8 +209,7 @@ class InfractionSystem(commands.Cog):
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
         
         # Build description with bold bullet points and single-line spacing
-        description = f"{recipient.mention}\n\n"
-        description += f"• **Staff Member:** {recipient.mention}\n"
+        description = f"• **Staff Member:** {recipient.mention}\n"
         description += f"• **Action:** {action}\n"
         description += f"• **Reason:** {reason}\n"
         
@@ -222,7 +221,7 @@ class InfractionSystem(commands.Cog):
         
         embed.description = description
         
-        await channel.send(embed=embed)
+        await channel.send(content=f"{recipient.mention}", embed=embed)
 
 
 async def setup(bot: commands.Bot):
