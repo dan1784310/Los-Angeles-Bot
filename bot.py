@@ -226,8 +226,24 @@ async def on_ready():
         traceback.print_exc()
 
     try:
+        # Sync commands with rate limit handling
+        print("[SYNC] Starting command sync...")
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}")
+    except discord.errors.HTTPException as e:
+        if e.status == 429:  # Rate limited
+            retry_after = e.retry_after if hasattr(e, 'retry_after') else 60
+            print(f"[SYNC] Rate limited. Retrying in {retry_after} seconds...")
+            await asyncio.sleep(retry_after)
+            try:
+                synced = await bot.tree.sync()
+                print(f"Synced {len(synced)} command(s) after retry: {', '.join(c.name for c in synced)}")
+            except Exception as retry_e:
+                print(f"[SYNC] Error syncing commands after retry: {retry_e}")
+                traceback.print_exc()
+        else:
+            print(f"[SYNC] Error syncing commands: {e}")
+            traceback.print_exc()
     except Exception as e:
         print(f"[SYNC] Error syncing commands: {e}")
         traceback.print_exc()
