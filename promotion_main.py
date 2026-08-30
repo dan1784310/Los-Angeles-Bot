@@ -55,7 +55,7 @@ class PromotionSystem(commands.Cog):
     @app_commands.command(name="promote", description="Promote a staff member to a new rank")
     @app_commands.describe(
         user="The user to promote",
-        rank="The rank to assign to the user",
+        rank="The rank to assign to the user (use @role or type role name)",
         reason="The reason for the promotion",
         notes="Additional notes for the promotion (optional)"
     )
@@ -96,31 +96,61 @@ class PromotionSystem(commands.Cog):
         role_assigned = False
         assigned_role = None
         
-        # Search for role by name (case-insensitive)
-        print(f"[PROMOTION] Searching for role: '{rank}'")
-        print(f"[PROMOTION] Available roles: {[role.name for role in interaction.guild.roles]}")
+        # Check if rank is a role mention (contains <@&role_id>)
+        if "<@&" in rank and ">" in rank:
+            try:
+                role_id = int(rank.strip("<@&>"))
+                role = interaction.guild.get_role(role_id)
+                if role:
+                    try:
+                        await user.add_roles(role)
+                        role_assigned = True
+                        assigned_role = role
+                        print(f"[PROMOTION] Assigned role '{role.name}' (ID: {role.id}) to {user.display_name} via mention")
+                    except discord.Forbidden:
+                        await interaction.followup.send(
+                            f"❌ I don't have permission to assign the role '{role.name}'.",
+                            ephemeral=True
+                        )
+                        return
+                    except Exception as e:
+                        print(f"[PROMOTION] Error assigning role: {e}")
+                        await interaction.followup.send(
+                            f"❌ Error assigning role: {e}",
+                            ephemeral=True
+                        )
+                        return
+            except ValueError:
+                pass  # Not a valid role ID, fall through to name search
         
-        for role in interaction.guild.roles:
-            if role.name.lower() == rank.lower():
-                try:
-                    await user.add_roles(role)
-                    role_assigned = True
-                    assigned_role = role
-                    print(f"[PROMOTION] Assigned role '{role.name}' (ID: {role.id}) to {user.display_name}")
-                    break
-                except discord.Forbidden:
-                    await interaction.followup.send(
-                        f"❌ I don't have permission to assign the role '{role.name}'.",
-                        ephemeral=True
-                    )
-                    return
-                except Exception as e:
-                    print(f"[PROMOTION] Error assigning role: {e}")
-                    await interaction.followup.send(
-                        f"❌ Error assigning role: {e}",
-                        ephemeral=True
-                    )
-                    return
+        # If not assigned via mention, search by name
+        if not role_assigned:
+            search_rank = rank.strip().lower()
+            print(f"[PROMOTION] Searching for role: '{search_rank}'")
+            print(f"[PROMOTION] Available roles: {[role.name for role in interaction.guild.roles]}")
+            
+            for role in interaction.guild.roles:
+                # Try exact match first, then partial match
+                if role.name.lower().strip() == search_rank or search_rank in role.name.lower():
+                    try:
+                        await user.add_roles(role)
+                        role_assigned = True
+                        assigned_role = role
+                        print(f"[PROMOTION] Assigned role '{role.name}' (ID: {role.id}) to {user.display_name}")
+                        break
+                    except discord.Forbidden:
+                        await interaction.followup.send(
+                            f"❌ I don't have permission to assign the role '{role.name}'.",
+                            ephemeral=True
+                        )
+                        return
+                    except Exception as e:
+                        print(f"[PROMOTION] Error assigning role: {e}")
+                        await interaction.followup.send(
+                            f"❌ Error assigning role: {e}",
+                            ephemeral=True
+                        )
+                        return
         
         if not role_assigned:
             print(f"[PROMOTION] Could not find role matching '{rank}'")

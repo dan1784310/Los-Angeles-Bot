@@ -69,6 +69,18 @@ class PingProtection(commands.Cog):
         self._mute_tasks: Dict[int, asyncio.Task] = {}
     
     @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        """Monitor for manual timeout removals to reset warnings."""
+        if before.timed_out and not after.timed_out:
+            # User was manually untimed out
+            reset_warnings(after.id)
+            print(f"[PING PROTECTION] Reset warnings for {after.display_name} (manual timeout removal)")
+            try:
+                await after.send("Your timeout has been removed and your warnings have been reset.")
+            except:
+                pass
+    
+    @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Monitor messages for unauthorized pings."""
         
@@ -83,8 +95,9 @@ class PingProtection(commands.Cog):
                 if referenced_message.author.bot:
                     return
                 # Check if replying to a protected user
-                if protected_role in referenced_message.author.roles or referenced_message.author.top_role >= protected_role:
-                    return
+                if isinstance(referenced_message.author, discord.Member):
+                    if protected_role in referenced_message.author.roles or referenced_message.author.top_role >= protected_role:
+                        return
             except:
                 pass
         
@@ -145,7 +158,7 @@ class PingProtection(commands.Cog):
             
             # Notify the user
             await member.send(
-                f"🔇 You have been timed out for {TIMEOUT_DURATION_MINUTES} minutes due to reaching {WARNINGS_BEFORE_TIMEOUT} warnings for unauthorized pings."
+                f"You have been timed out for {TIMEOUT_DURATION_MINUTES} minutes due to reaching {WARNINGS_BEFORE_TIMEOUT} warnings for unauthorized pings."
             )
             
             # Schedule warning reset and unmute notification
@@ -153,7 +166,7 @@ class PingProtection(commands.Cog):
             
         except discord.Forbidden:
             print(f"[PING PROTECTION] No permission to timeout {member.display_name}")
-            await member.send("⚠️ You have reached the warning limit, but I do not have permission to timeout you.")
+            await member.send("You have reached the warning limit, but I do not have permission to timeout you.")
         except Exception as e:
             print(f"[PING PROTECTION] Error timing out user: {e}")
     
@@ -170,7 +183,7 @@ class PingProtection(commands.Cog):
                     # Reset warnings
                     reset_warnings(member_check.id)
                     print(f"[PING PROTECTION] Reset warnings for {member_check.display_name}")
-                    await member_check.send("🔊 Your timeout has ended and your warnings have been reset.")
+                    await member_check.send("Your timeout has ended and your warnings have been reset.")
                 
                 # Clean up task
                 if member.id in self._mute_tasks:
