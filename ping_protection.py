@@ -80,15 +80,12 @@ class PingProtection(commands.Cog):
             return
         
         # Check if user has whitelisted role (exempt from ping protection)
-        whitelisted_role = message.guild.get_role(WHITELISTED_ROLE_ID)
-        if whitelisted_role:
-            for role in message.author.roles:
-                if role.id == WHITELISTED_ROLE_ID:
-                    return
-        # Additional check: directly check role IDs even if role object not found
-        for role in message.author.roles:
-            if role.id == WHITELISTED_ROLE_ID:
-                return
+        user_role_ids = [role.id for role in message.author.roles]
+        print(f"[PING PROTECTION] User {message.author.display_name} roles: {user_role_ids}")
+        print(f"[PING PROTECTION] Whitelisted role ID: {WHITELISTED_ROLE_ID}")
+        if WHITELISTED_ROLE_ID in user_role_ids:
+            print(f"[PING PROTECTION] User {message.author.display_name} is whitelisted, skipping ping check")
+            return
         
         # Get the protected role
         protected_role = message.guild.get_role(PROTECTED_ROLE_ID)
