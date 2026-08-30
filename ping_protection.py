@@ -156,7 +156,7 @@ class PingProtection(commands.Cog):
         except Exception as e:
             print(f"[PING PROTECTION] Error muting user: {e}")
     
-    async def _schedule_unmute(self, member: discord.Member, guild: discord.Guild, mute_role: discord.Role):
+    def _schedule_unmute(self, member: discord.Member, guild: discord.Guild, mute_role: discord.Role):
         """Schedule an unmute task."""
         
         async def unmute_task():
@@ -178,7 +178,6 @@ class PingProtection(commands.Cog):
                 print(f"[PING PROTECTION] Error in unmute task: {e}")
         
         # Create and store the task
-        import asyncio
         task = asyncio.create_task(unmute_task())
         self._mute_tasks[member.id] = task
 
