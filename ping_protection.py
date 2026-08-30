@@ -17,6 +17,9 @@ from typing import Dict, Optional
 # Role ID that is protected from being pinged by lower roles
 PROTECTED_ROLE_ID = 1527055221098811433
 
+# Whitelisted role ID - users with this role are exempt from ping protection
+WHITELISTED_ROLE_ID = 1543709338764582952
+
 # Number of warnings before timeout
 WARNINGS_BEFORE_TIMEOUT = 3
 
@@ -74,6 +77,11 @@ class PingProtection(commands.Cog):
         
         # Ignore bot messages and DMs
         if message.author.bot or not message.guild:
+            return
+        
+        # Check if user has whitelisted role (exempt from ping protection)
+        whitelisted_role = message.guild.get_role(WHITELISTED_ROLE_ID)
+        if whitelisted_role and whitelisted_role in message.author.roles:
             return
         
         # Get the protected role
