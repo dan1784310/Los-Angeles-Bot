@@ -21,6 +21,7 @@ from session_panel import setup_session_commands, SessionPanelView
 from giveaway_main import setup as setup_giveaway
 from infraction_main import setup as setup_infraction
 from promotion_main import setup as setup_promotion
+from ping_protection import setup as setup_ping_protection
 
 
 # ============================================================
@@ -214,6 +215,14 @@ async def on_ready():
         print("[SETUP] Promotion system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading promotion system: {e}")
+        traceback.print_exc()
+
+    print("[SETUP] Loading ping protection system...")
+    try:
+        await setup_ping_protection(bot)
+        print("[SETUP] Ping protection system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading ping protection system: {e}")
         traceback.print_exc()
 
     try:

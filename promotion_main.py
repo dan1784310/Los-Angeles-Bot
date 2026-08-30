@@ -103,6 +103,7 @@ class PromotionSystem(commands.Cog):
                     await user.add_roles(role)
                     role_assigned = True
                     assigned_role = role
+                    print(f"[PROMOTION] Assigned role '{role.name}' to {user.display_name}")
                     break
                 except discord.Forbidden:
                     await interaction.followup.send(
@@ -111,11 +112,19 @@ class PromotionSystem(commands.Cog):
                     )
                     return
                 except Exception as e:
+                    print(f"[PROMOTION] Error assigning role: {e}")
                     await interaction.followup.send(
                         f"❌ Error assigning role: {e}",
                         ephemeral=True
                     )
                     return
+        
+        if not role_assigned:
+            print(f"[PROMOTION] Could not find role matching '{rank}'")
+            await interaction.followup.send(
+                f"⚠️ Could not find a role matching '{rank}'. The promotion card will still be sent.",
+                ephemeral=True
+            )
         
         # Create promotion card
         try:
@@ -151,9 +160,6 @@ class PromotionSystem(commands.Cog):
     ):
         """Create the promotion card matching the exact infraction layout."""
         
-        # Ping the user being promoted above the embed
-        await channel.send(f"{recipient.mention}")
-        
         # Create embed with dark charcoal accent
         embed = discord.Embed(
             title="Staff Promotion",
@@ -173,7 +179,8 @@ class PromotionSystem(commands.Cog):
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
         
         # Build description with bold bullet points and single-line spacing
-        description = f"- **User:** {recipient.mention}\n"
+        description = f"{recipient.mention}\n\n"
+        description += f"- **User:** {recipient.mention}\n"
         description += f"- **Updated Rank:** {rank}\n"
         description += f"- **Reason:** {reason}\n"
         description += f"- **Notes:** {formatted_notes}"

@@ -190,9 +190,6 @@ class InfractionSystem(commands.Cog):
     ):
         """Create the infraction card matching the exact image layout."""
         
-        # Ping the user being infracted above the embed
-        await channel.send(f"{recipient.mention}")
-        
         # Create embed with dark charcoal accent
         embed = discord.Embed(
             title="Staff Consequences & Discipline",
@@ -212,7 +209,8 @@ class InfractionSystem(commands.Cog):
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
         
         # Build description with bold bullet points and single-line spacing
-        description = f"• **Staff Member:** {recipient.mention}\n"
+        description = f"{recipient.mention}\n\n"
+        description += f"• **Staff Member:** {recipient.mention}\n"
         description += f"• **Action:** {action}\n"
         description += f"• **Reason:** {reason}\n"
         
