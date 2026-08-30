@@ -20,6 +20,7 @@ from ticket_creation import TicketCreation
 from session_panel import setup_session_commands, SessionPanelView
 from giveaway_main import setup as setup_giveaway
 from infraction_main import setup as setup_infraction
+from promotion_main import setup as setup_promotion
 
 
 # ============================================================
@@ -33,6 +34,7 @@ COMMAND_ROLE_PERMISSIONS = {
     "inputresults": 1527367791592607755,
     "feedback": 1527051350016397312,
     "infraction": 1539201630161993728,
+    "promote": 1527055221098811433,
     "ticket_rename": 1527374021572956291,
 }
 
@@ -204,6 +206,14 @@ async def on_ready():
         print("[SETUP] Infraction system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading infraction system: {e}")
+        traceback.print_exc()
+
+    print("[SETUP] Loading promotion system...")
+    try:
+        await setup_promotion(bot)
+        print("[SETUP] Promotion system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading promotion system: {e}")
         traceback.print_exc()
 
     try:

@@ -31,6 +31,9 @@ INFRACTION_ACTIONS = [
 # required for that.
 INFRACTION_ROLE_ID = 1539201630161993728
 
+# Channel to automatically send infraction embeds to
+INFRACTION_CHANNEL_ID = 1526898975704350822
+
 
 def _can_issue_infraction(interaction: discord.Interaction) -> bool:
     """Server owner, administrators, or anyone whose top role is at or above
@@ -70,8 +73,7 @@ class InfractionSystem(commands.Cog):
         action="The type of infraction action",
         reason="The reason for the infraction",
         expiration="Expiration time (e.g., 10m, 10h, 10d, 10w)",
-        notes="Additional notes for the infraction",
-        channel="Channel to send the infraction to"
+        notes="Additional notes for the infraction"
     )
     @app_commands.choices(action=[
         app_commands.Choice(name="Activity Notice", value="Activity Notice"),
@@ -91,8 +93,7 @@ class InfractionSystem(commands.Cog):
         action: str,
         reason: str,
         expiration: Optional[str] = None,
-        notes: Optional[str] = None,
-        channel: Optional[discord.TextChannel] = None
+        notes: Optional[str] = None
     ):
         """Issue an infraction to a staff member."""
         
@@ -130,8 +131,14 @@ class InfractionSystem(commands.Cog):
         # Set default notes if not provided
         final_notes = notes if notes else "N/A"
         
-        # Determine target channel
-        target_channel = channel or interaction.channel
+        # Get the target channel
+        target_channel = interaction.guild.get_channel(INFRACTION_CHANNEL_ID)
+        if not target_channel:
+            await interaction.followup.send(
+                "❌ Could not find the infraction channel.",
+                ephemeral=True
+            )
+            return
         
         # Create infraction card
         try:
@@ -182,6 +189,9 @@ class InfractionSystem(commands.Cog):
         expiration_timestamp: Optional[float] = None
     ):
         """Create the infraction card matching the exact image layout."""
+        
+        # Ping the user being infracted above the embed
+        await channel.send(f"{recipient.mention}")
         
         # Create embed with dark charcoal accent
         embed = discord.Embed(
