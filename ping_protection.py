@@ -66,19 +66,7 @@ class PingProtection(commands.Cog):
     
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._mute_tasks: Dict[int, asyncio.Task] = {}
     
-    @commands.Cog.listener()
-    async def on_member_update(self, before: discord.Member, after: discord.Member):
-        """Monitor for manual timeout removals to reset warnings."""
-        if before.timed_out and not after.timed_out:
-            # User was manually untimed out
-            reset_warnings(after.id)
-            print(f"[PING PROTECTION] Reset warnings for {after.display_name} (manual timeout removal)")
-            try:
-                await after.send("Your timeout has been removed and your warnings have been reset.")
-            except:
-                pass
     
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -86,6 +74,11 @@ class PingProtection(commands.Cog):
         
         # Ignore bot messages and DMs
         if message.author.bot or not message.guild:
+            return
+        
+        # Get the protected role
+        protected_role = message.guild.get_role(PROTECTED_ROLE_ID)
+        if not protected_role:
             return
         
         # Ignore if replying to a bot message or a protected user
@@ -100,11 +93,6 @@ class PingProtection(commands.Cog):
                         return
             except:
                 pass
-        
-        # Get the protected role
-        protected_role = message.guild.get_role(PROTECTED_ROLE_ID)
-        if not protected_role:
-            return
         
         # Check if author has permission to ping (role at or above protected role)
         author_top_role = message.author.top_role if isinstance(message.author, discord.Member) else None
@@ -156,45 +144,20 @@ class PingProtection(commands.Cog):
             await member.timeout(timeout_duration, reason=f"Reached {WARNINGS_BEFORE_TIMEOUT} warnings for unauthorized pings")
             print(f"[PING PROTECTION] Timed out {member.display_name} for {TIMEOUT_DURATION_MINUTES} minutes")
             
+            # Reset warnings immediately
+            reset_warnings(member.id)
+            print(f"[PING PROTECTION] Reset warnings for {member.display_name} (timeout applied)")
+            
             # Notify the user
             await member.send(
-                f"You have been timed out for {TIMEOUT_DURATION_MINUTES} minutes due to reaching {WARNINGS_BEFORE_TIMEOUT} warnings for unauthorized pings."
+                f"You have been timed out for {TIMEOUT_DURATION_MINUTES} minutes due to reaching {WARNINGS_BEFORE_TIMEOUT} warnings for unauthorized pings. Your warnings have been reset."
             )
-            
-            # Schedule warning reset and unmute notification
-            self._schedule_timeout_end(member, guild)
             
         except discord.Forbidden:
             print(f"[PING PROTECTION] No permission to timeout {member.display_name}")
             await member.send("You have reached the warning limit, but I do not have permission to timeout you.")
         except Exception as e:
             print(f"[PING PROTECTION] Error timing out user: {e}")
-    
-    def _schedule_timeout_end(self, member: discord.Member, guild: discord.Guild):
-        """Schedule warning reset and notification after timeout."""
-        
-        async def timeout_end_task():
-            try:
-                await asyncio.sleep(TIMEOUT_DURATION_MINUTES * 60)
-                
-                # Check if user is still in guild
-                member_check = guild.get_member(member.id)
-                if member_check:
-                    # Reset warnings
-                    reset_warnings(member_check.id)
-                    print(f"[PING PROTECTION] Reset warnings for {member_check.display_name}")
-                    await member_check.send("Your timeout has ended and your warnings have been reset.")
-                
-                # Clean up task
-                if member.id in self._mute_tasks:
-                    del self._mute_tasks[member.id]
-                    
-            except Exception as e:
-                print(f"[PING PROTECTION] Error in timeout end task: {e}")
-        
-        # Create and store the task
-        task = asyncio.create_task(timeout_end_task())
-        self._mute_tasks[member.id] = task
 
 
 async def setup(bot: commands.Bot):
