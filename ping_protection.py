@@ -16,6 +16,7 @@ from typing import Dict, Optional
 
 PROTECTED_ROLE_ID = 1527055221098811433
 WHITELISTED_ROLE_ID = 1543696458660708483
+PINGABLE_ROLE_ID = 1538590898408132731
 WARNINGS_BEFORE_TIMEOUT = 3
 TIMEOUT_DURATION_MINUTES = 10
 
@@ -93,6 +94,9 @@ class PingProtection(commands.Cog):
         protected_role = message.guild.get_role(int(PROTECTED_ROLE_ID))
         if not protected_role:
             return
+        
+        # Fetch pingable role (users with this role can be pinged without warning)
+        pingable_role = message.guild.get_role(int(PINGABLE_ROLE_ID))
 
         # Exclude author if their highest role is equal to or higher than protected role
         if message.author.top_role >= protected_role:
@@ -113,12 +117,18 @@ class PingProtection(commands.Cog):
         # Check direct user mentions
         for mention in message.mentions:
             if isinstance(mention, discord.Member):
+                # Skip if mentioned user has pingable role
+                if pingable_role and pingable_role in mention.roles:
+                    continue
                 if protected_role in mention.roles or mention.top_role >= protected_role:
                     await self._handle_unauthorized_ping(message, mention)
                     return
 
         # Check role mentions
         for role_mention in message.role_mentions:
+            # Skip if the mentioned role is the pingable role
+            if pingable_role and role_mention.id == PINGABLE_ROLE_ID:
+                continue
             if role_mention >= protected_role:
                 await self._handle_unauthorized_ping(message, role_mention)
                 return
