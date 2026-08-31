@@ -229,22 +229,84 @@ class InfractionSystem(commands.Cog):
         
         # Send message without view
         message = await channel.send(content=f"{recipient.mention}", embed=embed)
+
+
+class MessagePanelView(discord.ui.View):
+    """Ephemeral panel for sending bot messages."""
+    
+    def __init__(self, user: discord.Member, guild: discord.Guild):
+        super().__init__(timeout=None)
+        self.user = user
+        self.guild = guild
+        self.selected_channel = None
+        
+        # Populate channel options
+        channel_options = []
+        for channel in guild.text_channels:
+            channel_options.append(discord.SelectOption(label=channel.name, value=str(channel.id)))
+        
+        self.channel_select.options = channel_options
+    
+    @discord.ui.select(
+        placeholder="Select a channel",
+        min_values=1,
+        max_values=1,
+        row=0
+    )
+    async def channel_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        """Handle channel selection."""
+        self.selected_channel = self.guild.get_channel(int(select.values[0]))
+        await interaction.response.edit_message(view=self)
+    
+    @discord.ui.button(label="Send Message", style=discord.ButtonStyle.primary, row=1)
+    async def send_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Open modal to enter message."""
+        if not self.selected_channel:
+            await interaction.response.send_message("Please select a channel first.", ephemeral=True)
+            return
+        
+        modal = MessageModal(self.selected_channel)
+        await interaction.response.send_modal(modal)
+    
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Only allow the original user to interact."""
+        return interaction.user == self.user
+
+
+class MessageModal(discord.ui.Modal, title="Send Message"):
+    """Modal for entering message content."""
+    
+    def __init__(self, channel: discord.TextChannel):
+        super().__init__()
+        self.channel = channel
+    
+    message = discord.ui.TextInput(
+        label="Message",
+        placeholder="Enter your message here...",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=4000
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        """Send the message to the selected channel."""
+        await self.channel.send(self.message.value)
+        await interaction.response.send_message("Message sent successfully!", ephemeral=True)
     
     @commands.command(name="m")
-    async def message_command(self, ctx: commands.Context, *, message: str):
-        """Send a message as the bot (direct send, not a reply)."""
-        # Check permissions
+    async def message_command(self, ctx: commands.Context):
+        """Send a message as the bot using an ephemeral panel."""
+        # Check permissions silently
         if not ctx.guild or not isinstance(ctx.author, discord.Member):
-            await ctx.send("This command can only be used in a server.")
             return
         
         message_role = ctx.guild.get_role(MESSAGE_ROLE_ID)
         if not message_role or ctx.author.top_role < message_role:
-            await ctx.send("You don't have permission to use this command.")
             return
         
-        await ctx.send(message)
-        await ctx.message.delete()
+        # Create the message panel view
+        view = MessagePanelView(ctx.author, ctx.guild)
+        await ctx.send("Message Panel", view=view, ephemeral=True)
     
     @commands.command(name="void")
     async def void_command(self, ctx: commands.Context, message_id: str):
