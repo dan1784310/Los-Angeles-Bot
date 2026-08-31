@@ -118,11 +118,12 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
 
 
 class EphemeralMessagePanelView(discord.ui.View):
-    """Hidden panel rendered via interaction response with a native searchable channel dropdown."""
+    """Hidden panel containing searchable channel dropdown + repeatable compose message button."""
     
     def __init__(self, user: discord.Member):
-        super().__init__(timeout=180)
+        super().__init__(timeout=300)
         self.user = user
+        self.selected_channel: Optional[discord.TextChannel] = None
 
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
@@ -133,11 +134,29 @@ class EphemeralMessagePanelView(discord.ui.View):
         row=0
     )
     async def channel_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
-        """Directly pops up the message modal once a channel is picked/typed."""
-        selected_channel = select.values[0]
+        """Stores the selected target channel and enables the compose button."""
+        self.selected_channel = select.values[0]
+        self.compose_btn.disabled = False
         
-        # Open modal with the target channel
-        modal = MessageModal(target_channel=selected_channel)
+        await interaction.response.edit_message(
+            content=f"📋 **Message Dispatch Panel** — Target set to {self.selected_channel.mention}. Click below to send messages:",
+            view=self
+        )
+
+    @discord.ui.button(
+        label="Compose Message", 
+        style=discord.ButtonStyle.success, 
+        emoji="✍️", 
+        disabled=True, 
+        row=1
+    )
+    async def compose_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Launches the modal to compose and send a message repeatedly."""
+        if not self.selected_channel:
+            await interaction.response.send_message("❌ Please select a channel first.", ephemeral=True)
+            return
+        
+        modal = MessageModal(target_channel=self.selected_channel)
         await interaction.response.send_modal(modal)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -166,7 +185,7 @@ class PersistentPanelLaunchView(discord.ui.View):
             await interaction.response.send_message("❌ You lack permission to use this panel.", ephemeral=True)
             return
 
-        # Show ephemeral panel with channel search dropdown
+        # Show ephemeral panel with channel search dropdown and repeatable compose button
         ephemeral_view = EphemeralMessagePanelView(interaction.user)
         await interaction.response.send_message(
             "📋 **Message Dispatch Panel** — Pick or type a channel below:", 
