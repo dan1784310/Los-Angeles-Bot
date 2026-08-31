@@ -230,7 +230,7 @@ class InfractionSystem(commands.Cog):
                 super().__init__()
                 self.original_embed = original_embed
             
-            @discord.ui.button(label="Void", style=discord.ButtonStyle.danger, emoji="🔴")
+            @discord.ui.button(label="Void", style=discord.ButtonStyle.danger)
             async def void_button(self, interaction: discord.Interaction, button: discord.ui.Button):
                 # Check permissions
                 void_role = interaction.guild.get_role(VOID_ROLE_ID)
@@ -239,7 +239,7 @@ class InfractionSystem(commands.Cog):
                     return
                 
                 # Update embed
-                self.original_embed.title = f"Voided by {interaction.user.display_name}"
+                self.original_embed.title = f"Voided by {interaction.user.mention}"
                 self.original_embed.color = discord.Color.red()
                 
                 # Disable button and update message
