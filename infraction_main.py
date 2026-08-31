@@ -37,6 +37,9 @@ INFRACTION_CHANNEL_ID = 1526898975704350822
 # Role ID required to use the Void button
 VOID_ROLE_ID = 1527051014992040106
 
+# Role ID required to use !m command
+MESSAGE_ROLE_ID = 1527055221098811433
+
 
 def _can_issue_infraction(interaction: discord.Interaction) -> bool:
     """Server owner, administrators, or anyone whose top role is at or above
@@ -224,39 +227,64 @@ class InfractionSystem(commands.Cog):
         
         embed.description = description
         
-        # Store embed data for void functionality
-        class VoidView(discord.ui.View):
-            def __init__(self, original_embed):
-                super().__init__()
-                self.original_embed = original_embed
-            
-            @discord.ui.button(label="Void", style=discord.ButtonStyle.danger)
-            async def void_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-                # Check permissions
-                void_role = interaction.guild.get_role(VOID_ROLE_ID)
-                if not void_role or interaction.user.top_role < void_role:
-                    await interaction.response.send_message("You don't have permission to use this button.", ephemeral=True)
-                    return
-                
-                # Update embed
-                self.original_embed.title = f"Voided by {interaction.user.mention}"
-                self.original_embed.color = discord.Color.red()
-                
-                # Disable button and update message
-                button.disabled = True
-                button.label = "Voided"
-                
-                await interaction.response.edit_message(embed=self.original_embed, view=self)
-        
-        # Send message with view
-        message = await channel.send(content=f"{recipient.mention}", embed=embed, view=VoidView(embed))
+        # Send message without view
+        message = await channel.send(content=f"{recipient.mention}", embed=embed)
     
     @commands.command(name="m")
-    @commands.has_permissions(administrator=True)
     async def message_command(self, ctx: commands.Context, *, message: str):
         """Send a message as the bot (direct send, not a reply)."""
+        # Check permissions
+        if not ctx.guild or not isinstance(ctx.author, discord.Member):
+            await ctx.send("This command can only be used in a server.")
+            return
+        
+        message_role = ctx.guild.get_role(MESSAGE_ROLE_ID)
+        if not message_role or ctx.author.top_role < message_role:
+            await ctx.send("You don't have permission to use this command.")
+            return
+        
         await ctx.send(message)
         await ctx.message.delete()
+    
+    @commands.command(name="void")
+    async def void_command(self, ctx: commands.Context, message_id: str):
+        """Void an infraction by message ID."""
+        # Check permissions
+        if not ctx.guild or not isinstance(ctx.author, discord.Member):
+            await ctx.send("This command can only be used in a server.")
+            return
+        
+        void_role = ctx.guild.get_role(VOID_ROLE_ID)
+        if not void_role or ctx.author.top_role < void_role:
+            await ctx.send("You don't have permission to use this command.")
+            return
+        
+        try:
+            # Try to fetch the message
+            target_message = await ctx.channel.fetch_message(int(message_id))
+            
+            if not target_message.embeds:
+                await ctx.send("This message doesn't contain an embed.")
+                return
+            
+            # Get the first embed
+            embed = target_message.embeds[0]
+            
+            # Update embed
+            embed.title = f"Voided by @{ctx.author.display_name}"
+            embed.color = discord.Color.red()
+            
+            # Edit the message
+            await target_message.edit(embed=embed)
+            await ctx.send(f"Successfully voided infraction.", delete_after=3)
+            await ctx.message.delete()
+            
+        except ValueError:
+            await ctx.send("Invalid message ID. Please provide a valid message ID.")
+        except discord.NotFound:
+            await ctx.send("Message not found. Please check the message ID.")
+        except Exception as e:
+            await ctx.send(f"Error voiding infraction: {e}")
 
 
 async def setup(bot: commands.Bot):
