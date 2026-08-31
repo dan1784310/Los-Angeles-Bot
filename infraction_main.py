@@ -86,10 +86,27 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
         """Dispatch message or reply to the targeted channel."""
         target_message_id = self.reply_to_id.value.strip() if self.reply_to_id.value else None
         
+        # Check bot permissions in target channel first
+        permissions = self.target_channel.permissions_for(interaction.guild.me)
+        if not permissions.send_messages:
+            await interaction.response.send_message(
+                f"❌ The bot does not have permission to send messages in {self.target_channel.mention}.", 
+                ephemeral=True
+            )
+            return
+
         # Handle message reply
         if target_message_id:
+            if not permissions.read_message_history:
+                await interaction.response.send_message(
+                    f"❌ The bot lacks **Read Message History** permission in {self.target_channel.mention} to locate message `{target_message_id}`.", 
+                    ephemeral=True
+                )
+                return
+
             try:
-                target_msg = await self.target_channel.fetch_message(int(target_message_id))
+                msg_id_int = int(target_message_id)
+                target_msg = await self.target_channel.fetch_message(msg_id_int)
                 await target_msg.reply(content=self.message.value)
                 await interaction.response.send_message(
                     f"✅ Reply sent successfully to message `{target_message_id}` in {self.target_channel.mention}!", 
@@ -97,11 +114,17 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
                 )
                 return
             except ValueError:
-                await interaction.response.send_message("❌ Invalid Message ID format.", ephemeral=True)
+                await interaction.response.send_message("❌ Invalid Message ID format. Must be numbers only.", ephemeral=True)
                 return
             except discord.NotFound:
                 await interaction.response.send_message(
-                    f"❌ Could not find message `{target_message_id}` in {self.target_channel.mention}.", 
+                    f"❌ Could not find message ID `{target_message_id}` in {self.target_channel.mention}. Check if the ID is correct.", 
+                    ephemeral=True
+                )
+                return
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    f"❌ Permission denied while reading messages in {self.target_channel.mention}.", 
                     ephemeral=True
                 )
                 return
@@ -109,12 +132,15 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
                 await interaction.response.send_message(f"❌ Failed to send reply: {e}", ephemeral=True)
                 return
         
-        # Handle standard channel dispatch
-        await self.target_channel.send(content=self.message.value)
-        await interaction.response.send_message(
-            f"✅ Message sent successfully to {self.target_channel.mention}!", 
-            ephemeral=True
-        )
+        # Handle standard channel dispatch (No Reply ID)
+        try:
+            await self.target_channel.send(content=self.message.value)
+            await interaction.response.send_message(
+                f"✅ Message sent successfully to {self.target_channel.mention}!", 
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error sending message: {e}", ephemeral=True)
 
 
 class EphemeralMessagePanelView(discord.ui.View):
