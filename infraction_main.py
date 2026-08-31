@@ -34,6 +34,9 @@ INFRACTION_ROLE_ID = 1539201630161993728
 # Channel to automatically send infraction embeds to
 INFRACTION_CHANNEL_ID = 1526898975704350822
 
+# Role ID required to use the Void button
+VOID_ROLE_ID = 1527051014992040106
+
 
 def _can_issue_infraction(interaction: discord.Interaction) -> bool:
     """Server owner, administrators, or anyone whose top role is at or above
@@ -221,7 +224,39 @@ class InfractionSystem(commands.Cog):
         
         embed.description = description
         
-        await channel.send(content=f"{recipient.mention}", embed=embed)
+        # Store embed data for void functionality
+        class VoidView(discord.ui.View):
+            def __init__(self, original_embed):
+                super().__init__()
+                self.original_embed = original_embed
+            
+            @discord.ui.button(label="Void", style=discord.ButtonStyle.danger, emoji="🔴")
+            async def void_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+                # Check permissions
+                void_role = interaction.guild.get_role(VOID_ROLE_ID)
+                if not void_role or interaction.user.top_role < void_role:
+                    await interaction.response.send_message("You don't have permission to use this button.", ephemeral=True)
+                    return
+                
+                # Update embed
+                self.original_embed.title = f"Voided by {interaction.user.display_name}"
+                self.original_embed.color = discord.Color.red()
+                
+                # Disable button and update message
+                button.disabled = True
+                button.label = "Voided"
+                
+                await interaction.response.edit_message(embed=self.original_embed, view=self)
+        
+        # Send message with view
+        message = await channel.send(content=f"{recipient.mention}", embed=embed, view=VoidView(embed))
+    
+    @commands.command(name="m")
+    @commands.has_permissions(administrator=True)
+    async def message_command(self, ctx: commands.Context, *, message: str):
+        """Send a message as the bot (direct send, not a reply)."""
+        await ctx.send(message)
+        await ctx.message.delete()
 
 
 async def setup(bot: commands.Bot):
