@@ -60,11 +60,23 @@ def _can_issue_infraction(interaction: discord.Interaction) -> bool:
 # ==========================================
 
 class MessageModal(discord.ui.Modal, title="Send Bot Message"):
-    """Modal for entering message content and optional reply ID."""
+    """Modal for entering channel, message content, and optional reply ID."""
     
-    def __init__(self, channel: discord.TextChannel):
+    def __init__(self, default_channel: Optional[discord.TextChannel] = None):
         super().__init__()
-        self.channel = channel
+        self.default_channel = default_channel
+        
+        # Pre-fill channel field if selected from dropdown
+        if default_channel:
+            self.channel_input.default = f"#{default_channel.name} ({default_channel.id})"
+    
+    channel_input = discord.ui.TextInput(
+        label="Channel (#mention, Name, or ID)",
+        placeholder="e.g. #general, general, or 123456789...",
+        style=discord.TextStyle.short,
+        required=True,
+        max_length=100
+    )
     
     reply_to_id = discord.ui.TextInput(
         label="Reply to Message ID (Optional)",
@@ -83,15 +95,45 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
     )
     
     async def on_submit(self, interaction: discord.Interaction):
-        """Send the message or reply to the selected channel."""
+        """Parse channel target and dispatch message or reply."""
+        guild = interaction.guild
+        if not guild:
+            await interaction.response.send_message("❌ This panel can only be used in a server.", ephemeral=True)
+            return
+
+        raw_channel = self.channel_input.value.strip()
+        target_channel = None
+
+        # 1. Check if user kept default dropdown selection
+        if self.default_channel and f"({self.default_channel.id})" in raw_channel:
+            target_channel = self.default_channel
+        else:
+            # 2. Extract digits from raw input (#mention or raw ID)
+            clean_id = "".join(filter(str.isdigit, raw_channel))
+            if clean_id:
+                target_channel = guild.get_channel(int(clean_id))
+            
+            # 3. Fallback: Search channel by name if no numeric ID matched
+            if not target_channel:
+                clean_name = raw_channel.lstrip("#").lower()
+                target_channel = discord.utils.get(guild.text_channels, name=clean_name)
+
+        if not target_channel or not isinstance(target_channel, discord.TextChannel):
+            await interaction.response.send_message(
+                f"❌ Could not find a text channel matching `{raw_channel}`.", 
+                ephemeral=True
+            )
+            return
+
         target_message_id = self.reply_to_id.value.strip() if self.reply_to_id.value else None
         
+        # Handle message reply
         if target_message_id:
             try:
-                target_msg = await self.channel.fetch_message(int(target_message_id))
+                target_msg = await target_channel.fetch_message(int(target_message_id))
                 await target_msg.reply(content=self.message.value)
                 await interaction.response.send_message(
-                    f"✅ Reply sent successfully to message `{target_message_id}` in {self.channel.mention}!", 
+                    f"✅ Reply sent successfully to message `{target_message_id}` in {target_channel.mention}!", 
                     ephemeral=True
                 )
                 return
@@ -100,7 +142,7 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
                 return
             except discord.NotFound:
                 await interaction.response.send_message(
-                    f"❌ Could not find message `{target_message_id}` in {self.channel.mention}.", 
+                    f"❌ Could not find message `{target_message_id}` in {target_channel.mention}.", 
                     ephemeral=True
                 )
                 return
@@ -108,10 +150,10 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
                 await interaction.response.send_message(f"❌ Failed to send reply: {e}", ephemeral=True)
                 return
         
-        # Standard channel dispatch if no reply ID is provided
-        await self.channel.send(content=self.message.value)
+        # Handle standard channel dispatch
+        await target_channel.send(content=self.message.value)
         await interaction.response.send_message(
-            f"✅ Message sent successfully to {self.channel.mention}!", 
+            f"✅ Message sent successfully to {target_channel.mention}!", 
             ephemeral=True
         )
 
@@ -125,7 +167,7 @@ class EphemeralMessagePanelView(discord.ui.View):
         self.guild = guild
         self.selected_channel = None
         
-        # Select menus have a maximum limit of 25 options in Discord
+        # Populate select dropdown (up to 25 channels)
         channel_options = [
             discord.SelectOption(label=f"#{channel.name}", value=str(channel.id))
             for channel in guild.text_channels[:25]
@@ -135,7 +177,7 @@ class EphemeralMessagePanelView(discord.ui.View):
             self.channel_select.options = channel_options
 
     @discord.ui.select(
-        placeholder="Select target channel...",
+        placeholder="Select target channel (or type in modal)...",
         min_values=1,
         max_values=1,
         row=0
@@ -148,11 +190,7 @@ class EphemeralMessagePanelView(discord.ui.View):
     @discord.ui.button(label="Compose Message", style=discord.ButtonStyle.primary, row=1)
     async def send_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Open modal to compose message."""
-        if not self.selected_channel:
-            await interaction.response.send_message("❌ Please select a channel first.", ephemeral=True)
-            return
-        
-        modal = MessageModal(self.selected_channel)
+        modal = MessageModal(default_channel=self.selected_channel)
         await interaction.response.send_modal(modal)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -167,7 +205,7 @@ class PersistentPanelLaunchView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="Click me", 
+        label="Open Message Panel", 
         style=discord.ButtonStyle.primary, 
         emoji="📋",
         custom_id="launch_message_panel_btn"
@@ -183,7 +221,7 @@ class PersistentPanelLaunchView(discord.ui.View):
 
         ephemeral_view = EphemeralMessagePanelView(interaction.user, interaction.guild)
         await interaction.response.send_message(
-            "📋 **Message Dispatch Panel** — Select a target channel below:", 
+            "📋 **Message Dispatch Panel** — Choose a channel from the dropdown or click Compose to type one manually:", 
             view=ephemeral_view, 
             ephemeral=True
         )
@@ -359,7 +397,6 @@ class InfractionSystem(commands.Cog):
         if not message_role or ctx.author.top_role < message_role:
             return
         
-        # Clean up trigger command
         try:
             await ctx.message.delete()
         except discord.HTTPException:
@@ -369,8 +406,18 @@ class InfractionSystem(commands.Cog):
         await ctx.send("Click the button below to open your hidden message panel:", view=view)
 
     @commands.command(name="void")
-    async def void_command(self, ctx: commands.Context, message_id: str):
-        """Void an infraction by message ID."""
+    async def void_command(
+        self, 
+        ctx: commands.Context, 
+        message_id: str, 
+        channel: Optional[discord.TextChannel] = None
+    ):
+        """Void an infraction by message ID.
+        
+        Usage:
+          !void <message_id>
+          !void <message_id> #channel
+        """
         if not ctx.guild or not isinstance(ctx.author, discord.Member):
             await ctx.send("This command can only be used in a server.")
             return
@@ -380,11 +427,14 @@ class InfractionSystem(commands.Cog):
             await ctx.send("You don't have permission to use this command.")
             return
         
+        # Default to INFRACTION_CHANNEL_ID if no channel is typed, or fallback to current channel
+        target_channel = channel or ctx.guild.get_channel(INFRACTION_CHANNEL_ID) or ctx.channel
+        
         try:
-            target_message = await ctx.channel.fetch_message(int(message_id))
+            target_message = await target_channel.fetch_message(int(message_id))
             
             if not target_message.embeds:
-                await ctx.send("This message doesn't contain an embed.")
+                await ctx.send(f"This message in {target_channel.mention} doesn't contain an embed.")
                 return
             
             embed = target_message.embeds[0]
@@ -392,7 +442,7 @@ class InfractionSystem(commands.Cog):
             embed.color = discord.Color.red()
             
             await target_message.edit(embed=embed)
-            await ctx.send("Successfully voided infraction.", delete_after=3)
+            await ctx.send(f"Successfully voided infraction in {target_channel.mention}.", delete_after=3)
             
             try:
                 await ctx.message.delete()
@@ -402,7 +452,7 @@ class InfractionSystem(commands.Cog):
         except ValueError:
             await ctx.send("Invalid message ID. Please provide a numerical message ID.")
         except discord.NotFound:
-            await ctx.send("Message not found in this channel.")
+            await ctx.send(f"Message not found in {target_channel.mention}.")
         except Exception as e:
             await ctx.send(f"Error voiding infraction: {e}")
 
