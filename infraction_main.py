@@ -1,6 +1,6 @@
 """
 Infraction System Module
-Contains the infraction slash command, card display functionality, and live message proxy system.
+Contains the infraction slash command, card display functionality, and live bot control proxy.
 """
 
 import discord
@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 from typing import Optional, Dict
 from datetime import datetime, timedelta
+import asyncio
 
 
 # ==========================================
@@ -51,88 +52,92 @@ def _can_issue_infraction(interaction: discord.Interaction) -> bool:
 # ==========================================
 
 class InfractionSystem(commands.Cog):
-    """Main infraction system cog with live message proxy capabilities."""
+    """Main infraction system cog with control proxy capabilities."""
     
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Maps user_id -> target_channel_id (None means send to the same channel the user typed in)
-        self.active_proxies: Dict[int, Optional[int]] = {}
+        # Maps user_id -> { "control_channel_id": int, "target_channel_id": int }
+        self.active_proxies: Dict[int, dict] = {}
 
     # ==========================================
-    # LIVE PROXY MESSAGE LISTENER
+    # CONTROL CHANNEL LISTENER
     # ==========================================
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Intercepts messages from active proxy users, deletes them, and resends via bot."""
-        # Ignore bot messages or messages outside of guilds
+        """Listens for controller messages, triggers bot typing, and forwards content."""
         if message.author.bot or not message.guild:
             return
 
-        # Check if the command being used is turning proxy off
         clean_content = message.content.strip().lower()
-        if clean_content.startswith("!m off") or clean_content.startswith("!m on"):
+
+        # Ignore state toggles and command prefixes so they run normally
+        if clean_content.startswith("!m") or clean_content.startswith("!reply") or clean_content.startswith("!void"):
             return
 
-        # Check if author currently has proxy mode turned ON
+        # Check if the author has an active proxy session set up
         if message.author.id in self.active_proxies:
-            target_channel_id = self.active_proxies[message.author.id]
-            
-            # Use specified target channel, or fallback to the channel the user typed in
-            target_channel = message.guild.get_channel(target_channel_id) if target_channel_id else message.channel
+            session = self.active_proxies[message.author.id]
 
+            # Only process messages typed inside the designated control channel
+            if message.channel.id != session["control_channel_id"]:
+                return
+
+            target_channel = message.guild.get_channel(session["target_channel_id"])
             if not isinstance(target_channel, discord.TextChannel):
                 return
 
-            # Check bot permissions in target channel
+            # Verify send permissions in target channel
             permissions = target_channel.permissions_for(message.guild.me)
             if not permissions.send_messages:
                 return
 
-            # Store reference to message being replied to (if any)
-            reference_msg = message.reference.resolved if message.reference else None
+            # 1. Trigger the BOT's typing indicator in the target channel
+            async with target_channel.typing():
+                # Extract attachments if any were included
+                files = [await attachment.to_file() for attachment in message.attachments]
+                
+                # Check if user used Discord's native Reply feature on a message in control room
+                reference_msg = message.reference.resolved if message.reference else None
 
-            # 1. Delete user's message immediately so it doesn't show in chat
+                # 2. Dispatch message as the bot
+                try:
+                    if reference_msg and isinstance(reference_msg, discord.Message):
+                        await reference_msg.reply(
+                            content=message.content if message.content else None, 
+                            files=files,
+                            mention_author=False
+                        )
+                    else:
+                        await target_channel.send(
+                            content=message.content if message.content else None, 
+                            files=files
+                        )
+                except discord.HTTPException as e:
+                    print(f"Failed to forward control message: {e}")
+
+            # 3. Clean up the control channel message log
             try:
                 await message.delete()
             except discord.HTTPException:
                 pass
 
-            # 2. Resend message content (and attachments if any) through the bot
-            files = [await attachment.to_file() for attachment in message.attachments]
-            
-            try:
-                if reference_msg and isinstance(reference_msg, discord.Message):
-                    await reference_msg.reply(
-                        content=message.content if message.content else None, 
-                        files=files,
-                        mention_author=False
-                    )
-                else:
-                    await target_channel.send(
-                        content=message.content if message.content else None, 
-                        files=files
-                    )
-            except discord.HTTPException as e:
-                print(f"Failed to proxy message for {message.author}: {e}")
-
     # ==========================================
-    # TOGGLE COMMAND
+    # TOGGLE & REPLY COMMANDS
     # ==========================================
 
     @commands.command(name="m")
     async def message_proxy_toggle(
         self, 
         ctx: commands.Context, 
-        state: str, 
+        target: Optional[str] = None, 
         target_channel: Optional[discord.TextChannel] = None
     ):
-        """Toggle live bot proxy mode.
+        """Toggle live bot proxy controller.
         
         Usage:
-          !m on              -> Sends bot messages to current channel
-          !m on #channel     -> Sends all bot messages to specific channel
-          !m off             -> Turns off proxy mode
+          !m #channel   -> Sets current channel as control room, sends bot messages to #channel
+          !m off        -> Disables active proxy control
         """
         if not ctx.guild or not isinstance(ctx.author, discord.Member):
             return
@@ -141,32 +146,87 @@ class InfractionSystem(commands.Cog):
         if not message_role or ctx.author.top_role < message_role:
             return
 
-        # Delete the command trigger message
+        # Delete the trigger command
         try:
             await ctx.message.delete()
         except discord.HTTPException:
             pass
 
-        state = state.lower().strip()
-
-        if state == "on":
-            channel_id = target_channel.id if target_channel else None
-            self.active_proxies[ctx.author.id] = channel_id
-            
-            dest_text = target_channel.mention if target_channel else "current channel"
-            await ctx.send(
-                f"🤖 **Proxy Activated** for {ctx.author.mention}! Messages sent to {dest_text}. Type `!m off` to disable.", 
-                delete_after=5
-            )
-
-        elif state == "off":
+        # Handle turn off
+        if target and target.lower().strip() == "off":
             if ctx.author.id in self.active_proxies:
                 del self.active_proxies[ctx.author.id]
-                await ctx.send(f"🛑 **Proxy Deactivated** for {ctx.author.mention}.", delete_after=5)
+                await ctx.send("🛑 **Bot Controller Disabled**.", delete_after=5)
             else:
-                await ctx.send("❌ You don't have proxy mode active.", delete_after=3)
+                await ctx.send("❌ You do not have an active controller session.", delete_after=3)
+            return
+
+        # Resolve target channel
+        destination = target_channel
+        if not destination and ctx.message.channel_mentions:
+            destination = ctx.message.channel_mentions[0]
+
+        if not destination:
+            destination = ctx.channel
+
+        # Enable controller
+        self.active_proxies[ctx.author.id] = {
+            "control_channel_id": ctx.channel.id,
+            "target_channel_id": destination.id
+        }
+
+        await ctx.send(
+            f"🤖 **Bot Controller Active!**\n"
+            f"• **Control Room:** {ctx.channel.mention}\n"
+            f"• **Target Output:** {destination.mention}\n"
+            f"*(Type messages here; the bot will display typing status and post in {destination.mention}. Type `!m off` to stop.)*", 
+            delete_after=7
+        )
+
+    @commands.command(name="reply")
+    async def reply_as_bot(self, ctx: commands.Context, message_id: str, *, content: str):
+        """Reply directly to a specific message ID in the targeted channel as the bot.
+        
+        Usage:
+          !reply <message_id> <message_text>
+        """
+        if not ctx.guild or not isinstance(ctx.author, discord.Member):
+            return
+
+        message_role = ctx.guild.get_role(MESSAGE_ROLE_ID)
+        if not message_role or ctx.author.top_role < message_role:
+            return
+
+        # Delete command message
+        try:
+            await ctx.message.delete()
+        except discord.HTTPException:
+            pass
+
+        # Determine target channel (from active proxy session or current channel)
+        if ctx.author.id in self.active_proxies:
+            target_channel_id = self.active_proxies[ctx.author.id]["target_channel_id"]
+            target_channel = ctx.guild.get_channel(target_channel_id)
         else:
-            await ctx.send("❌ Invalid option. Use `!m on` or `!m off`.", delete_after=3)
+            target_channel = ctx.channel
+
+        if not isinstance(target_channel, discord.TextChannel):
+            return
+
+        try:
+            # Trigger typing and send reply
+            async with target_channel.typing():
+                msg_to_reply = await target_channel.fetch_message(int(message_id))
+                await msg_to_reply.reply(content=content, mention_author=False)
+
+        except ValueError:
+            await ctx.send("❌ Message ID must be numeric.", delete_after=3)
+        except discord.NotFound:
+            await ctx.send(f"❌ Message `{message_id}` not found in {target_channel.mention}.", delete_after=4)
+        except discord.Forbidden:
+            await ctx.send(f"❌ Missing permissions to read/reply in {target_channel.mention}.", delete_after=4)
+        except Exception as e:
+            await ctx.send(f"❌ Failed to reply: {e}", delete_after=4)
 
     # ==========================================
     # INFRACTION COMMAND GROUP
