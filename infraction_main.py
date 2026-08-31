@@ -60,24 +60,12 @@ def _can_issue_infraction(interaction: discord.Interaction) -> bool:
 # ==========================================
 
 class MessageModal(discord.ui.Modal, title="Send Bot Message"):
-    """Modal for entering channel, message content, and optional reply ID."""
+    """Modal for entering message content and optional reply ID for a specific channel."""
     
-    def __init__(self, default_channel: Optional[discord.TextChannel] = None):
+    def __init__(self, target_channel: discord.TextChannel):
         super().__init__()
-        self.default_channel = default_channel
-        
-        # Pre-fill channel field if selected from dropdown
-        if default_channel:
-            self.channel_input.default = f"#{default_channel.name} ({default_channel.id})"
-    
-    channel_input = discord.ui.TextInput(
-        label="Channel (#mention, Name, or ID)",
-        placeholder="e.g. #general, general, or 123456789...",
-        style=discord.TextStyle.short,
-        required=True,
-        max_length=100
-    )
-    
+        self.target_channel = target_channel
+
     reply_to_id = discord.ui.TextInput(
         label="Reply to Message ID (Optional)",
         placeholder="Paste target message ID here to send as a reply...",
@@ -95,45 +83,16 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
     )
     
     async def on_submit(self, interaction: discord.Interaction):
-        """Parse channel target and dispatch message or reply."""
-        guild = interaction.guild
-        if not guild:
-            await interaction.response.send_message("❌ This panel can only be used in a server.", ephemeral=True)
-            return
-
-        raw_channel = self.channel_input.value.strip()
-        target_channel = None
-
-        # 1. Check if user kept default dropdown selection
-        if self.default_channel and f"({self.default_channel.id})" in raw_channel:
-            target_channel = self.default_channel
-        else:
-            # 2. Extract digits from raw input (#mention or raw ID)
-            clean_id = "".join(filter(str.isdigit, raw_channel))
-            if clean_id:
-                target_channel = guild.get_channel(int(clean_id))
-            
-            # 3. Fallback: Search channel by name if no numeric ID matched
-            if not target_channel:
-                clean_name = raw_channel.lstrip("#").lower()
-                target_channel = discord.utils.get(guild.text_channels, name=clean_name)
-
-        if not target_channel or not isinstance(target_channel, discord.TextChannel):
-            await interaction.response.send_message(
-                f"❌ Could not find a text channel matching `{raw_channel}`.", 
-                ephemeral=True
-            )
-            return
-
+        """Dispatch message or reply to the targeted channel."""
         target_message_id = self.reply_to_id.value.strip() if self.reply_to_id.value else None
         
         # Handle message reply
         if target_message_id:
             try:
-                target_msg = await target_channel.fetch_message(int(target_message_id))
+                target_msg = await self.target_channel.fetch_message(int(target_message_id))
                 await target_msg.reply(content=self.message.value)
                 await interaction.response.send_message(
-                    f"✅ Reply sent successfully to message `{target_message_id}` in {target_channel.mention}!", 
+                    f"✅ Reply sent successfully to message `{target_message_id}` in {self.target_channel.mention}!", 
                     ephemeral=True
                 )
                 return
@@ -142,7 +101,7 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
                 return
             except discord.NotFound:
                 await interaction.response.send_message(
-                    f"❌ Could not find message `{target_message_id}` in {target_channel.mention}.", 
+                    f"❌ Could not find message `{target_message_id}` in {self.target_channel.mention}.", 
                     ephemeral=True
                 )
                 return
@@ -151,46 +110,34 @@ class MessageModal(discord.ui.Modal, title="Send Bot Message"):
                 return
         
         # Handle standard channel dispatch
-        await target_channel.send(content=self.message.value)
+        await self.target_channel.send(content=self.message.value)
         await interaction.response.send_message(
-            f"✅ Message sent successfully to {target_channel.mention}!", 
+            f"✅ Message sent successfully to {self.target_channel.mention}!", 
             ephemeral=True
         )
 
 
 class EphemeralMessagePanelView(discord.ui.View):
-    """Hidden panel rendered via interaction response."""
+    """Hidden panel rendered via interaction response with a native searchable channel dropdown."""
     
-    def __init__(self, user: discord.Member, guild: discord.Guild):
+    def __init__(self, user: discord.Member):
         super().__init__(timeout=180)
         self.user = user
-        self.guild = guild
-        self.selected_channel = None
-        
-        # Populate select dropdown (up to 25 channels)
-        channel_options = [
-            discord.SelectOption(label=f"#{channel.name}", value=str(channel.id))
-            for channel in guild.text_channels[:25]
-        ]
-        
-        if channel_options:
-            self.channel_select.options = channel_options
 
     @discord.ui.select(
-        placeholder="Select target channel (or type in modal)...",
+        cls=discord.ui.ChannelSelect,
+        channel_types=[discord.ChannelType.text],
+        placeholder="Type or search for a target channel...",
         min_values=1,
         max_values=1,
         row=0
     )
-    async def channel_select(self, interaction: discord.Interaction, select: discord.ui.Select):
-        """Handle channel selection."""
-        self.selected_channel = self.guild.get_channel(int(select.values[0]))
-        await interaction.response.defer()
-
-    @discord.ui.button(label="Compose Message", style=discord.ButtonStyle.primary, row=1)
-    async def send_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Open modal to compose message."""
-        modal = MessageModal(default_channel=self.selected_channel)
+    async def channel_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        """Directly pops up the message modal once a channel is picked/typed."""
+        selected_channel = select.values[0]
+        
+        # Open modal with the target channel
+        modal = MessageModal(target_channel=selected_channel)
         await interaction.response.send_modal(modal)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -199,7 +146,7 @@ class EphemeralMessagePanelView(discord.ui.View):
 
 
 class PersistentPanelLaunchView(discord.ui.View):
-    """Button control posted by !m that spawns an ephemeral panel upon click."""
+    """Button control posted by !m that deletes its host message and launches the panel."""
     
     def __init__(self):
         super().__init__(timeout=None)
@@ -219,12 +166,19 @@ class PersistentPanelLaunchView(discord.ui.View):
             await interaction.response.send_message("❌ You lack permission to use this panel.", ephemeral=True)
             return
 
-        ephemeral_view = EphemeralMessagePanelView(interaction.user, interaction.guild)
+        # Show ephemeral panel with channel search dropdown
+        ephemeral_view = EphemeralMessagePanelView(interaction.user)
         await interaction.response.send_message(
-            "📋 **Message Dispatch Panel** — Choose a channel from the dropdown or click Compose to type one manually:", 
+            "📋 **Message Dispatch Panel** — Pick or type a channel below:", 
             view=ephemeral_view, 
             ephemeral=True
         )
+
+        # Automatically delete the button message from channel
+        try:
+            await interaction.message.delete()
+        except (discord.HTTPException, discord.NotFound):
+            pass
 
 
 # ==========================================
