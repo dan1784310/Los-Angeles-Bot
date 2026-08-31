@@ -1,12 +1,12 @@
 """
 Infraction System Module
-Contains the infraction slash command, card display functionality, and ephemeral message dispatch panel.
+Contains the infraction slash command, card display functionality, and live message proxy system.
 """
 
 import discord
 from discord import app_commands
 from discord.ext import commands
-from typing import Optional
+from typing import Optional, Dict
 from datetime import datetime, timedelta
 
 
@@ -26,22 +26,13 @@ INFRACTION_ACTIONS = [
     "Suspension"
 ]
 
-# Role ID required to use /infraction issue (or higher hierarchy)
 INFRACTION_ROLE_ID = 1539201630161993728
-
-# Channel to automatically send infraction embeds to
 INFRACTION_CHANNEL_ID = 1526898975704350822
-
-# Role ID required to use !void command
 VOID_ROLE_ID = 1527051014992040106
-
-# Role ID required to use !m command
 MESSAGE_ROLE_ID = 1527055221098811433
 
 
 def _can_issue_infraction(interaction: discord.Interaction) -> bool:
-    """Server owner, administrators, or anyone whose top role is at or above
-    INFRACTION_ROLE_ID in the role hierarchy."""
     if not interaction.guild or not isinstance(interaction.user, discord.Member):
         return False
 
@@ -56,186 +47,127 @@ def _can_issue_infraction(interaction: discord.Interaction) -> bool:
 
 
 # ==========================================
-# UI COMPONENTS
-# ==========================================
-
-class MessageModal(discord.ui.Modal, title="Send Bot Message"):
-    """Modal for entering message content and optional reply ID for a specific channel."""
-    
-    def __init__(self, target_channel: discord.TextChannel):
-        super().__init__()
-        self.target_channel = target_channel
-
-    reply_to_id = discord.ui.TextInput(
-        label="Reply to Message ID (Optional)",
-        placeholder="Paste target message ID here to send as a reply...",
-        style=discord.TextStyle.short,
-        required=False,
-        max_length=30
-    )
-    
-    message = discord.ui.TextInput(
-        label="Message",
-        placeholder="Enter your message here...",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=2000
-    )
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        """Dispatch message or reply to the targeted channel."""
-        target_message_id = self.reply_to_id.value.strip() if self.reply_to_id.value else None
-        
-        # Check bot permissions in target channel first
-        permissions = self.target_channel.permissions_for(interaction.guild.me)
-        if not permissions.send_messages:
-            await interaction.response.send_message(
-                f"❌ The bot does not have permission to send messages in {self.target_channel.mention}.", 
-                ephemeral=True
-            )
-            return
-
-        # Handle message reply
-        if target_message_id:
-            if not permissions.read_message_history:
-                await interaction.response.send_message(
-                    f"❌ The bot lacks **Read Message History** permission in {self.target_channel.mention} to locate message `{target_message_id}`.", 
-                    ephemeral=True
-                )
-                return
-
-            try:
-                msg_id_int = int(target_message_id)
-                target_msg = await self.target_channel.fetch_message(msg_id_int)
-                await target_msg.reply(content=self.message.value)
-                await interaction.response.send_message(
-                    f"✅ Reply sent successfully to message `{target_message_id}` in {self.target_channel.mention}!", 
-                    ephemeral=True
-                )
-                return
-            except ValueError:
-                await interaction.response.send_message("❌ Invalid Message ID format. Must be numbers only.", ephemeral=True)
-                return
-            except discord.NotFound:
-                await interaction.response.send_message(
-                    f"❌ Could not find message ID `{target_message_id}` in {self.target_channel.mention}. Check if the ID is correct.", 
-                    ephemeral=True
-                )
-                return
-            except discord.Forbidden:
-                await interaction.response.send_message(
-                    f"❌ Permission denied while reading messages in {self.target_channel.mention}.", 
-                    ephemeral=True
-                )
-                return
-            except Exception as e:
-                await interaction.response.send_message(f"❌ Failed to send reply: {e}", ephemeral=True)
-                return
-        
-        # Handle standard channel dispatch (No Reply ID)
-        try:
-            await self.target_channel.send(content=self.message.value)
-            await interaction.response.send_message(
-                f"✅ Message sent successfully to {self.target_channel.mention}!", 
-                ephemeral=True
-            )
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Error sending message: {e}", ephemeral=True)
-
-
-class EphemeralMessagePanelView(discord.ui.View):
-    """Hidden panel containing searchable channel dropdown + repeatable compose message button."""
-    
-    def __init__(self, user: discord.Member):
-        super().__init__(timeout=300)
-        self.user = user
-        self.selected_channel: Optional[discord.TextChannel] = None
-
-    @discord.ui.select(
-        cls=discord.ui.ChannelSelect,
-        channel_types=[discord.ChannelType.text],
-        placeholder="Type or search for a target channel...",
-        min_values=1,
-        max_values=1,
-        row=0
-    )
-    async def channel_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
-        """Stores the selected target channel and enables the compose button."""
-        self.selected_channel = select.values[0]
-        self.compose_btn.disabled = False
-        
-        await interaction.response.edit_message(
-            content=f"📋 **Message Dispatch Panel** — Target set to {self.selected_channel.mention}. Click below to send messages:",
-            view=self
-        )
-
-    @discord.ui.button(
-        label="Compose Message", 
-        style=discord.ButtonStyle.success, 
-        emoji="✍️", 
-        disabled=True, 
-        row=1
-    )
-    async def compose_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Launches the modal to compose and send a message repeatedly."""
-        if not self.selected_channel:
-            await interaction.response.send_message("❌ Please select a channel first.", ephemeral=True)
-            return
-        
-        modal = MessageModal(target_channel=self.selected_channel)
-        await interaction.response.send_modal(modal)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Restricts interaction to author."""
-        return interaction.user == self.user
-
-
-class PersistentPanelLaunchView(discord.ui.View):
-    """Button control posted by !m that deletes its host message and launches the panel."""
-    
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="Open Message Panel", 
-        style=discord.ButtonStyle.primary, 
-        emoji="📋",
-        custom_id="launch_message_panel_btn"
-    )
-    async def launch_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            return
-            
-        message_role = interaction.guild.get_role(MESSAGE_ROLE_ID)
-        if not message_role or interaction.user.top_role < message_role:
-            await interaction.response.send_message("❌ You lack permission to use this panel.", ephemeral=True)
-            return
-
-        # Show ephemeral panel with channel search dropdown and repeatable compose button
-        ephemeral_view = EphemeralMessagePanelView(interaction.user)
-        await interaction.response.send_message(
-            "📋 **Message Dispatch Panel** — Pick or type a channel below:", 
-            view=ephemeral_view, 
-            ephemeral=True
-        )
-
-        # Automatically delete the button message from channel
-        try:
-            await interaction.message.delete()
-        except (discord.HTTPException, discord.NotFound):
-            pass
-
-
-# ==========================================
 # INFRACTION COG
 # ==========================================
 
 class InfractionSystem(commands.Cog):
-    """Main infraction system cog."""
+    """Main infraction system cog with live message proxy capabilities."""
     
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-    
+        # Maps user_id -> target_channel_id (None means send to the same channel the user typed in)
+        self.active_proxies: Dict[int, Optional[int]] = {}
+
+    # ==========================================
+    # LIVE PROXY MESSAGE LISTENER
+    # ==========================================
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        """Intercepts messages from active proxy users, deletes them, and resends via bot."""
+        # Ignore bot messages or messages outside of guilds
+        if message.author.bot or not message.guild:
+            return
+
+        # Check if the command being used is turning proxy off
+        clean_content = message.content.strip().lower()
+        if clean_content.startswith("!m off") or clean_content.startswith("!m on"):
+            return
+
+        # Check if author currently has proxy mode turned ON
+        if message.author.id in self.active_proxies:
+            target_channel_id = self.active_proxies[message.author.id]
+            
+            # Use specified target channel, or fallback to the channel the user typed in
+            target_channel = message.guild.get_channel(target_channel_id) if target_channel_id else message.channel
+
+            if not isinstance(target_channel, discord.TextChannel):
+                return
+
+            # Check bot permissions in target channel
+            permissions = target_channel.permissions_for(message.guild.me)
+            if not permissions.send_messages:
+                return
+
+            # Store reference to message being replied to (if any)
+            reference_msg = message.reference.resolved if message.reference else None
+
+            # 1. Delete user's message immediately so it doesn't show in chat
+            try:
+                await message.delete()
+            except discord.HTTPException:
+                pass
+
+            # 2. Resend message content (and attachments if any) through the bot
+            files = [await attachment.to_file() for attachment in message.attachments]
+            
+            try:
+                if reference_msg and isinstance(reference_msg, discord.Message):
+                    await reference_msg.reply(
+                        content=message.content if message.content else None, 
+                        files=files,
+                        mention_author=False
+                    )
+                else:
+                    await target_channel.send(
+                        content=message.content if message.content else None, 
+                        files=files
+                    )
+            except discord.HTTPException as e:
+                print(f"Failed to proxy message for {message.author}: {e}")
+
+    # ==========================================
+    # TOGGLE COMMAND
+    # ==========================================
+
+    @commands.command(name="m")
+    async def message_proxy_toggle(
+        self, 
+        ctx: commands.Context, 
+        state: str, 
+        target_channel: Optional[discord.TextChannel] = None
+    ):
+        """Toggle live bot proxy mode.
+        
+        Usage:
+          !m on              -> Sends bot messages to current channel
+          !m on #channel     -> Sends all bot messages to specific channel
+          !m off             -> Turns off proxy mode
+        """
+        if not ctx.guild or not isinstance(ctx.author, discord.Member):
+            return
+
+        message_role = ctx.guild.get_role(MESSAGE_ROLE_ID)
+        if not message_role or ctx.author.top_role < message_role:
+            return
+
+        # Delete the command trigger message
+        try:
+            await ctx.message.delete()
+        except discord.HTTPException:
+            pass
+
+        state = state.lower().strip()
+
+        if state == "on":
+            channel_id = target_channel.id if target_channel else None
+            self.active_proxies[ctx.author.id] = channel_id
+            
+            dest_text = target_channel.mention if target_channel else "current channel"
+            await ctx.send(
+                f"🤖 **Proxy Activated** for {ctx.author.mention}! Messages sent to {dest_text}. Type `!m off` to disable.", 
+                delete_after=5
+            )
+
+        elif state == "off":
+            if ctx.author.id in self.active_proxies:
+                del self.active_proxies[ctx.author.id]
+                await ctx.send(f"🛑 **Proxy Deactivated** for {ctx.author.mention}.", delete_after=5)
+            else:
+                await ctx.send("❌ You don't have proxy mode active.", delete_after=3)
+        else:
+            await ctx.send("❌ Invalid option. Use `!m on` or `!m off`.", delete_after=3)
+
     # ==========================================
     # INFRACTION COMMAND GROUP
     # ==========================================
@@ -270,21 +202,14 @@ class InfractionSystem(commands.Cog):
         expiration: Optional[str] = None,
         notes: Optional[str] = None
     ):
-        """Issue an infraction to a staff member."""
         if not _can_issue_infraction(interaction):
-            await interaction.response.send_message(
-                "❌ You don't have permission to issue infractions.",
-                ephemeral=True
-            )
+            await interaction.response.send_message("❌ You don't have permission to issue infractions.", ephemeral=True)
             return
         
         await interaction.response.defer(ephemeral=True)
         
         if action not in INFRACTION_ACTIONS:
-            await interaction.followup.send(
-                f"❌ Invalid action. Valid actions: {', '.join(INFRACTION_ACTIONS)}",
-                ephemeral=True
-            )
+            await interaction.followup.send(f"❌ Invalid action. Valid actions: {', '.join(INFRACTION_ACTIONS)}", ephemeral=True)
             return
         
         expiration_timestamp = None
@@ -292,20 +217,14 @@ class InfractionSystem(commands.Cog):
             try:
                 expiration_timestamp = self._parse_expiration(expiration)
             except ValueError:
-                await interaction.followup.send(
-                    "❌ Invalid expiration format. Use formats like: 10m, 10h, 10d, 10w",
-                    ephemeral=True
-                )
+                await interaction.followup.send("❌ Invalid expiration format. Use formats like: 10m, 10h, 10d, 10w", ephemeral=True)
                 return
         
         final_notes = notes if notes else "N/A"
         
         target_channel = interaction.guild.get_channel(INFRACTION_CHANNEL_ID)
         if not target_channel:
-            await interaction.followup.send(
-                "❌ Could not find the infraction channel.",
-                ephemeral=True
-            )
+            await interaction.followup.send("❌ Could not find the infraction channel.", ephemeral=True)
             return
         
         try:
@@ -318,22 +237,13 @@ class InfractionSystem(commands.Cog):
                 final_notes,
                 expiration_timestamp
             )
-            
-            await interaction.followup.send(
-                f"✅ Infraction issued successfully to {staff.mention} in {target_channel.mention}!",
-                ephemeral=True
-            )
+            await interaction.followup.send(f"✅ Infraction issued successfully to {staff.mention} in {target_channel.mention}!", ephemeral=True)
         except Exception as e:
             print(f"Error creating infraction card: {e}")
-            await interaction.followup.send(
-                f"❌ Error creating infraction card: {e}",
-                ephemeral=True
-            )
+            await interaction.followup.send(f"❌ Error creating infraction card: {e}", ephemeral=True)
     
     def _parse_expiration(self, expiration_str: str) -> float:
-        """Parse expiration string to timestamp."""
         expiration_str = expiration_str.lower().strip()
-        
         if expiration_str.endswith('m'):
             return (datetime.now() + timedelta(minutes=int(expiration_str[:-1]))).timestamp()
         elif expiration_str.endswith('h'):
@@ -355,16 +265,12 @@ class InfractionSystem(commands.Cog):
         notes: str,
         expiration_timestamp: Optional[float] = None
     ):
-        """Create the infraction card matching the exact layout."""
         embed = discord.Embed(
             title="Staff Consequences & Discipline",
             color=discord.Color.from_rgb(37, 37, 41)
         )
         
-        embed.set_author(
-            name=f"Signed, {issuer.display_name}",
-            icon_url=issuer.display_avatar.url
-        )
+        embed.set_author(name=f"Signed, {issuer.display_name}", icon_url=issuer.display_avatar.url)
         embed.set_thumbnail(url=recipient.display_avatar.url)
         
         formatted_notes = f"`{notes}`" if notes == "N/A" else notes
@@ -378,31 +284,12 @@ class InfractionSystem(commands.Cog):
             description += f"• **Expiration:** {expiration_text}\n"
             
         description += f"• **Notes:** {formatted_notes}"
-        
         embed.description = description
         await channel.send(content=f"{recipient.mention}", embed=embed)
 
     # ==========================================
-    # PREFIX COMMANDS
+    # VOID COMMAND
     # ==========================================
-
-    @commands.command(name="m")
-    async def message_command(self, ctx: commands.Context):
-        """Post a persistent control button that launches an ephemeral panel."""
-        if not ctx.guild or not isinstance(ctx.author, discord.Member):
-            return
-        
-        message_role = ctx.guild.get_role(MESSAGE_ROLE_ID)
-        if not message_role or ctx.author.top_role < message_role:
-            return
-        
-        try:
-            await ctx.message.delete()
-        except discord.HTTPException:
-            pass
-        
-        view = PersistentPanelLaunchView()
-        await ctx.send("Click the button below to open your hidden message panel:", view=view)
 
     @commands.command(name="void")
     async def void_command(
@@ -411,12 +298,6 @@ class InfractionSystem(commands.Cog):
         message_id: str, 
         channel: Optional[discord.TextChannel] = None
     ):
-        """Void an infraction by message ID.
-        
-        Usage:
-          !void <message_id>
-          !void <message_id> #channel
-        """
         if not ctx.guild or not isinstance(ctx.author, discord.Member):
             await ctx.send("This command can only be used in a server.")
             return
@@ -426,12 +307,10 @@ class InfractionSystem(commands.Cog):
             await ctx.send("You don't have permission to use this command.")
             return
         
-        # Default to INFRACTION_CHANNEL_ID if no channel is typed, or fallback to current channel
         target_channel = channel or ctx.guild.get_channel(INFRACTION_CHANNEL_ID) or ctx.channel
         
         try:
             target_message = await target_channel.fetch_message(int(message_id))
-            
             if not target_message.embeds:
                 await ctx.send(f"This message in {target_channel.mention} doesn't contain an embed.")
                 return
@@ -457,5 +336,4 @@ class InfractionSystem(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    """Setup the infraction cog."""
     await bot.add_cog(InfractionSystem(bot))
