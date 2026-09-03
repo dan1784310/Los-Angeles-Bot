@@ -555,7 +555,7 @@ def build_ticket_panel_view(
             container.add_item(discord.ui.Separator())
             container.add_item(
                 discord.ui.MediaGallery(
-                    discord.MediaGalleryItem(media=bottom_banner_url.strip(), width=1920, height=117)
+                    discord.MediaGalleryItem(media=bottom_banner_url.strip())
                 )
             )
         except Exception as e:
