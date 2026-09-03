@@ -44,8 +44,8 @@ COMMAND_ROLE_PERMISSIONS = {
 # MARKETPLACE CONFIGURATION
 # ============================================================
 
-SHOP_BANNER_URL = "https://i.postimg.cc/Rh7J6tk4/Gemini-Generated-Image-kxz78gkxz78gkxz7.jpg"
-SHOP_BOTTOM_THUMBNAIL_URL = "https://i.postimg.cc/cHBtzhj4/AZRP-bottom-thumbnail.png"
+SHOP_BANNER_URL = "https://i.postimg.cc/L8gcVkbq/Arizona-State-Marketplace-Banner.jpg"
+SHOP_BOTTOM_THUMBNAIL_URL = "https://cdn.imageurlgenerator.com/uploads/85ff6f6b-754f-4988-b505-56a171cef43b.png"
 SHOP_EMOJI = "<:shopping_cart:1541552477910990899>"
 AUTHORIZED_USER_ID = 1488252011374710958
 
@@ -403,7 +403,7 @@ async def card(ctx: commands.Context):
 # MARKETPLACE
 # ============================================================
 
-@bot.command()
+@bot.command(name="shop")
 async def send_shop(ctx: commands.Context):
     """Send the marketplace panel using Components V2."""
     if ctx.author.id != AUTHORIZED_USER_ID:
