@@ -334,7 +334,7 @@ def create_card(
         container.add_item(discord.ui.Separator())
         container.add_item(
             discord.ui.MediaGallery(
-                discord.MediaGalleryItem(media=bottom_banner_url)
+                discord.MediaGalleryItem(media=bottom_banner_url, width=1000, height=1000)
             )
         )
 
