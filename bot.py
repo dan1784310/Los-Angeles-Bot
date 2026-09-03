@@ -286,9 +286,10 @@ def clean_button_name(channel: discord.TextChannel) -> str:
 def create_card(
     guild_name,
     banner_url,
-    text,
-    tags,
-    channels,
+    bottom_banner_url=None,
+    text=None,
+    tags=None,
+    channels=None,
     publish_id=None,
     dropdown_options=None,
     card_id=None,
@@ -328,6 +329,14 @@ def create_card(
                 )
             )
         container.add_item(row)
+
+    if bottom_banner_url:
+        container.add_item(discord.ui.Separator())
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(media=bottom_banner_url)
+            )
+        )
 
     if dropdown_options:
         select_id = card_id or publish_id or "preview"
@@ -619,10 +628,12 @@ async def finalize_dropdown_announcement(
     final_card = create_card(
         card_data["guild"],
         card_data["banner"],
+        card_data.get("bottom_banner"),
         card_data["text"],
         card_data["tags"],
         card_data["channels"],
-        dropdown_options=setup["options"],
+        publish_id=card_id,
+        dropdown_options=active_dropdowns.get(card_id),
         card_id=card_id,
     )
 
@@ -988,6 +999,7 @@ async def on_interaction(interaction: discord.Interaction):
         final_card = create_card(
             card_data["guild"],
             card_data["banner"],
+            card_data.get("bottom_banner"),
             card_data["text"],
             card_data["tags"],
             card_data["channels"],
@@ -1026,6 +1038,7 @@ async def on_interaction(interaction: discord.Interaction):
 @app_commands.describe(
     add_text="Do you want to add announcement text?",
     banner="Upload banner image",
+    bottom_banner="Upload bottom banner image",
     tags="Text below announcement",
     channel1="First button channel",
     channel2="Second button channel",
@@ -1037,6 +1050,7 @@ async def announce(
     interaction: discord.Interaction,
     add_text: app_commands.Choice[str],
     banner: Optional[discord.Attachment] = None,
+    bottom_banner: Optional[discord.Attachment] = None,
     tags: Optional[str] = None,
     channel1: Optional[discord.TextChannel] = None,
     channel2: Optional[discord.TextChannel] = None,
@@ -1066,6 +1080,7 @@ async def announce(
     nothing_to_send = (
         not wants_text
         and not banner
+        and not bottom_banner
         and not tags
         and not channels
         and not enable_dropdown_info
@@ -1081,6 +1096,7 @@ async def announce(
     card_data = {
         "guild": interaction.guild.name if interaction.guild else "Server",
         "banner": banner.url if banner else None,
+        "bottom_banner": bottom_banner.url if bottom_banner else None,
         "text": "",
         "tags": tags.replace("\\n", "\n") if tags else "",
         "channels": channels,
@@ -1141,6 +1157,7 @@ async def announce(
     final_card = create_card(
         card_data["guild"],
         card_data["banner"],
+        card_data.get("bottom_banner"),
         card_data["text"],
         card_data["tags"],
         card_data["channels"],

@@ -260,6 +260,33 @@ class TicketSetup(commands.Cog):
         cleaned_url = banner_url.strip() if banner_url else ""
         session['banner_url'] = cleaned_url if cleaned_url.startswith(("http://", "https://")) else None
 
+        await self.bottom_banner_step(interaction)
+
+    async def bottom_banner_step(self, interaction: discord.Interaction):
+        """Prompt for bottom banner URL."""
+
+        await interaction.followup.send(
+            "Add a **bottom banner image** for the bottom of the panel (optional):",
+            view=ModalStepView(
+                modal_label="🖼️ Set Bottom Banner",
+                on_open_modal=lambda i: self.open_bottom_banner_modal(i),
+                on_skip=lambda i: self.on_bottom_banner_submit(i, None),
+                on_cancel=lambda i: self.cancel_setup(i)
+            ),
+            ephemeral=True
+        )
+
+    async def open_bottom_banner_modal(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(
+            BannerURLModal(lambda i, url: self.on_bottom_banner_submit(i, url))
+        )
+
+    async def on_bottom_banner_submit(self, interaction: discord.Interaction, bottom_banner_url: Optional[str]):
+        """Handle bottom banner URL submission with validation."""
+        session = self.setup_sessions[interaction.user.id]
+        cleaned_url = bottom_banner_url.strip() if bottom_banner_url else ""
+        session['bottom_banner_url'] = cleaned_url if cleaned_url.startswith(("http://", "https://")) else None
+
         await self.text_block_step(interaction, 1)
 
     async def text_block_step(self, interaction: discord.Interaction, block_number: int):
@@ -535,6 +562,7 @@ class TicketSetup(commands.Cog):
         ("support_roles", "Support Roles (global)"),
         ("blacklisted_roles", "Blacklisted Roles"),
         ("banner", "Banner Image"),
+        ("bottom_banner", "Bottom Banner Image"),
         ("text1", "Text Block 1"),
         ("text2", "Text Block 2"),
         ("text3", "Text Block 3"),
@@ -606,6 +634,10 @@ class TicketSetup(commands.Cog):
             await interaction.response.send_modal(
                 BannerURLModal(lambda i, url: self.quick_save_banner(i, url))
             )
+        elif field_key == "bottom_banner":
+            await interaction.response.send_modal(
+                BannerURLModal(lambda i, url: self.quick_save_bottom_banner(i, url))
+            )
         elif field_key.startswith("text") and field_key[-1].isdigit():
             block_number = int(field_key[-1])
             await interaction.response.send_modal(
@@ -635,6 +667,11 @@ class TicketSetup(commands.Cog):
         cleaned_url = banner_url.strip() if banner_url else ""
         final_url = cleaned_url if cleaned_url.startswith(("http://", "https://")) else None
         await self.quick_save_setting(interaction, 'banner_url', final_url, "Banner image")
+
+    async def quick_save_bottom_banner(self, interaction: discord.Interaction, bottom_banner_url: Optional[str]):
+        cleaned_url = bottom_banner_url.strip() if bottom_banner_url else ""
+        final_url = cleaned_url if cleaned_url.startswith(("http://", "https://")) else None
+        await self.quick_save_setting(interaction, 'bottom_banner_url', final_url, "Bottom banner image")
 
     async def quick_save_text_block(self, interaction: discord.Interaction, block_number: int, text: Optional[str]):
         cleaned = text.strip() if text else None
