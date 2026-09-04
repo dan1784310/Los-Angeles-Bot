@@ -53,8 +53,10 @@ class ModerationSystem(commands.Cog):
         self.bot = bot
     
     def _parse_duration(self, duration_str: str) -> timedelta:
-        """Parse duration string like '1m', '1h', '1d', '1w'."""
+        """Parse duration string like '1s', '1m', '1h', '1d', '1w'."""
         duration_str = duration_str.lower().strip()
+        if duration_str.endswith('s'):
+            return timedelta(seconds=int(duration_str[:-1]))
         if duration_str.endswith('m'):
             return timedelta(minutes=int(duration_str[:-1]))
         if duration_str.endswith('h'):
@@ -90,7 +92,7 @@ class ModerationSystem(commands.Cog):
             await interaction.followup.send(f"❌ Failed to kick user: {e}", ephemeral=True)
     
     @app_commands.command(name="timeout", description="Timeout a member")
-    @app_commands.describe(user="The member to timeout", duration="Duration (e.g., 1m, 1h, 1d, 1w)", reason="The reason for timeout")
+    @app_commands.describe(user="The member to timeout", duration="Duration (e.g., 1s, 1m, 1h, 1d, 1w)", reason="The reason for timeout")
     async def timeout(self, interaction: discord.Interaction, user: discord.Member, duration: str, reason: Optional[str] = None):
         if not has_moderation_role(interaction.user):
             await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
@@ -108,12 +110,12 @@ class ModerationSystem(commands.Cog):
         
         try:
             td = self._parse_duration(duration)
-            until = datetime.now() + td
+            until = discord.utils.utcnow() + td
             await user.timeout(until, reason=reason)
             db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "TIMEOUT", reason, f"Duration: {duration}")
             await interaction.followup.send(f"✅ Successfully timed out {user.mention} for {duration}!", ephemeral=True)
         except ValueError:
-            await interaction.followup.send("❌ Invalid duration format. Use formats like: 10m, 2h, 3d, 1w", ephemeral=True)
+            await interaction.followup.send("❌ Invalid duration format. Use formats like: 10s, 10m, 2h, 3d, 1w", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to timeout user: {e}", ephemeral=True)
     
@@ -143,7 +145,7 @@ class ModerationSystem(commands.Cog):
     
     @app_commands.command(name="warn", description="Warn a member")
     @app_commands.describe(user="The member to warn", reason="The reason for warning")
-    async def warn(self, interaction: discord.Interaction, user: discord.Member, reason: Optional[str] = None):
+    async def warn(self, interaction: discord.Interaction, user: discord.Member, reason: str):
         if not has_moderation_role(interaction.user):
             await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
             return
@@ -159,9 +161,7 @@ class ModerationSystem(commands.Cog):
             db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "WARN", reason)
             
             # Send warning message to the user
-            warn_message = f"{user.mention}, you have been warned"
-            if reason:
-                warn_message += f": {reason}"
+            warn_message = f"{user.mention}, you have been warned for the following reason: {reason}"
             
             await interaction.followup.send(f"✅ Successfully warned {user.mention}!", ephemeral=True)
             await interaction.channel.send(warn_message)
@@ -181,26 +181,32 @@ class ModerationSystem(commands.Cog):
             warning_count = db.get_warning_count(interaction.guild.id, user.id)
             warnings_list = db.get_warnings(interaction.guild.id, user.id)
             
+            view = discord.ui.LayoutView(timeout=None)
+            container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+            
             if warning_count == 0:
-                await interaction.followup.send(f"ℹ️ {user.mention} has no warnings.", ephemeral=True)
-                return
+                container.add_item(discord.ui.TextDisplay(f"ℹ️ {user.mention} has no warnings."))
+            else:
+                container.add_item(discord.ui.TextDisplay(f"**{user.mention} has {warning_count} warning(s):**"))
+                container.add_item(discord.ui.Separator())
+                
+                for i, warning in enumerate(warnings_list[:10], 1):
+                    moderator = interaction.guild.get_member(warning['moderator_id'])
+                    mod_mention = moderator.mention if moderator else f"<@{warning['moderator_id']}>"
+                    reason = warning['reason'] or "No reason provided"
+                    container.add_item(discord.ui.TextDisplay(f"{i}. {reason} - by {mod_mention}"))
+                
+                if len(warnings_list) > 10:
+                    container.add_item(discord.ui.Separator())
+                    container.add_item(discord.ui.TextDisplay(f"... and {len(warnings_list) - 10} more warning(s)."))
             
-            response = f"**{user.mention} has {warning_count} warning(s):**\n\n"
-            for i, warning in enumerate(warnings_list[:10], 1):
-                moderator = interaction.guild.get_member(warning['moderator_id'])
-                mod_mention = moderator.mention if moderator else f"<@{warning['moderator_id']}>"
-                reason = warning['reason'] or "No reason provided"
-                response += f"{i}. {reason} - by {mod_mention}\n"
-            
-            if len(warnings_list) > 10:
-                response += f"\n... and {len(warnings_list) - 10} more warning(s)."
-            
-            await interaction.followup.send(response, ephemeral=True)
+            view.add_item(container)
+            await interaction.followup.send(view=view, ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to retrieve warnings: {e}", ephemeral=True)
     
     @app_commands.command(name="slowmode", description="Enable slowmode in the channel")
-    @app_commands.describe(duration="Duration (e.g., 1m, 1h, 1d, 1w)")
+    @app_commands.describe(duration="Duration (e.g., 1s, 1m, 1h, 1d, 1w)")
     async def slowmode(self, interaction: discord.Interaction, duration: str):
         if not has_moderation_role(interaction.user):
             await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
@@ -223,7 +229,7 @@ class ModerationSystem(commands.Cog):
             await interaction.channel.edit(slowmode_delay=seconds)
             await interaction.followup.send(f"✅ Slowmode enabled for {duration}!", ephemeral=True)
         except ValueError:
-            await interaction.followup.send("❌ Invalid duration format. Use formats like: 10m, 2h, 3d, 1w", ephemeral=True)
+            await interaction.followup.send("❌ Invalid duration format. Use formats like: 10s, 10m, 2h, 3d, 1w", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to set slowmode: {e}", ephemeral=True)
     
@@ -319,24 +325,39 @@ class ModerationSystem(commands.Cog):
         try:
             logs = db.get_modlogs(interaction.guild.id, user.id)
             
+            view = discord.ui.LayoutView(timeout=None)
+            container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+            
             if not logs:
-                await interaction.followup.send(f"ℹ️ {user.mention} has no moderation history.", ephemeral=True)
-                return
+                container.add_item(discord.ui.TextDisplay(f"ℹ️ {user.mention} has no moderation history."))
+            else:
+                container.add_item(discord.ui.TextDisplay(f"**Moderation history for {user.mention}:**"))
+                container.add_item(discord.ui.Separator())
+                
+                for log in logs[:20]:
+                    moderator = interaction.guild.get_member(log['moderator_id'])
+                    mod_mention = moderator.mention if moderator else f"<@{log['moderator_id']}>"
+                    action = log['action_type']
+                    reason = log['reason'] or "No reason"
+                    details = log['details'] or ""
+                    
+                    # Parse timestamp and convert to Discord timestamp
+                    try:
+                        from datetime import datetime
+                        created_at = datetime.fromisoformat(log['created_at'])
+                        timestamp = int(created_at.timestamp())
+                        time_str = f"<t:{timestamp}:F>"
+                    except:
+                        time_str = log['created_at']
+                    
+                    container.add_item(discord.ui.TextDisplay(f"```\n{action} - {reason} {details}\nBy: {mod_mention} | {time_str}\n```"))
+                    container.add_item(discord.ui.Separator())
+                
+                if len(logs) > 20:
+                    container.add_item(discord.ui.TextDisplay(f"... and {len(logs) - 20} more action(s)."))
             
-            response = f"**Moderation history for {user.mention}:**\n\n"
-            for log in logs[:20]:
-                moderator = interaction.guild.get_member(log['moderator_id'])
-                mod_mention = moderator.mention if moderator else f"<@{log['moderator_id']}>"
-                action = log['action_type']
-                reason = log['reason'] or "No reason"
-                details = log['details'] or ""
-                created_at = log['created_at']
-                response += f"**{action}** - {reason} {details}\nBy: {mod_mention} | {created_at}\n\n"
-            
-            if len(logs) > 20:
-                response += f"... and {len(logs) - 20} more action(s)."
-            
-            await interaction.followup.send(response, ephemeral=True)
+            view.add_item(container)
+            await interaction.followup.send(view=view, ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to retrieve modlogs: {e}", ephemeral=True)
     
