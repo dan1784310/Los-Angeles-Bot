@@ -57,10 +57,14 @@ class WarningsPaginationView(discord.ui.LayoutView):
         self.current_page = 0
         self.per_page = 5
         self.total_pages = (len(warnings_list) + self.per_page - 1) // self.per_page
+        self.container = None
+        self.nav_container = None
         self.update_view()
     
     def update_view(self):
-        self.clear()
+        # Remove existing items
+        for item in self.children[:]:
+            self.remove_item(item)
         
         container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
         
@@ -89,6 +93,7 @@ class WarningsPaginationView(discord.ui.LayoutView):
         container.add_item(discord.ui.TextDisplay(f"Page {self.current_page + 1}/{self.total_pages}"))
         
         self.add_item(container)
+        self.container = container
         
         # Add navigation buttons
         nav_container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
@@ -104,6 +109,7 @@ class WarningsPaginationView(discord.ui.LayoutView):
         nav_container.add_item(right_button)
         
         self.add_item(nav_container)
+        self.nav_container = nav_container
     
     async def go_left(self, interaction: discord.Interaction):
         if self.current_page > 0:
@@ -129,10 +135,14 @@ class ModlogsPaginationView(discord.ui.LayoutView):
         self.current_page = 0
         self.per_page = 5
         self.total_pages = (len(logs_list) + self.per_page - 1) // self.per_page
+        self.container = None
+        self.nav_container = None
         self.update_view()
     
     def update_view(self):
-        self.clear()
+        # Remove existing items
+        for item in self.children[:]:
+            self.remove_item(item)
         
         container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
         
@@ -163,6 +173,7 @@ class ModlogsPaginationView(discord.ui.LayoutView):
         container.add_item(discord.ui.TextDisplay(f"Page {self.current_page + 1}/{self.total_pages}"))
         
         self.add_item(container)
+        self.container = container
         
         # Add navigation buttons
         nav_container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
@@ -178,6 +189,7 @@ class ModlogsPaginationView(discord.ui.LayoutView):
         nav_container.add_item(right_button)
         
         self.add_item(nav_container)
+        self.nav_container = nav_container
     
     async def go_left(self, interaction: discord.Interaction):
         if self.current_page > 0:
