@@ -1,193 +1,109 @@
 """
 Moderation Database Module
-Handles persistent storage for warnings and moderation logs.
+Handles persistent storage for warnings and moderation logs using MongoDB.
 """
 
-import sqlite3
+import os
+import pymongo
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+
 class ModerationDatabase:
-    """Database for moderation actions and warnings."""
+    """Database manager for moderation system with MongoDB."""
     
-    def __init__(self, db_path: str = "moderation.db"):
-        self.db_path = db_path
-        self._init_db()
-    
-    def _get_connection(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-    
-    def _init_db(self):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # Warnings table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS warnings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                guild_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                moderator_id INTEGER NOT NULL,
-                reason TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Moderation logs table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS modlogs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                guild_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                moderator_id INTEGER NOT NULL,
-                action_type TEXT NOT NULL,
-                reason TEXT,
-                details TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Channel locks table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS channel_locks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                guild_id INTEGER NOT NULL,
-                channel_id INTEGER NOT NULL UNIQUE,
-                locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        conn.commit()
-        conn.close()
+    def __init__(self):
+        self.client = pymongo.MongoClient(MONGO_URI)
+        self.db = self.client["moderation_system"]
+        self.warnings = self.db["warnings"]
+        self.modlogs = self.db["modlogs"]
+        self.channel_locks = self.db["channel_locks"]
     
     def add_warning(self, guild_id: int, user_id: int, moderator_id: int, reason: Optional[str] = None) -> bool:
-        conn = self._get_connection()
-        cursor = conn.cursor()
         try:
-            cursor.execute(
-                "INSERT INTO warnings (guild_id, user_id, moderator_id, reason) VALUES (?, ?, ?, ?)",
-                (guild_id, user_id, moderator_id, reason)
-            )
-            conn.commit()
+            self.warnings.insert_one({
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "moderator_id": moderator_id,
+                "reason": reason,
+                "created_at": datetime.now().timestamp()
+            })
             return True
         except Exception as e:
             print(f"[MOD DB] Error adding warning: {e}")
             return False
-        finally:
-            conn.close()
     
     def get_warnings(self, guild_id: int, user_id: int) -> List[Dict[str, Any]]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
         try:
-            cursor.execute(
-                "SELECT * FROM warnings WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC",
-                (guild_id, user_id)
-            )
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            docs = self.warnings.find({"guild_id": guild_id, "user_id": user_id}).sort("created_at", -1)
+            return list(docs)
         except Exception as e:
             print(f"[MOD DB] Error getting warnings: {e}")
             return []
-        finally:
-            conn.close()
     
     def get_warning_count(self, guild_id: int, user_id: int) -> int:
-        conn = self._get_connection()
-        cursor = conn.cursor()
         try:
-            cursor.execute(
-                "SELECT COUNT(*) as count FROM warnings WHERE guild_id = ? AND user_id = ?",
-                (guild_id, user_id)
-            )
-            return cursor.fetchone()['count']
+            return self.warnings.count_documents({"guild_id": guild_id, "user_id": user_id})
         except Exception as e:
             print(f"[MOD DB] Error getting warning count: {e}")
             return 0
-        finally:
-            conn.close()
     
     def add_modlog(self, guild_id: int, user_id: int, moderator_id: int, action_type: str, 
                    reason: Optional[str] = None, details: Optional[str] = None) -> bool:
-        conn = self._get_connection()
-        cursor = conn.cursor()
         try:
-            cursor.execute(
-                "INSERT INTO modlogs (guild_id, user_id, moderator_id, action_type, reason, details) VALUES (?, ?, ?, ?, ?, ?)",
-                (guild_id, user_id, moderator_id, action_type, reason, details)
-            )
-            conn.commit()
+            self.modlogs.insert_one({
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "moderator_id": moderator_id,
+                "action_type": action_type,
+                "reason": reason,
+                "details": details,
+                "created_at": datetime.now().timestamp()
+            })
             return True
         except Exception as e:
             print(f"[MOD DB] Error adding modlog: {e}")
             return False
-        finally:
-            conn.close()
     
     def get_modlogs(self, guild_id: int, user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
         try:
-            cursor.execute(
-                "SELECT * FROM modlogs WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?",
-                (guild_id, user_id, limit)
-            )
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            docs = self.modlogs.find({"guild_id": guild_id, "user_id": user_id}).sort("created_at", -1).limit(limit)
+            return list(docs)
         except Exception as e:
             print(f"[MOD DB] Error getting modlogs: {e}")
             return []
-        finally:
-            conn.close()
     
     def set_channel_lock(self, guild_id: int, channel_id: int) -> bool:
-        conn = self._get_connection()
-        cursor = conn.cursor()
         try:
-            cursor.execute(
-                "INSERT OR REPLACE INTO channel_locks (guild_id, channel_id, locked_at) VALUES (?, ?, ?)",
-                (guild_id, channel_id, datetime.now().isoformat())
+            self.channel_locks.update_one(
+                {"guild_id": guild_id, "channel_id": channel_id},
+                {"$set": {"locked_at": datetime.now().timestamp()}},
+                upsert=True
             )
-            conn.commit()
             return True
         except Exception as e:
             print(f"[MOD DB] Error setting channel lock: {e}")
             return False
-        finally:
-            conn.close()
     
     def remove_channel_lock(self, guild_id: int, channel_id: int) -> bool:
-        conn = self._get_connection()
-        cursor = conn.cursor()
         try:
-            cursor.execute(
-                "DELETE FROM channel_locks WHERE guild_id = ? AND channel_id = ?",
-                (guild_id, channel_id)
-            )
-            conn.commit()
+            self.channel_locks.delete_one({"guild_id": guild_id, "channel_id": channel_id})
             return True
         except Exception as e:
             print(f"[MOD DB] Error removing channel lock: {e}")
             return False
-        finally:
-            conn.close()
     
     def is_channel_locked(self, guild_id: int, channel_id: int) -> bool:
-        conn = self._get_connection()
-        cursor = conn.cursor()
         try:
-            cursor.execute(
-                "SELECT * FROM channel_locks WHERE guild_id = ? AND channel_id = ?",
-                (guild_id, channel_id)
-            )
-            return cursor.fetchone() is not None
+            return self.channel_locks.find_one({"guild_id": guild_id, "channel_id": channel_id}) is not None
         except Exception as e:
             print(f"[MOD DB] Error checking channel lock: {e}")
             return False
-        finally:
-            conn.close()
+    
+    def close(self):
+        if self.client:
+            self.client.close()
 
 # Global database instance
 db = ModerationDatabase()

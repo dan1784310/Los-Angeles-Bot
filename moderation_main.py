@@ -194,7 +194,15 @@ class ModerationSystem(commands.Cog):
                     moderator = interaction.guild.get_member(warning['moderator_id'])
                     mod_mention = moderator.mention if moderator else f"<@{warning['moderator_id']}>"
                     reason = warning['reason'] or "No reason provided"
-                    container.add_item(discord.ui.TextDisplay(f"{i}. {reason} - by {mod_mention}"))
+                    
+                    # Convert timestamp to Discord timestamp
+                    try:
+                        timestamp = int(warning['created_at'])
+                        time_str = f"<t:{timestamp}:R>"
+                    except:
+                        time_str = "Unknown time"
+                    
+                    container.add_item(discord.ui.TextDisplay(f"{i}. {reason} - by {mod_mention} - {time_str}"))
                 
                 if len(warnings_list) > 10:
                     container.add_item(discord.ui.Separator())
@@ -341,16 +349,15 @@ class ModerationSystem(commands.Cog):
                     reason = log['reason'] or "No reason"
                     details = log['details'] or ""
                     
-                    # Parse timestamp and convert to Discord timestamp
+                    # Convert timestamp to Discord timestamp
                     try:
-                        from datetime import datetime
-                        created_at = datetime.fromisoformat(log['created_at'])
-                        timestamp = int(created_at.timestamp())
+                        timestamp = int(log['created_at'])
                         time_str = f"<t:{timestamp}:F>"
                     except:
-                        time_str = log['created_at']
+                        time_str = "Unknown time"
                     
-                    container.add_item(discord.ui.TextDisplay(f"```\n{action} - {reason} {details}\nBy: {mod_mention} | {time_str}\n```"))
+                    container.add_item(discord.ui.TextDisplay(f"**{action}** - {reason} {details}"))
+                    container.add_item(discord.ui.TextDisplay(f"By: {mod_mention} | {time_str}"))
                     container.add_item(discord.ui.Separator())
                 
                 if len(logs) > 20:
