@@ -1282,6 +1282,252 @@ bot.tree.add_command(feedback_group)
 
 
 # ============================================================
+# SERVER INFO
+# ============================================================
+
+@bot.tree.command(
+    name="serverinfo",
+    description="View information about the server",
+)
+async def serverinfo(interaction: discord.Interaction):
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        guild = interaction.guild
+        if not guild:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        # Calculate stats
+        total_members = guild.member_count
+        humans = len([m for m in guild.members if not m.bot])
+        bots = len([m for m in guild.members if m.bot])
+        online = len([m for m in guild.members if m.status != discord.Status.offline])
+        text_channels = len(guild.text_channels)
+        voice_channels = len(guild.voice_channels)
+        total_channels = text_channels + voice_channels
+        roles = len(guild.roles)
+        boost_level = guild.premium_tier
+        boosts = guild.premium_subscription_count
+
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+
+        # Header
+        container.add_item(discord.ui.TextDisplay("🏛️ **SERVER INFORMATION**"))
+        container.add_item(discord.ui.TextDisplay(guild.name))
+
+        # Server icon
+        if guild.icon:
+            container.add_item(discord.ui.MediaGallery([discord.ui.Thumbnail(media=guild.icon.url)]))
+
+        container.add_item(discord.ui.Separator())
+
+        # General
+        general_text = "**GENERAL**\n"
+        general_text += f"Name: {guild.name}\n"
+        general_text += f"Owner: {guild.owner.mention if guild.owner else 'Unknown'}\n"
+        general_text += f"Server ID: {guild.id}\n"
+        general_text += f"Created: <t:{int(guild.created_at.timestamp())}:F>"
+        container.add_item(discord.ui.TextDisplay(general_text))
+
+        container.add_item(discord.ui.Separator())
+
+        # Members
+        members_text = "**MEMBERS**\n"
+        members_text += f"Members: {total_members}\n"
+        members_text += f"Humans: {humans}\n"
+        members_text += f"Bots: {bots}\n"
+        members_text += f"Online: {online}"
+        container.add_item(discord.ui.TextDisplay(members_text))
+
+        container.add_item(discord.ui.Separator())
+
+        # Server
+        server_text = "**SERVER**\n"
+        server_text += f"Channels: {total_channels}\n"
+        server_text += f"Roles: {roles}\n"
+        server_text += f"Boost Level: {boost_level}\n"
+        server_text += f"Boosts: {boosts}"
+        container.add_item(discord.ui.TextDisplay(server_text))
+
+        container.add_item(discord.ui.Separator())
+
+        # Footer
+        container.add_item(discord.ui.TextDisplay(f"Requested by {interaction.user.display_name}"))
+
+        view.add_item(container)
+        await interaction.followup.send(view=view, ephemeral=True)
+
+    except Exception as e:
+        print(f"Error in serverinfo command: {e}")
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ An error occurred: {e}", ephemeral=True)
+        except Exception:
+            pass
+
+
+# ============================================================
+# USER INFO
+# ============================================================
+
+@bot.tree.command(
+    name="userinfo",
+    description="View information about a user",
+)
+@app_commands.describe(user="The user to get information about")
+async def userinfo(interaction: discord.Interaction, user: discord.Member):
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        guild = interaction.guild
+        if not guild:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        # Get user roles
+        user_roles = [role for role in user.roles if role.name != "@everyone"]
+        highest_role = user_roles[0] if user_roles else None
+        roles_text = ", ".join([role.mention for role in user_roles[:10]]) if user_roles else "None"
+        if len(user_roles) > 10:
+            roles_text += f" and {len(user_roles) - 10} more..."
+
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+
+        # Header
+        container.add_item(discord.ui.TextDisplay("👤 **USER INFORMATION**"))
+
+        # User section with avatar
+        section = discord.ui.Section(
+            discord.ui.TextDisplay(
+                f"@{user.name}\n"
+                f"{user.display_name}\n"
+                f"Status: {str(user.status).capitalize()}"
+            ),
+            accessory=discord.ui.Thumbnail(media=user.display_avatar.url)
+        )
+        container.add_item(section)
+
+        container.add_item(discord.ui.Separator())
+
+        # Account
+        account_text = "**ACCOUNT**\n"
+        account_text += f"User ID: {user.id}\n"
+        account_text += f"Created: <t:{int(user.created_at.timestamp())}:F>"
+        container.add_item(discord.ui.TextDisplay(account_text))
+
+        container.add_item(discord.ui.Separator())
+
+        # Server
+        server_text = "**SERVER**\n"
+        server_text += f"Joined: <t:{int(user.joined_at.timestamp())}:F>\n" if user.joined_at else "Joined: Unknown\n"
+        server_text += f"Nickname: {user.nick if user.nick else 'None'}\n"
+        server_text += f"Highest Role: {highest_role.mention if highest_role else 'None'}"
+        container.add_item(discord.ui.TextDisplay(server_text))
+
+        container.add_item(discord.ui.Separator())
+
+        # Roles
+        roles_section_text = "**ROLES**\n"
+        roles_section_text += roles_text
+        container.add_item(discord.ui.TextDisplay(roles_section_text))
+
+        container.add_item(discord.ui.Separator())
+
+        # Action row with roles button
+        action_row = discord.ui.ActionRow()
+        roles_button = discord.ui.Button(label="📋 Roles", style=discord.ButtonStyle.secondary)
+        action_row.add_item(roles_button)
+        view.add_item(action_row)
+
+        # Footer
+        container.add_item(discord.ui.TextDisplay(f"Requested by {interaction.user.display_name}"))
+
+        view.add_item(container)
+        await interaction.followup.send(view=view, ephemeral=True)
+
+    except Exception as e:
+        print(f"Error in userinfo command: {e}")
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ An error occurred: {e}", ephemeral=True)
+        except Exception:
+            pass
+
+
+# ============================================================
+# ROLE INFO
+# ============================================================
+
+@bot.tree.command(
+    name="roleinfo",
+    description="View information about a role",
+)
+@app_commands.describe(role="The role to get information about")
+async def roleinfo(interaction: discord.Interaction, role: discord.Role):
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        guild = interaction.guild
+        if not guild:
+            await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        # Calculate member count
+        member_count = len([member for member in guild.members if role in member.roles])
+
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+
+        # Header
+        container.add_item(discord.ui.TextDisplay("🎭 **ROLE INFORMATION**"))
+
+        # Role name
+        container.add_item(discord.ui.TextDisplay(f"🟦 {role.mention}"))
+
+        container.add_item(discord.ui.Separator())
+
+        # General
+        general_text = "**GENERAL**\n"
+        general_text += f"Role ID: {role.id}\n"
+        general_text += f"Position: {role.position}\n"
+        general_text += f"Created: <t:{int(role.created_at.timestamp())}:F>"
+        container.add_item(discord.ui.TextDisplay(general_text))
+
+        container.add_item(discord.ui.Separator())
+
+        # Members
+        members_text = "**MEMBERS**\n"
+        members_text += f"Member count: {member_count}"
+        container.add_item(discord.ui.TextDisplay(members_text))
+
+        # Footer
+        container.add_item(discord.ui.TextDisplay(f"Requested by {interaction.user.display_name}"))
+
+        view.add_item(container)
+        await interaction.followup.send(view=view, ephemeral=True)
+
+    except Exception as e:
+        print(f"Error in roleinfo command: {e}")
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"❌ An error occurred: {e}", ephemeral=True)
+        except Exception:
+            pass
+
+
+# ============================================================
 # INPUT RESULTS
 # ============================================================
 
