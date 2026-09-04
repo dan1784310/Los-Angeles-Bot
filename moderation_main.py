@@ -46,8 +46,8 @@ def can_moderate(moderator: discord.Member, target: discord.Member) -> bool:
     return True
 
 
-class WarningsPaginationView(discord.ui.LayoutView):
-    """Pagination view for warnings list."""
+class WarningsPaginationView(discord.ui.View):
+    """Pagination view for warnings list using embeds."""
     
     def __init__(self, warnings_list, user, guild):
         super().__init__(timeout=None)
@@ -57,21 +57,31 @@ class WarningsPaginationView(discord.ui.LayoutView):
         self.current_page = 0
         self.per_page = 5
         self.total_pages = (len(warnings_list) + self.per_page - 1) // self.per_page
-        self.container = None
-        self.left_button = None
-        self.right_button = None
-        self.update_view()
+        self.update_buttons()
     
-    def update_view(self):
-        # Remove existing items
-        for item in self.children[:]:
-            self.remove_item(item)
+    def update_buttons(self):
+        # Clear existing buttons
+        self.clear_items()
         
-        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+        # Add navigation buttons
+        left_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="◀️")
+        left_button.disabled = self.current_page == 0
+        left_button.callback = self.go_left
+        self.add_item(left_button)
+        
+        right_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="▶️")
+        right_button.disabled = self.current_page >= self.total_pages - 1
+        right_button.callback = self.go_right
+        self.add_item(right_button)
+    
+    def get_embed(self):
+        embed = discord.Embed(
+            title=f"Warnings for {self.user.display_name}",
+            color=discord.Color.from_rgb(37, 37, 41)
+        )
         
         warning_text = "warning" if len(self.warnings_list) == 1 else "warnings"
-        container.add_item(discord.ui.TextDisplay(f"**{self.user.mention} has {len(self.warnings_list)} {warning_text}:**"))
-        container.add_item(discord.ui.Separator())
+        embed.description = f"**{self.user.mention} has {len(self.warnings_list)} {warning_text}:**\n\n"
         
         start_idx = self.current_page * self.per_page
         end_idx = min(start_idx + self.per_page, len(self.warnings_list))
@@ -88,42 +98,26 @@ class WarningsPaginationView(discord.ui.LayoutView):
             except:
                 time_str = "Unknown time"
             
-            container.add_item(discord.ui.TextDisplay(f"{i + 1}. {reason} - by {mod_mention} - {time_str}"))
+            embed.description += f"**{i + 1}.** {reason}\n   - By: {mod_mention} | {time_str}\n\n"
         
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay(f"Page {self.current_page + 1}/{self.total_pages}"))
-        
-        self.add_item(container)
-        self.container = container
-        
-        # Add navigation buttons as regular buttons (not in Container)
-        left_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="◀️", row=1)
-        left_button.disabled = self.current_page == 0
-        left_button.callback = self.go_left
-        self.add_item(left_button)
-        self.left_button = left_button
-        
-        right_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="▶️", row=1)
-        right_button.disabled = self.current_page >= self.total_pages - 1
-        right_button.callback = self.go_right
-        self.add_item(right_button)
-        self.right_button = right_button
+        embed.set_footer(text=f"Page {self.current_page + 1}/{self.total_pages}")
+        return embed
     
     async def go_left(self, interaction: discord.Interaction):
         if self.current_page > 0:
             self.current_page -= 1
-            self.update_view()
-            await interaction.response.edit_message(view=self)
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
     
     async def go_right(self, interaction: discord.Interaction):
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
-            self.update_view()
-            await interaction.response.edit_message(view=self)
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
 
-class ModlogsPaginationView(discord.ui.LayoutView):
-    """Pagination view for modlogs list."""
+class ModlogsPaginationView(discord.ui.View):
+    """Pagination view for modlogs list using embeds."""
     
     def __init__(self, logs_list, user, guild):
         super().__init__(timeout=None)
@@ -133,20 +127,30 @@ class ModlogsPaginationView(discord.ui.LayoutView):
         self.current_page = 0
         self.per_page = 5
         self.total_pages = (len(logs_list) + self.per_page - 1) // self.per_page
-        self.container = None
-        self.left_button = None
-        self.right_button = None
-        self.update_view()
+        self.update_buttons()
     
-    def update_view(self):
-        # Remove existing items
-        for item in self.children[:]:
-            self.remove_item(item)
+    def update_buttons(self):
+        # Clear existing buttons
+        self.clear_items()
         
-        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+        # Add navigation buttons
+        left_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="◀️")
+        left_button.disabled = self.current_page == 0
+        left_button.callback = self.go_left
+        self.add_item(left_button)
         
-        container.add_item(discord.ui.TextDisplay(f"**Moderation history for {self.user.mention}:**"))
-        container.add_item(discord.ui.Separator())
+        right_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="▶️")
+        right_button.disabled = self.current_page >= self.total_pages - 1
+        right_button.callback = self.go_right
+        self.add_item(right_button)
+    
+    def get_embed(self):
+        embed = discord.Embed(
+            title=f"Moderation History for {self.user.display_name}",
+            color=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        embed.description = f"**Moderation history for {self.user.mention}:**\n\n"
         
         start_idx = self.current_page * self.per_page
         end_idx = min(start_idx + self.per_page, len(self.logs_list))
@@ -165,39 +169,22 @@ class ModlogsPaginationView(discord.ui.LayoutView):
             except:
                 time_str = "Unknown time"
             
-            container.add_item(discord.ui.TextDisplay(f"**{action}** - {reason} {details}"))
-            container.add_item(discord.ui.TextDisplay(f"By: {mod_mention} | {time_str}"))
-            container.add_item(discord.ui.Separator())
+            embed.description += f"**{action}** - {reason} {details}\n   - By: {mod_mention} | {time_str}\n\n"
         
-        container.add_item(discord.ui.TextDisplay(f"Page {self.current_page + 1}/{self.total_pages}"))
-        
-        self.add_item(container)
-        self.container = container
-        
-        # Add navigation buttons as regular buttons (not in Container)
-        left_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="◀️", row=1)
-        left_button.disabled = self.current_page == 0
-        left_button.callback = self.go_left
-        self.add_item(left_button)
-        self.left_button = left_button
-        
-        right_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="▶️", row=1)
-        right_button.disabled = self.current_page >= self.total_pages - 1
-        right_button.callback = self.go_right
-        self.add_item(right_button)
-        self.right_button = right_button
+        embed.set_footer(text=f"Page {self.current_page + 1}/{self.total_pages}")
+        return embed
     
     async def go_left(self, interaction: discord.Interaction):
         if self.current_page > 0:
             self.current_page -= 1
-            self.update_view()
-            await interaction.response.edit_message(view=self)
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
     
     async def go_right(self, interaction: discord.Interaction):
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
-            self.update_view()
-            await interaction.response.edit_message(view=self)
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
 
 class ModerationSystem(commands.Cog):
@@ -423,15 +410,16 @@ class ModerationSystem(commands.Cog):
             warnings_list = db.get_warnings(interaction.guild.id, user.id)
             
             if warning_count == 0:
-                view = discord.ui.LayoutView(timeout=None)
-                container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
-                container.add_item(discord.ui.TextDisplay(f"ℹ️ {user.mention} has no warnings."))
-                view.add_item(container)
-                await interaction.followup.send(view=view, ephemeral=True)
+                embed = discord.Embed(
+                    title=f"Warnings for {user.display_name}",
+                    description=f"ℹ️ {user.mention} has no warnings.",
+                    color=discord.Color.from_rgb(37, 37, 41)
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
                 return
             
             view = WarningsPaginationView(warnings_list, user, interaction.guild)
-            await interaction.followup.send(view=view, ephemeral=True)
+            await interaction.followup.send(embed=view.get_embed(), view=view, ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to retrieve warnings: {e}", ephemeral=True)
     
@@ -556,15 +544,16 @@ class ModerationSystem(commands.Cog):
             logs = db.get_modlogs(interaction.guild.id, user.id)
             
             if not logs:
-                view = discord.ui.LayoutView(timeout=None)
-                container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
-                container.add_item(discord.ui.TextDisplay(f"ℹ️ {user.mention} has no moderation history."))
-                view.add_item(container)
-                await interaction.followup.send(view=view, ephemeral=True)
+                embed = discord.Embed(
+                    title=f"Moderation History for {user.display_name}",
+                    description=f"ℹ️ {user.mention} has no moderation history.",
+                    color=discord.Color.from_rgb(37, 37, 41)
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
                 return
             
             view = ModlogsPaginationView(logs, user, interaction.guild)
-            await interaction.followup.send(view=view, ephemeral=True)
+            await interaction.followup.send(embed=view.get_embed(), view=view, ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to retrieve modlogs: {e}", ephemeral=True)
     
