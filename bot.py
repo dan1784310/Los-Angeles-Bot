@@ -22,6 +22,7 @@ from giveaway_main import setup as setup_giveaway
 from infraction_main import setup as setup_infraction
 from promotion_main import setup as setup_promotion
 from ping_protection import setup as setup_ping_protection
+from moderation_main import setup as setup_moderation
 
 
 # ============================================================
@@ -37,6 +38,7 @@ COMMAND_ROLE_PERMISSIONS = {
     "infraction": 1539201630161993728,
     "promote": 1527055221098811433,
     "ticket_rename": 1527374021572956291,
+    "moderation": 1527053931304321130,
 }
 
 
@@ -223,6 +225,14 @@ async def on_ready():
         print("[SETUP] Ping protection system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading ping protection system: {e}")
+        traceback.print_exc()
+
+    print("[SETUP] Loading moderation system...")
+    try:
+        await setup_moderation(bot)
+        print("[SETUP] Moderation system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading moderation system: {e}")
         traceback.print_exc()
 
     try:
