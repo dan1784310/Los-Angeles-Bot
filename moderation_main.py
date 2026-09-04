@@ -58,7 +58,8 @@ class WarningsPaginationView(discord.ui.LayoutView):
         self.per_page = 5
         self.total_pages = (len(warnings_list) + self.per_page - 1) // self.per_page
         self.container = None
-        self.nav_container = None
+        self.left_button = None
+        self.right_button = None
         self.update_view()
     
     def update_view(self):
@@ -95,21 +96,18 @@ class WarningsPaginationView(discord.ui.LayoutView):
         self.add_item(container)
         self.container = container
         
-        # Add navigation buttons
-        nav_container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
-        
-        left_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="◀️")
+        # Add navigation buttons as regular buttons (not in Container)
+        left_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="◀️", row=1)
         left_button.disabled = self.current_page == 0
         left_button.callback = self.go_left
-        nav_container.add_item(left_button)
+        self.add_item(left_button)
+        self.left_button = left_button
         
-        right_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="▶️")
+        right_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="▶️", row=1)
         right_button.disabled = self.current_page >= self.total_pages - 1
         right_button.callback = self.go_right
-        nav_container.add_item(right_button)
-        
-        self.add_item(nav_container)
-        self.nav_container = nav_container
+        self.add_item(right_button)
+        self.right_button = right_button
     
     async def go_left(self, interaction: discord.Interaction):
         if self.current_page > 0:
@@ -136,7 +134,8 @@ class ModlogsPaginationView(discord.ui.LayoutView):
         self.per_page = 5
         self.total_pages = (len(logs_list) + self.per_page - 1) // self.per_page
         self.container = None
-        self.nav_container = None
+        self.left_button = None
+        self.right_button = None
         self.update_view()
     
     def update_view(self):
@@ -175,21 +174,18 @@ class ModlogsPaginationView(discord.ui.LayoutView):
         self.add_item(container)
         self.container = container
         
-        # Add navigation buttons
-        nav_container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
-        
-        left_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="◀️")
+        # Add navigation buttons as regular buttons (not in Container)
+        left_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="◀️", row=1)
         left_button.disabled = self.current_page == 0
         left_button.callback = self.go_left
-        nav_container.add_item(left_button)
+        self.add_item(left_button)
+        self.left_button = left_button
         
-        right_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="▶️")
+        right_button = discord.ui.Button(style=discord.ButtonStyle.secondary, emoji="▶️", row=1)
         right_button.disabled = self.current_page >= self.total_pages - 1
         right_button.callback = self.go_right
-        nav_container.add_item(right_button)
-        
-        self.add_item(nav_container)
-        self.nav_container = nav_container
+        self.add_item(right_button)
+        self.right_button = right_button
     
     async def go_left(self, interaction: discord.Interaction):
         if self.current_page > 0:
