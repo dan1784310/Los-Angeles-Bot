@@ -209,23 +209,23 @@ class GiveawaySystem(commands.Cog):
         if not is_giveaway_admin(interaction.user):
             await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
             return
-        
+
         await interaction.response.defer(ephemeral=True)
         try:
             msg_id = int(message_id)
         except ValueError:
             await interaction.followup.send("❌ Invalid message ID format.", ephemeral=True)
             return
-        
+
         giveaway = db.get_giveaway_by_message_id(msg_id)
         if not giveaway:
             await interaction.followup.send("❌ Could not delete giveaway. Message ID not found.", ephemeral=True)
             return
-        
+
         if giveaway['giveaway_id'] in self.active_timers:
             self.active_timers[giveaway['giveaway_id']].cancel()
             del self.active_timers[giveaway['giveaway_id']]
-        
+
         try:
             channel = await self._get_or_fetch_channel(giveaway['channel_id'])
             if channel:
@@ -233,9 +233,62 @@ class GiveawaySystem(commands.Cog):
                 await message.delete()
         except Exception:
             pass
-        
+
         db.delete_giveaway(giveaway['giveaway_id'])
         await interaction.followup.send("✅ Giveaway deleted successfully!", ephemeral=True)
+
+    @giveaway.command(name="add_time", description="Add time to a giveaway")
+    async def add_time_giveaway(self, interaction: discord.Interaction, time: str, message_id: str):
+        if not is_giveaway_admin(interaction.user):
+            await interaction.response.send_message("❌ You do not have permission to manage giveaways.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            msg_id = int(message_id)
+        except ValueError:
+            await interaction.followup.send("❌ Invalid message ID format.", ephemeral=True)
+            return
+
+        try:
+            duration = self._parse_duration(time)
+            if duration.total_seconds() <= 0:
+                raise ValueError("Duration must be positive")
+        except ValueError:
+            await interaction.followup.send("❌ Invalid duration format. Use formats like: 10m, 2h, 3d, 1w", ephemeral=True)
+            return
+
+        giveaway = db.get_giveaway_by_message_id(msg_id)
+        if not giveaway:
+            await interaction.followup.send("❌ Could not find a giveaway with that Message ID.", ephemeral=True)
+            return
+
+        if giveaway['status'] == 'ended':
+            await interaction.followup.send("❌ Cannot add time to an ended giveaway.", ephemeral=True)
+            return
+
+        # Cancel existing timer
+        if giveaway['giveaway_id'] in self.active_timers:
+            self.active_timers[giveaway['giveaway_id']].cancel()
+            del self.active_timers[giveaway['giveaway_id']]
+
+        # Calculate new end time
+        current_end = datetime.fromtimestamp(giveaway['end_timestamp'])
+        new_end = current_end + duration
+        new_end_timestamp = new_end.timestamp()
+
+        # Update database
+        db.update_giveaway_end_timestamp(giveaway['giveaway_id'], new_end_timestamp)
+
+        # Rebuild message with new end time
+        success = await self._rebuild_giveaway_message(giveaway, new_end_timestamp)
+        if success:
+            # Start new timer
+            self._start_giveaway_timer(giveaway['giveaway_id'], new_end_timestamp)
+            await interaction.followup.send(f"✅ Successfully added {time} to the giveaway! New end time: <t:{int(new_end_timestamp)}:R>", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Failed to update giveaway message.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
