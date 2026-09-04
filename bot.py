@@ -1320,7 +1320,11 @@ async def serverinfo(interaction: discord.Interaction):
 
         # Server icon
         if guild.icon:
-            container.add_item(discord.ui.MediaGallery([discord.ui.Thumbnail(media=guild.icon.url)]))
+            section = discord.ui.Section(
+                discord.ui.TextDisplay(""),
+                accessory=discord.ui.Thumbnail(media=guild.icon.url)
+            )
+            container.add_item(section)
 
         container.add_item(discord.ui.Separator())
 
@@ -1390,14 +1394,24 @@ async def userinfo(interaction: discord.Interaction, user: discord.Member):
             await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
             return
 
-        # Get user roles
+        # Get user roles sorted by position (highest first)
         user_roles = [role for role in user.roles if role.name != "@everyone"]
+        user_roles.sort(key=lambda r: r.position, reverse=True)
         highest_role = user_roles[0] if user_roles else None
         roles_text = ", ".join([role.mention for role in user_roles[:10]]) if user_roles else "None"
         if len(user_roles) > 10:
             roles_text += f" and {len(user_roles) - 10} more..."
 
-        view = discord.ui.LayoutView(timeout=None)
+        class UserInfoView(discord.ui.LayoutView):
+            def __init__(self, roles_text):
+                super().__init__(timeout=None)
+                self.roles_text = roles_text
+            
+            @discord.ui.button(label="📋 Roles", style=discord.ButtonStyle.secondary)
+            async def roles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await interaction.response.send_message(f"**Roles:**\n{self.roles_text}", ephemeral=True)
+
+        view = UserInfoView(roles_text)
         container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
 
         # Header
@@ -1439,12 +1453,6 @@ async def userinfo(interaction: discord.Interaction, user: discord.Member):
         container.add_item(discord.ui.TextDisplay(roles_section_text))
 
         container.add_item(discord.ui.Separator())
-
-        # Action row with roles button
-        action_row = discord.ui.ActionRow()
-        roles_button = discord.ui.Button(label="📋 Roles", style=discord.ButtonStyle.secondary)
-        action_row.add_item(roles_button)
-        view.add_item(action_row)
 
         # Footer
         container.add_item(discord.ui.TextDisplay(f"Requested by {interaction.user.display_name}"))
