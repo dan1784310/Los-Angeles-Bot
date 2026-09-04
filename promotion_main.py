@@ -8,6 +8,8 @@ from discord import app_commands
 from discord.ext import commands
 from typing import Optional
 
+from moderation_database import db as mod_db
+
 
 # ==========================================
 # CONFIGURATION
@@ -169,6 +171,8 @@ class PromotionSystem(commands.Cog):
                 reason,
                 final_notes
             )
+            # Log to moderation database
+            mod_db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "PROMOTION", reason, f"Rank: {rank}")
             
             role_status = f" and assigned the role {assigned_role.mention}" if role_assigned else ""
             await interaction.followup.send(

@@ -10,6 +10,8 @@ from typing import Optional, Dict
 from datetime import datetime, timedelta
 import asyncio
 
+from moderation_database import db as mod_db
+
 
 # ==========================================
 # CONFIGURATION
@@ -297,6 +299,8 @@ class InfractionSystem(commands.Cog):
                 final_notes,
                 expiration_timestamp
             )
+            # Log to moderation database
+            mod_db.add_modlog(interaction.guild.id, staff.id, interaction.user.id, "INFRACTION", reason, f"Action: {action}")
             await interaction.followup.send(f"✅ Infraction issued successfully to {staff.mention} in {target_channel.mention}!", ephemeral=True)
         except Exception as e:
             print(f"Error creating infraction card: {e}")

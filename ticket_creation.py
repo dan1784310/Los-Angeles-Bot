@@ -13,6 +13,7 @@ from ticket_views import (
     AddUserModal, RemoveUserModal, TicketIssueModal,
     build_ticket_management_view
 )
+from moderation_database import db as mod_db
 
 # Only members with this role may claim tickets or add/remove users on a ticket.
 TICKET_MANAGER_ROLE_ID = 1527374021572956291
@@ -151,6 +152,9 @@ async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: i
             ticket_number,
             issue_text
         )
+        
+        # Log to moderation database
+        mod_db.add_modlog(interaction.guild.id, interaction.user.id, interaction.user.id, "TICKET_CREATED", f"Category: {category['name']}", f"Issue: {issue_text}")
         
         await interaction.followup.send(
             f"✅ Ticket created: {ticket_channel.mention}",

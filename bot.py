@@ -23,6 +23,7 @@ from infraction_main import setup as setup_infraction
 from promotion_main import setup as setup_promotion
 from ping_protection import setup as setup_ping_protection
 from moderation_main import setup as setup_moderation
+from moderation_database import db as mod_db
 
 
 # ============================================================
@@ -1255,6 +1256,8 @@ async def feedback_give(
         view.add_item(container)
 
         await target_channel.send(view=view)
+        # Log to moderation database
+        mod_db.add_modlog(interaction.guild.id, staff.id, interaction.user.id, "FEEDBACK", f"Rating: {rating.value}", feedback)
         await interaction.followup.send(
             "✅ Feedback submitted successfully!",
             ephemeral=True,
