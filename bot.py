@@ -390,6 +390,108 @@ class ZTPSystem(commands.Cog):
 
 
 # ============================================================
+# GENERAL UTILITY COMMANDS (Components V2 / Everyone)
+# ============================================================
+
+afk_collection = mod_db.db["afk_status"]
+
+class GeneralCommands(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @app_commands.command(name="membercount", description="Shows the server member count.")
+    async def membercount(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        count = interaction.guild.member_count
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+        container.add_item(discord.ui.TextDisplay(f"This server has **{count}** members!"))
+        view.add_item(container)
+
+        await interaction.response.send_message(view=view)
+
+    @app_commands.command(name="afk", description="Sets your AFK status.")
+    @app_commands.choices(reason=[
+        app_commands.Choice(name="At School", value="At School"),
+        app_commands.Choice(name="Sleeping", value="Sleeping"),
+        app_commands.Choice(name="Busy", value="Busy"),
+        app_commands.Choice(name="At Work", value="At Work"),
+    ])
+    async def afk(self, interaction: discord.Interaction, reason: str):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        member = interaction.user
+        query = {"guild_id": interaction.guild.id, "user_id": member.id}
+        
+        # Save original nickname if not already AFK
+        original_nick = member.nick or member.name
+        existing = afk_collection.find_one(query)
+        if existing:
+            original_nick = existing.get("original_nick", original_nick)
+
+        afk_collection.update_one(
+            query,
+            {"$set": {"reason": reason, "original_nick": original_nick}},
+            upsert=True
+        )
+
+        # Update nickname to include [AFK]
+        new_nick = f"[AFK] {original_nick}"
+        if len(new_nick) > 32:
+            new_nick = "[AFK] " + original_nick[:26]
+
+        try:
+            await member.edit(nick=new_nick, reason=f"Set AFK: {reason}")
+        except Exception:
+            pass
+
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+        container.add_item(discord.ui.TextDisplay(f"💤 Your AFK status has been set to: **{reason}**."))
+        view.add_item(container)
+
+        await interaction.response.send_message(view=view, ephemeral=True)
+
+    @app_commands.command(name="coinflip", description="Flips a virtual coin.")
+    async def coinflip(self, interaction: discord.Interaction):
+        result = random.choice(["heads", "tails"])
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+        container.add_item(discord.ui.TextDisplay(f"🪙 The coin landed **{result}**."))
+        view.add_item(container)
+
+        await interaction.response.send_message(view=view)
+
+    @app_commands.command(name="roll", description="Rolls a random number between a lowest and highest number.")
+    @app_commands.describe(lowest_number="The minimum possible number", highest_number="The maximum possible number")
+    async def roll(self, interaction: discord.Interaction, lowest_number: int, highest_number: int):
+        if lowest_number > highest_number:
+            lowest_number, highest_number = highest_number, lowest_number
+
+        number = random.randint(lowest_number, highest_number)
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+        container.add_item(discord.ui.TextDisplay(f"🎲 The number is **{number}**."))
+        view.add_item(container)
+
+        await interaction.response.send_message(view=view)
+
+    @app_commands.command(name="rules", description="Displays server rules location.")
+    async def rules(self, interaction: discord.Interaction):
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+        container.add_item(discord.ui.TextDisplay(f"📜 The rules are in <#{RULES_CHANNEL_ID}>, go read it."))
+        view.add_item(container)
+
+        await interaction.response.send_message(view=view)
+
+
+# ============================================================
 # READY EVENT
 # ============================================================
 
@@ -466,6 +568,14 @@ async def on_ready():
         print("[SETUP] ZTP system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading ZTP system: {e}")
+        traceback.print_exc()
+
+    print("[SETUP] Loading General Utility system...")
+    try:
+        await bot.add_cog(GeneralCommands(bot))
+        print("[SETUP] General Utility system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading General Utility system: {e}")
         traceback.print_exc()
 
     try:
