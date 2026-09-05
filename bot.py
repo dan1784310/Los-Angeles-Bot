@@ -178,18 +178,18 @@ text_setups = {}
 # ZTP SYSTEM (Zero Tolerance Period - MongoDB Backed)
 # ============================================================
 
-ZTP_ROLE_ID = 1545774457124163614
+ZTP_ROLE_ID = 1545756479678586890
 ZTP_COMMAND_ROLE_ID = 1527053931304321130
 ZTP_DURATION = 300  # 5 minutes in seconds
 
-# Connect to MongoDB collection using your existing db instance
+# Access the underlying database collection safely via mod_db.db
 ztp_collection = mod_db.db["ztp_timers"]
 
 class ZTPPaginationView(discord.ui.View):
     def __init__(self, guild: discord.Guild, data: list):
         super().__init__(timeout=180)
         self.guild = guild
-        self.data = data  # List of tuples: (discord.Member, expiration_timestamp)
+        self.data = data
         self.current_page = 0
         self.per_page = 10
         self.max_pages = max(1, (len(data) + self.per_page - 1) // self.per_page)
@@ -263,7 +263,6 @@ class ZTPSystem(commands.Cog):
 
         query = {"guild_id": after.guild.id, "user_id": after.id}
 
-        # Role added
         if not has_before and has_after:
             expiry = time.time() + ZTP_DURATION
             ztp_collection.update_one(
@@ -273,7 +272,6 @@ class ZTPSystem(commands.Cog):
             )
             print(f"[ZTP] Assigned 5-min timer for {after} in {after.guild.name}")
 
-        # Role manually removed before timer expires
         elif has_before and not has_after:
             ztp_collection.delete_one(query)
 
@@ -299,6 +297,12 @@ class ZTPSystem(commands.Cog):
                     continue
             
             role = guild.get_role(ZTP_ROLE_ID)
+            if not role:
+                try:
+                    role = await guild.fetch_role(ZTP_ROLE_ID)
+                except Exception:
+                    continue
+
             if role and role in member.roles:
                 try:
                     await member.remove_roles(role, reason="ZTP 5-minute timer expired.")
@@ -321,7 +325,7 @@ class ZTPSystem(commands.Cog):
             or interaction.user.guild_permissions.administrator
         )
         if not is_allowed:
-            required_role = interaction.guild.get_role(ZTP_COMMAND_ROLE_ID)
+            required_role = interaction.guild.get_role(ZTP_COMMAND_ROLE_ID) or await interaction.guild.fetch_role(ZTP_COMMAND_ROLE_ID)
             if required_role and interaction.user.top_role >= required_role:
                 is_allowed = True
 
@@ -331,9 +335,13 @@ class ZTPSystem(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
-        role = interaction.guild.get_role(ZTP_ROLE_ID)
+        try:
+            role = interaction.guild.get_role(ZTP_ROLE_ID) or await interaction.guild.fetch_role(ZTP_ROLE_ID)
+        except Exception:
+            role = None
+
         if not role:
-            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1545774457124163614` not found in this server).", ephemeral=True)
+            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1545756479678586890` could not be fetched).", ephemeral=True)
             return
 
         current_time = time.time()
@@ -343,7 +351,6 @@ class ZTPSystem(commands.Cog):
             doc = ztp_collection.find_one(query)
             
             if not doc:
-                # Fallback if role was added outside bot tracking
                 expiry = current_time + ZTP_DURATION
                 ztp_collection.update_one(query, {"$set": {"expiry": expiry}}, upsert=True)
             else:
@@ -478,6 +485,133 @@ async def on_ready():
     except Exception as e:
         print(f"Error refreshing ticket panels: {e}")
         traceback.print_exc()
+
+
+# ============================================================
+# ANNOUNCEMENT CARD HELPERS
+# ============================================================
+
+def clean_button_name(channel: discord.TextChannel) -> str:
+    name = channel.name
+    name = "".join(c for c in name if c.isalnum() or c in [" ", "-", "_"])
+    name = name.replace("-", " ").replace("_", " ")
+    return name.title()
+
+
+def create_card(
+    guild_name,
+    banner_url,
+    bottom_banner_url=None,
+    text=None,
+    tags=None,
+    channels=None,
+    publish_id=None,
+    dropdown_options=None,
+    card_id=None,
+):
+    view = discord.ui.LayoutView(timeout=None)
+    container = discord.ui.Container(
+        accent_colour=discord.Color.from_rgb(37, 37, 41)
+    )
+
+    if banner_url:
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(media=banner_url)
+            )
+        )
+        container.add_item(discord.ui.Separator())
+
+    if text:
+        container.add_item(
+            discord.ui.TextDisplay(text.replace("\\n", "\n"))
+        )
+
+    if tags:
+        container.add_item(discord.ui.Separator())
+        container.add_item(
+            discord.ui.TextDisplay(tags.replace("\\n", "\n"))
+        )
+
+    if channels:
+        row = discord.ui.ActionRow()
+        for channel in channels:
+            row.add_item(
+                discord.ui.Button(
+                    label=clean_button_name(channel),
+                    style=discord.ButtonStyle.link,
+                    url=f"https://discord.com/channels/{channel.guild.id}/{channel.id}",
+                )
+            )
+        container.add_item(row)
+
+    if bottom_banner_url:
+        container.add_item(discord.ui.Separator())
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(media=bottom_banner_url)
+            )
+        )
+
+    if dropdown_options:
+        select_id = card_id or publish_id or "preview"
+        select_options = []
+
+        for idx, opt in enumerate(dropdown_options):
+            option_kwargs = {
+                "label": (opt.get("name") or f"Option {idx + 1}")[:100],
+                "value": str(idx),
+            }
+
+            description = (opt.get("description") or "")[:100]
+            if description:
+                option_kwargs["description"] = description
+
+            emoji = opt.get("emoji")
+            if emoji:
+                option_kwargs["emoji"] = emoji
+
+            try:
+                select_options.append(discord.SelectOption(**option_kwargs))
+            except Exception:
+                option_kwargs.pop("emoji", None)
+                select_options.append(discord.SelectOption(**option_kwargs))
+
+        select = discord.ui.Select(
+            custom_id=f"dselect_{select_id}",
+            placeholder="📋 Select an option for more info",
+            options=select_options,
+        )
+
+        select_row = discord.ui.ActionRow()
+        select_row.add_item(select)
+        container.add_item(select_row)
+
+    if publish_id:
+        publish_row = discord.ui.ActionRow()
+        publish_row.add_item(
+            discord.ui.Button(
+                label="🚀 Publish",
+                style=discord.ButtonStyle.green,
+                custom_id=f"publish_{publish_id}",
+            )
+        )
+        container.add_item(publish_row)
+
+    view.add_item(container)
+    return view
+
+
+@bot.command()
+async def card(ctx: commands.Context):
+    view = create_card(
+        ctx.guild.name,
+        None,
+        "This is a **Components V2 card test.**",
+        "Example tags",
+        [],
+    )
+    await ctx.send(view=view)
 
 
 # ============================================================
