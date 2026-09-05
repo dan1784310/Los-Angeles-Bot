@@ -1281,6 +1281,12 @@ async def feedback_give(
 bot.tree.add_command(feedback_group)
 
 
+import discord
+from discord import app_commands
+
+# Assuming 'bot' is already defined as commands.Bot or discord.Client with an app_commands.CommandTree
+# bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+
 # ============================================================
 # SERVER INFO
 # ============================================================
@@ -1394,8 +1400,11 @@ async def userinfo(interaction: discord.Interaction, user: discord.Member):
             await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
             return
 
-        # Get user roles sorted by position (highest first), excluding @everyone and colorless/default roles
-        user_roles = [role for role in user.roles if role.name != "@everyone" and not role.is_default()]
+        # Get user roles sorted by position (highest first), excluding @everyone and default colored roles (#99AAB5 or 0)
+        user_roles = [
+            role for role in user.roles 
+            if role.name != "@everyone" and role.color.value != 0 and role.color.value != 10070709
+        ]
         user_roles.sort(key=lambda r: r.position, reverse=True)
         highest_role = user_roles[0] if user_roles else None
         roles_text = ", ".join([role.mention for role in user_roles[:10]]) if user_roles else "None"
