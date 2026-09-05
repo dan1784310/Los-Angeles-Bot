@@ -9,7 +9,7 @@ from typing import Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from flask import Flask, request
 
 from config import TOKEN, ERLC_SERVER_KEY
@@ -175,6 +175,173 @@ text_setups = {}
 
 
 # ============================================================
+# ZTP SYSTEM (Zero Tolerance Period)
+# ============================================================
+
+ZTP_ROLE_ID = 1545756479678586890
+ZTP_COMMAND_ROLE_ID = 1527053931304321130
+ZTP_DURATION = 300  # 5 minutes in seconds
+
+class ZTPPaginationView(discord.ui.View):
+    def __init__(self, guild: discord.Guild, data: list):
+        super().__init__(timeout=180)
+        self.guild = guild
+        self.data = data
+        self.current_page = 0
+        self.per_page = 10
+        self.max_pages = max(1, (len(data) + self.per_page - 1) // self.per_page)
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.left_button.disabled = self.current_page == 0
+        self.right_button.disabled = self.current_page >= self.max_pages - 1
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="🛡️ Active ZTP List",
+            color=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        if not self.data:
+            embed.description = "No members currently have the ZTP role."
+            embed.set_footer(text="Page 1/1")
+            return embed
+
+        start_idx = self.current_page * self.per_page
+        end_idx = start_idx + self.per_page
+        page_items = self.data[start_idx:end_idx]
+
+        lines = []
+        current_time = time.time()
+        for idx, (member, expiry) in enumerate(page_items, start=start_idx + 1):
+            remaining = max(0, int(expiry - current_time))
+            mins = remaining // 60
+            secs = remaining % 60
+            lines.append(f"{idx}. {member.mention} - (countdown till the role removal ({mins}mins {secs:02d}s))")
+
+        embed.description = "\n".join(lines)
+        embed.set_footer(text=f"Page {self.current_page + 1}/{self.max_pages}")
+        return embed
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.secondary, custom_id="ztp_left")
+    async def left_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary, custom_id="ztp_right")
+    async def right_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < self.max_pages - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+
+class ZTPSystem(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.ztp_timers = {}
+        self.check_loop.start()
+
+    def cog_unload(self):
+        self.check_loop.cancel()
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if before.roles == after.roles:
+            return
+
+        has_before = any(r.id == ZTP_ROLE_ID for r in before.roles)
+        has_after = any(r.id == ZTP_ROLE_ID for r in after.roles)
+
+        key = (after.guild.id, after.id)
+
+        if not has_before and has_after:
+            expiry = time.time() + ZTP_DURATION
+            self.ztp_timers[key] = expiry
+            print(f"[ZTP] Assigned 5-min timer for {after} in {after.guild.name}")
+
+        elif has_before and not has_after:
+            if key in self.ztp_timers:
+                del self.ztp_timers[key]
+
+    @tasks.loop(seconds=5)
+    async def check_loop(self):
+        now = time.time()
+        expired_keys = []
+
+        for key, expiry in list(self.ztp_timers.items()):
+            if now >= expiry:
+                expired_keys.append(key)
+
+        for guild_id, user_id in expired_keys:
+            self.ztp_timers.pop((guild_id, user_id), None)
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                continue
+            member = guild.get_member(user_id)
+            if not member:
+                try:
+                    member = await guild.fetch_member(user_id)
+                except Exception:
+                    continue
+            
+            role = guild.get_role(ZTP_ROLE_ID)
+            if role and role in member.roles:
+                try:
+                    await member.remove_roles(role, reason="ZTP 5-minute timer expired.")
+                    print(f"[ZTP] Automatically removed role from {member} in {guild.name}")
+                except Exception as e:
+                    print(f"[ZTP Error] Failed to remove role from {member}: {e}")
+
+    @check_loop.before_loop
+    async def before_check_loop(self):
+        await self.bot.wait_until_ready()
+
+    @app_commands.command(name="ztp", description="View active users with the ZTP role and remaining timers.")
+    async def ztp_command(self, interaction: discord.Interaction):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        is_allowed = (
+            interaction.user.id == interaction.guild.owner_id
+            or interaction.user.guild_permissions.administrator
+        )
+        if not is_allowed:
+            required_role = interaction.guild.get_role(ZTP_COMMAND_ROLE_ID)
+            if required_role and interaction.user.top_role >= required_role:
+                is_allowed = True
+
+        if not is_allowed:
+            await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        role = interaction.guild.get_role(ZTP_ROLE_ID)
+        if not role:
+            await interaction.followup.send("❌ ZTP role configuration error (Role not found).", ephemeral=True)
+            return
+
+        current_time = time.time()
+        data = []
+        for member in role.members:
+            key = (interaction.guild.id, member.id)
+            if key not in self.ztp_timers:
+                self.ztp_timers[key] = current_time + ZTP_DURATION
+            data.append((member, self.ztp_timers[key]))
+
+        view = ZTPPaginationView(interaction.guild, data)
+        await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
+
+
+# ============================================================
 # READY EVENT
 # ============================================================
 
@@ -245,13 +412,20 @@ async def on_ready():
         print(f"[SETUP] Error loading role management system: {e}")
         traceback.print_exc()
 
+    print("[SETUP] Loading ZTP system...")
     try:
-        # Sync commands with rate limit handling
+        await bot.add_cog(ZTPSystem(bot))
+        print("[SETUP] ZTP system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading ZTP system: {e}")
+        traceback.print_exc()
+
+    try:
         print("[SYNC] Starting command sync...")
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}")
     except discord.errors.HTTPException as e:
-        if e.status == 429:  # Rate limited
+        if e.status == 429:
             retry_after = e.retry_after if hasattr(e, 'retry_after') else 60
             print(f"[SYNC] Rate limited. Retrying in {retry_after} seconds...")
             await asyncio.sleep(retry_after)
@@ -290,410 +464,6 @@ async def on_ready():
     except Exception as e:
         print(f"Error refreshing ticket panels: {e}")
         traceback.print_exc()
-
-        print("[SETUP] Loading ZTP system...")
-    try:
-        await bot.add_cog(ZTPSystem(bot))
-        print("[SETUP] ZTP system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading ZTP system: {e}")
-        traceback.print_exc()
-
-
-# ============================================================
-# ANNOUNCEMENT CARD HELPERS
-# ============================================================
-
-def clean_button_name(channel: discord.TextChannel) -> str:
-    name = channel.name
-    name = "".join(c for c in name if c.isalnum() or c in [" ", "-", "_"])
-    name = name.replace("-", " ").replace("_", " ")
-    return name.title()
-
-
-def create_card(
-    guild_name,
-    banner_url,
-    bottom_banner_url=None,
-    text=None,
-    tags=None,
-    channels=None,
-    publish_id=None,
-    dropdown_options=None,
-    card_id=None,
-):
-    view = discord.ui.LayoutView(timeout=None)
-    container = discord.ui.Container(
-        accent_colour=discord.Color.from_rgb(37, 37, 41)
-    )
-
-    if banner_url:
-        container.add_item(
-            discord.ui.MediaGallery(
-                discord.MediaGalleryItem(media=banner_url)
-            )
-        )
-        container.add_item(discord.ui.Separator())
-
-    if text:
-        container.add_item(
-            discord.ui.TextDisplay(text.replace("\\n", "\n"))
-        )
-
-    if tags:
-        container.add_item(discord.ui.Separator())
-        container.add_item(
-            discord.ui.TextDisplay(tags.replace("\\n", "\n"))
-        )
-
-    if channels:
-        row = discord.ui.ActionRow()
-        for channel in channels:
-            row.add_item(
-                discord.ui.Button(
-                    label=clean_button_name(channel),
-                    style=discord.ButtonStyle.link,
-                    url=f"https://discord.com/channels/{channel.guild.id}/{channel.id}",
-                )
-            )
-        container.add_item(row)
-
-    if bottom_banner_url:
-        container.add_item(discord.ui.Separator())
-        container.add_item(
-            discord.ui.MediaGallery(
-                discord.MediaGalleryItem(media=bottom_banner_url)
-            )
-        )
-
-    if dropdown_options:
-        select_id = card_id or publish_id or "preview"
-        select_options = []
-
-        for idx, opt in enumerate(dropdown_options):
-            option_kwargs = {
-                "label": (opt.get("name") or f"Option {idx + 1}")[:100],
-                "value": str(idx),
-            }
-
-            description = (opt.get("description") or "")[:100]
-            if description:
-                option_kwargs["description"] = description
-
-            emoji = opt.get("emoji")
-            if emoji:
-                option_kwargs["emoji"] = emoji
-
-            try:
-                select_options.append(discord.SelectOption(**option_kwargs))
-            except Exception:
-                option_kwargs.pop("emoji", None)
-                select_options.append(discord.SelectOption(**option_kwargs))
-
-        select = discord.ui.Select(
-            custom_id=f"dselect_{select_id}",
-            placeholder="📋 Select an option for more info",
-            options=select_options,
-        )
-
-        select_row = discord.ui.ActionRow()
-        select_row.add_item(select)
-        container.add_item(select_row)
-
-    if publish_id:
-        publish_row = discord.ui.ActionRow()
-        publish_row.add_item(
-            discord.ui.Button(
-                label="🚀 Publish",
-                style=discord.ButtonStyle.green,
-                custom_id=f"publish_{publish_id}",
-            )
-        )
-        container.add_item(publish_row)
-
-    view.add_item(container)
-    return view
-
-
-@bot.command()
-async def card(ctx: commands.Context):
-    view = create_card(
-        ctx.guild.name,
-        None,
-        "This is a **Components V2 card test.**",
-        "Example tags",
-        [],
-    )
-    await ctx.send(view=view)
-
-
-# ============================================================
-# MARKETPLACE
-# ============================================================
-
-@bot.command(name="shop")
-async def send_shop(ctx: commands.Context):
-    """Send the marketplace panel using Components V2."""
-    if ctx.author.id != AUTHORIZED_USER_ID:
-        await ctx.send("❌ You don't have permission to use this command.")
-        return
-
-    try:
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(37, 37, 41)
-        )
-
-        container.add_item(
-            discord.ui.MediaGallery(
-                discord.MediaGalleryItem(media=SHOP_BANNER_URL)
-            )
-        )
-        container.add_item(discord.ui.Separator())
-
-        container.add_item(
-            discord.ui.TextDisplay(f"# {SHOP_EMOJI} Marketplace")
-        )
-
-        container.add_item(
-            discord.ui.TextDisplay(
-                "Welcome to the marketplace! Here, you can purchase "
-                "various perks to boost your server experience—including "
-                "paid ads, sponsored giveaways, premium subscriptions, "
-                "and more.\n\n"
-                "Browse all our offerings and check current pricing "
-                "by selecting a category below:"
-            )
-        )
-        container.add_item(discord.ui.Separator())
-
-        marketplace_dropdown = discord.ui.Select(
-            placeholder="Select a marketplace category...",
-            custom_id="marketplace_category",
-            min_values=1,
-            max_values=1,
-            options=[
-                discord.SelectOption(
-                    label="Donations",
-                    value="donations",
-                    emoji=EMOJI_ROBUX,
-                ),
-                discord.SelectOption(
-                    label="Server Advertisements",
-                    value="server_advertisements",
-                    emoji=EMOJI_ADS,
-                ),
-                discord.SelectOption(
-                    label="Server Memberships",
-                    value="server_memberships",
-                    emoji=EMOJI_STAR,
-                ),
-                discord.SelectOption(
-                    label="Nitro Boost",
-                    value="nitro_boost",
-                    emoji=EMOJI_NITRO,
-                ),
-            ],
-        )
-
-        dropdown_row = discord.ui.ActionRow()
-        dropdown_row.add_item(marketplace_dropdown)
-        container.add_item(dropdown_row)
-        container.add_item(discord.ui.Separator())
-
-        container.add_item(
-            discord.ui.MediaGallery(
-                discord.MediaGalleryItem(media=SHOP_BOTTOM_THUMBNAIL_URL)
-            )
-        )
-
-        view.add_item(container)
-        await ctx.send(view=view)
-        print("[SHOP] Marketplace sent successfully.")
-
-    except Exception as e:
-        print(f"[SHOP] Error creating marketplace: {e}")
-        traceback.print_exc()
-        try:
-            await ctx.send(f"❌ Error creating marketplace:\n```{e}```")
-        except Exception as send_error:
-            print(f"[SHOP] Could not send error message: {send_error}")
-
-
-# ============================================================
-# ZTP SYSTEM (Zero Tolerance Period)
-# ============================================================
-
-ZTP_ROLE_ID = 1545756479678586890
-ZTP_COMMAND_ROLE_ID = 1527053931304321130
-ZTP_DURATION = 300  # 5 minutes in seconds
-
-class ZTPPaginationView(discord.ui.View):
-    def __init__(self, guild: discord.Guild, data: list):
-        super().__init__(timeout=180)
-        self.guild = guild
-        self.data = data  # List of tuples: (discord.Member, expiration_timestamp)
-        self.current_page = 0
-        self.per_page = 10
-        self.max_pages = max(1, (len(data) + self.per_page - 1) // self.per_page)
-        self.update_buttons()
-
-    def update_buttons(self):
-        self.left_button.disabled = self.current_page == 0
-        self.right_button.disabled = self.current_page >= self.max_pages - 1
-
-    def build_embed(self) -> discord.Embed:
-        embed = discord.Embed(
-            title="🛡️ Active ZTP List",
-            color=discord.Color.from_rgb(37, 37, 41)
-        )
-        
-        if not self.data:
-            embed.description = "No members currently have the ZTP role."
-            embed.set_footer(text="Page 1/1")
-            return embed
-
-        start_idx = self.current_page * self.per_page
-        end_idx = start_idx + self.per_page
-        page_items = self.data[start_idx:end_idx]
-
-        lines = []
-        current_time = time.time()
-        for idx, (member, expiry) in enumerate(page_items, start=start_idx + 1):
-            remaining = max(0, int(expiry - current_time))
-            mins = remaining // 60
-            secs = remaining % 60
-            lines.append(f"{idx}. {member.mention} - (countdown till the role removal ({mins}mins {secs:02d}s))")
-
-        embed.description = "\n".join(lines)
-        embed.set_footer(text=f"Page {self.current_page + 1}/{self.max_pages}")
-        return embed
-
-    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.secondary, custom_id="ztp_left")
-    async def left_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page > 0:
-            self.current_page -= 1
-            self.update_buttons()
-            await interaction.response.edit_message(embed=self.build_embed(), view=self)
-        else:
-            await interaction.response.defer()
-
-    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary, custom_id="ztp_right")
-    async def right_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page < self.max_pages - 1:
-            self.current_page += 1
-            self.update_buttons()
-            await interaction.response.edit_message(embed=self.build_embed(), view=self)
-        else:
-            await interaction.response.defer()
-
-
-class ZTPSystem(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.ztp_timers = {}  # Format: { (guild_id, user_id): expiration_timestamp }
-        self.check_loop.start()
-
-    def cog_unload(self):
-        self.check_loop.cancel()
-
-    @commands.Cog.listener()
-    async def on_member_update(self, before: discord.Member, after: discord.Member):
-        if before.roles == after.roles:
-            return
-
-        has_before = any(r.id == ZTP_ROLE_ID for r in before.roles)
-        has_after = any(r.id == ZTP_ROLE_ID for r in after.roles)
-
-        key = (after.guild.id, after.id)
-
-        # Role added
-        if not has_before and has_after:
-            expiry = time.time() + ZTP_DURATION
-            self.ztp_timers[key] = expiry
-            print(f"[ZTP] Assigned 5-min timer for {after} in {after.guild.name}")
-
-        # Role manually removed before timer expires
-        elif has_before and not has_after:
-            if key in self.ztp_timers:
-                del self.ztp_timers[key]
-
-    @asyncio.task
-    async def check_loop(self):
-        await self.bot.wait_until_ready()
-        while not self.bot.is_closed():
-            now = time.time()
-            expired_keys = []
-
-            for key, expiry in list(self.ztp_timers.items()):
-                if now >= expiry:
-                    expired_keys.append(key)
-
-            for guild_id, user_id in expired_keys:
-                self.ztp_timers.pop((guild_id, user_id), None)
-                guild = self.bot.get_guild(guild_id)
-                if not guild:
-                    continue
-                member = guild.get_member(user_id)
-                if not member:
-                    try:
-                        member = await guild.fetch_member(user_id)
-                    except Exception:
-                        continue
-                
-                role = guild.get_role(ZTP_ROLE_ID)
-                if role and role in member.roles:
-                    try:
-                        await member.remove_roles(role, reason="ZTP 5-minute timer expired.")
-                        print(f"[ZTP] Automatically removed role from {member} in {guild.name}")
-                    except Exception as e:
-                        print(f"[ZTP Error] Failed to remove role from {member}: {e}")
-
-            await asyncio.sleep(5)
-
-    @app_commands.command(name="ztp", description="View active users with the ZTP role and remaining timers.")
-    async def ztp_command(self, interaction: discord.Interaction):
-        # Permission check matching role ID 1527053931304321130 or admin/owner
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
-            return
-
-        is_allowed = (
-            interaction.user.id == interaction.guild.owner_id
-            or interaction.user.guild_permissions.administrator
-        )
-        if not is_allowed:
-            required_role = interaction.guild.get_role(ZTP_COMMAND_ROLE_ID)
-            if required_role and interaction.user.top_role >= required_role:
-                is_allowed = True
-
-        if not is_allowed:
-            await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True)
-
-        # Gather current members with the ZTP role
-        role = interaction.guild.get_role(ZTP_ROLE_ID)
-        if not role:
-            await interaction.followup.send("❌ ZTP role configuration error (Role not found).", ephemeral=True)
-            return
-
-        current_time = time.time()
-        data = []
-        for member in role.members:
-            key = (interaction.guild.id, member.id)
-            if key not in self.ztp_timers:
-                # If bot restarted or role was added externally, initialize a fallback 5 min timer
-                self.ztp_timers[key] = current_time + ZTP_DURATION
-            data.append((member, self.ztp_timers[key]))
-
-        view = ZTPPaginationView(interaction.guild, data)
-        await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
-
-
-async def setup(bot):
-    await bot.add_cog(ZTPSystem(bot))
 
 
 # ============================================================
