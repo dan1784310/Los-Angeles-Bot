@@ -466,6 +466,99 @@ async def on_ready():
         traceback.print_exc()
 
 
+        # ============================================================
+# MARKETPLACE
+# ============================================================
+
+@bot.command(name="shop")
+async def send_shop(ctx: commands.Context):
+    """Send the marketplace panel using Components V2."""
+    if ctx.author.id != AUTHORIZED_USER_ID:
+        await ctx.send("❌ You don't have permission to use this command.")
+        return
+
+    try:
+        view = discord.ui.LayoutView(timeout=None)
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        )
+
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(media=SHOP_BANNER_URL)
+            )
+        )
+        container.add_item(discord.ui.Separator())
+
+        container.add_item(
+            discord.ui.TextDisplay(f"# {SHOP_EMOJI} Marketplace")
+        )
+
+        container.add_item(
+            discord.ui.TextDisplay(
+                "Welcome to the marketplace! Here, you can purchase "
+                "various perks to boost your server experience—including "
+                "paid ads, sponsored giveaways, premium subscriptions, "
+                "and more.\n\n"
+                "Browse all our offerings and check current pricing "
+                "by selecting a category below:"
+            )
+        )
+        container.add_item(discord.ui.Separator())
+
+        marketplace_dropdown = discord.ui.Select(
+            placeholder="Select a marketplace category...",
+            custom_id="marketplace_category",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label="Donations",
+                    value="donations",
+                    emoji=EMOJI_ROBUX,
+                ),
+                discord.SelectOption(
+                    label="Server Advertisements",
+                    value="server_advertisements",
+                    emoji=EMOJI_ADS,
+                ),
+                discord.SelectOption(
+                    label="Server Memberships",
+                    value="server_memberships",
+                    emoji=EMOJI_STAR,
+                ),
+                discord.SelectOption(
+                    label="Nitro Boost",
+                    value="nitro_boost",
+                    emoji=EMOJI_NITRO,
+                ),
+            ],
+        )
+
+        dropdown_row = discord.ui.ActionRow()
+        dropdown_row.add_item(marketplace_dropdown)
+        container.add_item(dropdown_row)
+        container.add_item(discord.ui.Separator())
+
+        container.add_item(
+            discord.ui.MediaGallery(
+                discord.MediaGalleryItem(media=SHOP_BOTTOM_THUMBNAIL_URL)
+            )
+        )
+
+        view.add_item(container)
+        await ctx.send(view=view)
+        print("[SHOP] Marketplace sent successfully.")
+
+    except Exception as e:
+        print(f"[SHOP] Error creating marketplace: {e}")
+        traceback.print_exc()
+        try:
+            await ctx.send(f"❌ Error creating marketplace:\n```{e}```")
+        except Exception as send_error:
+            print(f"[SHOP] Could not send error message: {send_error}")
+
+
 # ============================================================
 # TICKET RENAME
 # ============================================================
