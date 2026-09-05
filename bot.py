@@ -178,11 +178,10 @@ text_setups = {}
 # ZTP SYSTEM (Zero Tolerance Period - MongoDB Backed)
 # ============================================================
 
-ZTP_ROLE_ID = 1527377838536265908
+ZTP_ROLE_ID = 1545756479678586890
 ZTP_COMMAND_ROLE_ID = 1527053931304321130
 ZTP_DURATION = 300  # 5 minutes in seconds
 
-# Access the underlying database collection safely via mod_db.db
 ztp_collection = mod_db.db["ztp_timers"]
 
 class ZTPPaginationView(discord.ui.View):
@@ -215,12 +214,10 @@ class ZTPPaginationView(discord.ui.View):
         page_items = self.data[start_idx:end_idx]
 
         lines = []
-        current_time = time.time()
         for idx, (member, expiry) in enumerate(page_items, start=start_idx + 1):
-            remaining = max(0, int(expiry - current_time))
-            mins = remaining // 60
-            secs = remaining % 60
-            lines.append(f"{idx}. {member.mention} - (countdown till the role removal ({mins}mins {secs:02d}s))")
+            timestamp_int = int(expiry)
+            # Uses Discord's dynamic relative timestamp token <t:timestamp:R>
+            lines.append(f"{idx}. {member.mention} — <t:{timestamp_int}:R>")
 
         embed.description = "\n".join(lines)
         embed.set_footer(text=f"Page {self.current_page + 1}/{self.max_pages}")
@@ -341,7 +338,7 @@ class ZTPSystem(commands.Cog):
             role = None
 
         if not role:
-            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1527377838536265908` could not be fetched).", ephemeral=True)
+            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1545756479678586890` could not be fetched).", ephemeral=True)
             return
 
         current_time = time.time()
