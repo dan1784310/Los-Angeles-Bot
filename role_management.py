@@ -17,10 +17,7 @@ import aiohttp
 # ==========================================
 
 # Anyone with this role, or a role positioned higher than it in the server's
-# role hierarchy, can use any of the role management commands below — no
-# administrator permission required for that.
-# TODO: replace with the actual role ID.
-ROLE_MANAGEMENT_ROLE_ID = 0
+ROLE_MANAGEMENT_ROLE_ID = 1527053931304321130
 
 HEX_COLOR_PATTERN = re.compile(r"^#?[0-9a-fA-F]{6}$")
 
@@ -75,97 +72,126 @@ def _parse_color(raw: Optional[str]) -> Optional[discord.Colour]:
 
 
 # ==========================================
-# ROLE CREATE
+# ROLE CREATE (Custom Card Panel Flow)
 # ==========================================
 
-class RoleCreateModal(discord.ui.Modal, title="Create a Role"):
+class RoleCreateModal(discord.ui.Modal, title="Role Name Setup"):
     name_input = discord.ui.TextInput(
         label="Role Name",
-        placeholder="e.g. Moderator",
+        placeholder="e.g. new role",
         max_length=100,
         required=True
-    )
-    color_input = discord.ui.TextInput(
-        label="Color (hex, optional)",
-        placeholder="#5865F2",
-        max_length=7,
-        required=False
     )
 
     def __init__(self, supports_icon: bool):
         super().__init__()
         self.supports_icon = supports_icon
-        if supports_icon:
-            self.icon_input = discord.ui.TextInput(
-                label="Icon (emoji or image URL, optional)",
-                placeholder="🔥  or  https://example.com/icon.png",
-                max_length=200,
-                required=False
-            )
-            self.add_item(self.icon_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         name = str(self.name_input.value).strip()
-        color_raw = str(self.color_input.value) if self.color_input.value else None
-        icon_raw = str(self.icon_input.value).strip() if self.supports_icon and self.icon_input.value else None
+        view = RoleBuilderPanel(name=name, supports_icon=self.supports_icon)
+        await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
 
-        if color_raw and not _parse_color(color_raw):
-            await interaction.response.send_message(
-                "❌ Invalid color. Use a hex code like `#5865F2` or `5865F2`.",
-                ephemeral=True
-            )
+
+class ColorModal(discord.ui.Modal, title="Role Colour"):
+    color_input = discord.ui.TextInput(
+        label="Hex Color",
+        placeholder="#5865F2",
+        max_length=7,
+        required=True
+    )
+
+    def __init__(self, panel_view):
+        super().__init__()
+        self.panel_view = panel_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.color_input.value).strip()
+        parsed = _parse_color(raw)
+        if not parsed:
+            await interaction.response.send_message("❌ Invalid hex color code. Use format like `#5865F2`.", ephemeral=True)
             return
-
-        color = _parse_color(color_raw) or discord.Colour.default()
-
-        icon_emoji = None
-        icon_url = None
-        if icon_raw:
-            if icon_raw.startswith("http://") or icon_raw.startswith("https://"):
-                icon_url = icon_raw
-            else:
-                icon_emoji = icon_raw
-
-        embed = discord.Embed(
-            title="Role Preview",
-            description=f"**Name:** {name}\n**Color:** {color_raw or 'default'}",
-            color=color
-        )
-        if icon_emoji:
-            embed.add_field(name="Icon", value=f"Emoji: {icon_emoji}", inline=False)
-        elif icon_url:
-            embed.add_field(name="Icon", value=f"Image: {icon_url}", inline=False)
-            embed.set_thumbnail(url=icon_url)
-
-        view = RoleCreateConfirmView(name, color, icon_emoji, icon_url)
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        
+        self.panel_view.color = parsed
+        self.panel_view.color_raw = raw if raw.startswith("#") else f"#{raw}"
+        await interaction.response.edit_message(embed=self.panel_view.build_embed(), view=self.panel_view)
 
 
-class RoleCreateConfirmView(discord.ui.View):
-    def __init__(self, name: str, color: discord.Colour, icon_emoji: Optional[str], icon_url: Optional[str]):
-        super().__init__(timeout=180)
+class IconModal(discord.ui.Modal, title="Role Icon"):
+    icon_input = discord.ui.TextInput(
+        label="Image URL or Custom Emoji",
+        placeholder="https://example.com/icon.png or 🔥",
+        max_length=200,
+        required=True
+    )
+
+    def __init__(self, panel_view):
+        super().__init__()
+        self.panel_view = panel_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        val = str(self.icon_input.value).strip()
+        if val.startswith("http://") or val.startswith("https://"):
+            self.panel_view.icon_url = val
+            self.panel_view.icon_emoji = None
+        else:
+            self.panel_view.icon_emoji = val
+            self.panel_view.icon_url = None
+
+        await interaction.response.edit_message(embed=self.panel_view.build_embed(), view=self.panel_view)
+
+
+class RoleBuilderPanel(discord.ui.View):
+    def __init__(self, name: str, supports_icon: bool):
+        super().__init__(timeout=300)
         self.name = name
-        self.color = color
-        self.icon_emoji = icon_emoji
-        self.icon_url = icon_url
+        self.supports_icon = supports_icon
+        self.color: Optional[discord.Colour] = None
+        self.color_raw: Optional[str] = None
+        self.icon_emoji: Optional[str] = None
+        self.icon_url: Optional[str] = None
 
-    @discord.ui.button(label="✅ Create Role", style=discord.ButtonStyle.success)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+    def build_embed(self) -> discord.Embed:
+        c = self.color or discord.Colour.default()
+        embed = discord.Embed(title="Role Customization Panel", color=c)
+        embed.add_field(name="Role Name", value=self.name, inline=False)
+        embed.add_field(name="Role Colour", value=self.color_raw or "Default (No Colour)", inline=True)
+        
+        icon_display = "None"
+        if self.icon_emoji:
+            icon_display = f"Emoji: {self.icon_emoji}"
+        elif self.icon_url:
+            icon_display = f"Image URL Provided"
+            embed.set_thumbnail(url=self.icon_url)
+            
+        embed.add_field(name="Role Icon", value=icon_display, inline=True)
+        return embed
+
+    @discord.ui.button(label="Choose Colour", style=discord.ButtonStyle.secondary, row=0)
+    async def choose_color_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ColorModal(self))
+
+    @discord.ui.button(label="Choose Image / Icon", style=discord.ButtonStyle.secondary, row=0)
+    async def choose_icon_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.supports_icon:
+            await interaction.response.send_message("❌ Server does not support `ROLE_ICONS` feature.", ephemeral=True)
+            return
+        await interaction.response.send_modal(IconModal(self))
+
+    @discord.ui.button(label="✅ Create Role", style=discord.ButtonStyle.success, row=1)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
-
         guild = interaction.guild
+        
         if not _bot_can_manage(guild):
-            await interaction.followup.send(
-                "❌ I don't have permission to manage roles here.",
-                ephemeral=True
-            )
+            await interaction.followup.send("❌ I don't have permission to manage roles here.", ephemeral=True)
             return
 
         try:
             role = await guild.create_role(
                 name=self.name,
-                colour=self.color,
-                reason=f"Created by {interaction.user} via /role-create"
+                colour=self.color or discord.Colour.default(),
+                reason=f"Created by {interaction.user} via /role-create panel"
             )
 
             if self.icon_emoji and "ROLE_ICONS" in guild.features:
@@ -182,7 +208,7 @@ class RoleCreateConfirmView(discord.ui.View):
                         pass
 
             await interaction.edit_original_response(
-                content=f"✅ Created role {role.mention}!",
+                content=f"✅ Successfully created role {role.mention}!",
                 embed=None,
                 view=None
             )
@@ -191,9 +217,9 @@ class RoleCreateConfirmView(discord.ui.View):
         except Exception as e:
             await interaction.followup.send(f"❌ Error creating role: {e}", ephemeral=True)
 
-    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="❌ Cancelled.", embed=None, view=None)
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger, row=1)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="❌ Role creation cancelled.", embed=None, view=None)
 
 
 # ==========================================
@@ -265,7 +291,7 @@ class RoleManagement(commands.Cog):
 
     # ---------- /role-create ----------
 
-    @app_commands.command(name="role-create", description="Create a new role")
+    @app_commands.command(name="role-create", description="Create a new role using an interactive panel")
     async def role_create(self, interaction: discord.Interaction):
         if not _can_manage_roles(interaction):
             await interaction.response.send_message(
