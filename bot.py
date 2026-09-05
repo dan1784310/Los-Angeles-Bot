@@ -333,7 +333,7 @@ class ZTPSystem(commands.Cog):
 
         role = interaction.guild.get_role(ZTP_ROLE_ID)
         if not role:
-            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1545756479678586890` not found in this server).", ephemeral=True)
+            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1545774457124163614` not found in this server).", ephemeral=True)
             return
 
         current_time = time.time()
