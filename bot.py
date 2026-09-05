@@ -291,6 +291,14 @@ async def on_ready():
         print(f"Error refreshing ticket panels: {e}")
         traceback.print_exc()
 
+        print("[SETUP] Loading ZTP system...")
+    try:
+        await bot.add_cog(ZTPSystem(bot))
+        print("[SETUP] ZTP system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading ZTP system: {e}")
+        traceback.print_exc()
+
 
 # ============================================================
 # ANNOUNCEMENT CARD HELPERS
@@ -510,6 +518,182 @@ async def send_shop(ctx: commands.Context):
             await ctx.send(f"❌ Error creating marketplace:\n```{e}```")
         except Exception as send_error:
             print(f"[SHOP] Could not send error message: {send_error}")
+
+
+# ============================================================
+# ZTP SYSTEM (Zero Tolerance Period)
+# ============================================================
+
+ZTP_ROLE_ID = 1545756479678586890
+ZTP_COMMAND_ROLE_ID = 1527053931304321130
+ZTP_DURATION = 300  # 5 minutes in seconds
+
+class ZTPPaginationView(discord.ui.View):
+    def __init__(self, guild: discord.Guild, data: list):
+        super().__init__(timeout=180)
+        self.guild = guild
+        self.data = data  # List of tuples: (discord.Member, expiration_timestamp)
+        self.current_page = 0
+        self.per_page = 10
+        self.max_pages = max(1, (len(data) + self.per_page - 1) // self.per_page)
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.left_button.disabled = self.current_page == 0
+        self.right_button.disabled = self.current_page >= self.max_pages - 1
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="🛡️ Active ZTP List",
+            color=discord.Color.from_rgb(37, 37, 41)
+        )
+        
+        if not self.data:
+            embed.description = "No members currently have the ZTP role."
+            embed.set_footer(text="Page 1/1")
+            return embed
+
+        start_idx = self.current_page * self.per_page
+        end_idx = start_idx + self.per_page
+        page_items = self.data[start_idx:end_idx]
+
+        lines = []
+        current_time = time.time()
+        for idx, (member, expiry) in enumerate(page_items, start=start_idx + 1):
+            remaining = max(0, int(expiry - current_time))
+            mins = remaining // 60
+            secs = remaining % 60
+            lines.append(f"{idx}. {member.mention} - (countdown till the role removal ({mins}mins {secs:02d}s))")
+
+        embed.description = "\n".join(lines)
+        embed.set_footer(text=f"Page {self.current_page + 1}/{self.max_pages}")
+        return embed
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.secondary, custom_id="ztp_left")
+    async def left_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary, custom_id="ztp_right")
+    async def right_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < self.max_pages - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+
+class ZTPSystem(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.ztp_timers = {}  # Format: { (guild_id, user_id): expiration_timestamp }
+        self.check_loop.start()
+
+    def cog_unload(self):
+        self.check_loop.cancel()
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if before.roles == after.roles:
+            return
+
+        has_before = any(r.id == ZTP_ROLE_ID for r in before.roles)
+        has_after = any(r.id == ZTP_ROLE_ID for r in after.roles)
+
+        key = (after.guild.id, after.id)
+
+        # Role added
+        if not has_before and has_after:
+            expiry = time.time() + ZTP_DURATION
+            self.ztp_timers[key] = expiry
+            print(f"[ZTP] Assigned 5-min timer for {after} in {after.guild.name}")
+
+        # Role manually removed before timer expires
+        elif has_before and not has_after:
+            if key in self.ztp_timers:
+                del self.ztp_timers[key]
+
+    @asyncio.task
+    async def check_loop(self):
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            now = time.time()
+            expired_keys = []
+
+            for key, expiry in list(self.ztp_timers.items()):
+                if now >= expiry:
+                    expired_keys.append(key)
+
+            for guild_id, user_id in expired_keys:
+                self.ztp_timers.pop((guild_id, user_id), None)
+                guild = self.bot.get_guild(guild_id)
+                if not guild:
+                    continue
+                member = guild.get_member(user_id)
+                if not member:
+                    try:
+                        member = await guild.fetch_member(user_id)
+                    except Exception:
+                        continue
+                
+                role = guild.get_role(ZTP_ROLE_ID)
+                if role and role in member.roles:
+                    try:
+                        await member.remove_roles(role, reason="ZTP 5-minute timer expired.")
+                        print(f"[ZTP] Automatically removed role from {member} in {guild.name}")
+                    except Exception as e:
+                        print(f"[ZTP Error] Failed to remove role from {member}: {e}")
+
+            await asyncio.sleep(5)
+
+    @app_commands.command(name="ztp", description="View active users with the ZTP role and remaining timers.")
+    async def ztp_command(self, interaction: discord.Interaction):
+        # Permission check matching role ID 1527053931304321130 or admin/owner
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        is_allowed = (
+            interaction.user.id == interaction.guild.owner_id
+            or interaction.user.guild_permissions.administrator
+        )
+        if not is_allowed:
+            required_role = interaction.guild.get_role(ZTP_COMMAND_ROLE_ID)
+            if required_role and interaction.user.top_role >= required_role:
+                is_allowed = True
+
+        if not is_allowed:
+            await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Gather current members with the ZTP role
+        role = interaction.guild.get_role(ZTP_ROLE_ID)
+        if not role:
+            await interaction.followup.send("❌ ZTP role configuration error (Role not found).", ephemeral=True)
+            return
+
+        current_time = time.time()
+        data = []
+        for member in role.members:
+            key = (interaction.guild.id, member.id)
+            if key not in self.ztp_timers:
+                # If bot restarted or role was added externally, initialize a fallback 5 min timer
+                self.ztp_timers[key] = current_time + ZTP_DURATION
+            data.append((member, self.ztp_timers[key]))
+
+        view = ZTPPaginationView(interaction.guild, data)
+        await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
+
+
+async def setup(bot):
+    await bot.add_cog(ZTPSystem(bot))
 
 
 # ============================================================
