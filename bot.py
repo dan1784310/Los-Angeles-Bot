@@ -1321,7 +1321,7 @@ async def serverinfo(interaction: discord.Interaction):
         # Server icon
         if guild.icon:
             section = discord.ui.Section(
-                discord.ui.TextDisplay(""),
+                discord.ui.TextDisplay("Server Icon"),
                 accessory=discord.ui.Thumbnail(media=guild.icon.url)
             )
             container.add_item(section)
@@ -1394,8 +1394,8 @@ async def userinfo(interaction: discord.Interaction, user: discord.Member):
             await interaction.followup.send("❌ This command can only be used in a server.", ephemeral=True)
             return
 
-        # Get user roles sorted by position (highest first)
-        user_roles = [role for role in user.roles if role.name != "@everyone"]
+        # Get user roles sorted by position (highest first), excluding @everyone and colorless/default roles
+        user_roles = [role for role in user.roles if role.name != "@everyone" and not role.is_default()]
         user_roles.sort(key=lambda r: r.position, reverse=True)
         highest_role = user_roles[0] if user_roles else None
         roles_text = ", ".join([role.mention for role in user_roles[:10]]) if user_roles else "None"
