@@ -399,18 +399,45 @@ class GeneralCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="membercount", description="Shows the server member count.")
+    @app_commands.command(name="membercount", description="Shows the server member count, online members, and bots.")
     async def membercount(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
             return
 
-        count = interaction.guild.member_count
+        guild = interaction.guild
+        total_members = guild.member_count
+        
+        # Calculate online/active members status count
+        online_members = sum(
+            1 for m in guild.members 
+            if m.status != discord.Status.offline and not m.bot
+        )
+        
+        # Calculate bot count
+        bot_count = sum(1 for m in guild.members if m.bot)
+
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
-        container.add_item(discord.ui.TextDisplay(f"This server has **{count}** members!"))
-        view.add_item(container)
 
+        # Header section with server icon and name matching the style
+        icon_url = guild.icon.url if guild.icon else None
+        if icon_url:
+            section = discord.ui.Section(
+                discord.ui.TextDisplay(f"### {guild.name}"),
+                accessory=discord.ui.Thumbnail(source=icon_url)
+            )
+            container.add_item(section)
+            container.add_item(discord.ui.Separator())
+        else:
+            container.add_item(discord.ui.TextDisplay(f"### {guild.name}"))
+            container.add_item(discord.ui.Separator())
+
+        # Column headers & stats layout
+        container.add_item(discord.ui.TextDisplay("**Member Count** | **Online Members** | **Bots**"))
+        container.add_item(discord.ui.TextDisplay(f"{total_members}                 | {online_members}                  | {bot_count}"))
+
+        view.add_item(container)
         await interaction.response.send_message(view=view)
 
     @app_commands.command(name="afk", description="Sets your AFK status.")
@@ -428,7 +455,6 @@ class GeneralCommands(commands.Cog):
         member = interaction.user
         query = {"guild_id": interaction.guild.id, "user_id": member.id}
         
-        # Save original nickname if not already AFK
         original_nick = member.nick or member.name
         existing = afk_collection.find_one(query)
         if existing:
@@ -440,7 +466,6 @@ class GeneralCommands(commands.Cog):
             upsert=True
         )
 
-        # Update nickname to include [AFK]
         new_nick = f"[AFK] {original_nick}"
         if len(new_nick) > 32:
             new_nick = "[AFK] " + original_nick[:26]
