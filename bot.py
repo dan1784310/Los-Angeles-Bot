@@ -183,7 +183,7 @@ ZTP_COMMAND_ROLE_ID = 1527053931304321130
 ZTP_DURATION = 300  # 5 minutes in seconds
 
 # Connect to MongoDB collection using your existing db instance
-ztp_collection = mod_db["ztp_timers"]
+ztp_collection = mod_db.db["ztp_timers"]
 
 class ZTPPaginationView(discord.ui.View):
     def __init__(self, guild: discord.Guild, data: list):
