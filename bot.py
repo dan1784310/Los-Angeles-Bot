@@ -179,10 +179,24 @@ text_setups = {}
 # ============================================================
 
 ZTP_ROLE_ID = 1527377838536265908
-ZTP_COMMAND_ROLE_ID = 1527053931304321130
-ZTP_DURATION = 60  # 5 minutes in seconds
+ZTP_COMMAND_ROLE_ID = 1527050918804062469
 
 ztp_collection = mod_db.db["ztp_timers"]
+
+def parse_duration(duration_str: str) -> Optional[int]:
+    match = re.match(r"^(\d+)([smhdw])$", duration_str.lower().strip())
+    if not match:
+        return None
+    amount = int(match.group(1))
+    unit = match.group(2)
+    multipliers = {
+        "s": 1,
+        "m": 60,
+        "h": 3600,
+        "d": 86400,
+        "w": 604800
+    }
+    return amount * multipliers.get(unit, 1)
 
 class ZTPPaginationView(discord.ui.View):
     def __init__(self, guild: discord.Guild, data: list):
@@ -205,7 +219,7 @@ class ZTPPaginationView(discord.ui.View):
         )
         
         if not self.data:
-            embed.description = "No members currently have the ZTP role."
+            embed.description = "No members currently have an active ZTP timer."
             embed.set_footer(text="Page 1/1")
             return embed
 
@@ -216,7 +230,6 @@ class ZTPPaginationView(discord.ui.View):
         lines = []
         for idx, (member, expiry) in enumerate(page_items, start=start_idx + 1):
             timestamp_int = int(expiry)
-            # Uses Discord's dynamic relative timestamp token <t:timestamp:R>
             lines.append(f"{idx}. {member.mention} — <t:{timestamp_int}:R>")
 
         embed.description = "\n".join(lines)
@@ -250,27 +263,13 @@ class ZTPSystem(commands.Cog):
     def cog_unload(self):
         self.check_loop.cancel()
 
-    @commands.Cog.listener()
-    async def on_member_update(self, before: discord.Member, after: discord.Member):
-        if before.roles == after.roles:
-            return
-
-        has_before = any(r.id == ZTP_ROLE_ID for r in before.roles)
-        has_after = any(r.id == ZTP_ROLE_ID for r in after.roles)
-
-        query = {"guild_id": after.guild.id, "user_id": after.id}
-
-        if not has_before and has_after:
-            expiry = time.time() + ZTP_DURATION
-            ztp_collection.update_one(
-                query,
-                {"$set": {"expiry": expiry}},
-                upsert=True
-            )
-            print(f"[ZTP] Assigned 5-min timer for {after} in {after.guild.name}")
-
-        elif has_before and not has_after:
-            ztp_collection.delete_one(query)
+    def check_ztp_permissions(self, user: discord.Member) -> bool:
+        if user.id == user.guild.owner_id or user.guild_permissions.administrator:
+            return True
+        required_role = user.guild.get_role(ZTP_COMMAND_ROLE_ID)
+        if required_role and user.top_role >= required_role:
+            return True
+        return False
 
     @tasks.loop(seconds=5)
     async def check_loop(self):
@@ -302,7 +301,7 @@ class ZTPSystem(commands.Cog):
 
             if role and role in member.roles:
                 try:
-                    await member.remove_roles(role, reason="ZTP 5-minute timer expired.")
+                    await member.remove_roles(role, reason="ZTP timer expired.")
                     print(f"[ZTP] Automatically removed role from {member} in {guild.name}")
                 except Exception as e:
                     print(f"[ZTP Error] Failed to remove role from {member}: {e}")
@@ -311,22 +310,50 @@ class ZTPSystem(commands.Cog):
     async def before_check_loop(self):
         await self.bot.wait_until_ready()
 
-    @app_commands.command(name="ztp", description="View active users with the ZTP role and remaining timers.")
-    async def ztp_command(self, interaction: discord.Interaction):
+    @app_commands.command(name="ztp-give", description="Give a user the ZTP role with a specified duration.")
+    @app_commands.describe(member="The member to assign ZTP to", duration="Duration format (e.g. 30m, 1h, 1d, 1w)")
+    async def ztp_give(self, interaction: discord.Interaction, member: discord.Member, duration: str):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
             return
 
-        is_allowed = (
-            interaction.user.id == interaction.guild.owner_id
-            or interaction.user.guild_permissions.administrator
-        )
-        if not is_allowed:
-            required_role = interaction.guild.get_role(ZTP_COMMAND_ROLE_ID) or await interaction.guild.fetch_role(ZTP_COMMAND_ROLE_ID)
-            if required_role and interaction.user.top_role >= required_role:
-                is_allowed = True
+        if not self.check_ztp_permissions(interaction.user):
+            await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
+            return
 
-        if not is_allowed:
+        seconds = parse_duration(duration)
+        if not seconds:
+            await interaction.response.send_message("❌ Invalid duration format! Use formats like `30m`, `1h`, `1d`, or `1w`.", ephemeral=True)
+            return
+
+        try:
+            role = interaction.guild.get_role(ZTP_ROLE_ID) or await interaction.guild.fetch_role(ZTP_ROLE_ID)
+        except Exception:
+            role = None
+
+        if not role:
+            await interaction.response.send_message(f"❌ ZTP role configuration error (Role ID `{ZTP_ROLE_ID}` could not be fetched).", ephemeral=True)
+            return
+
+        try:
+            await member.add_roles(role, reason=f"ZTP given by {interaction.user} for {duration}")
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Failed to assign ZTP role: {e}", ephemeral=True)
+            return
+
+        expiry = time.time() + seconds
+        query = {"guild_id": interaction.guild.id, "user_id": member.id}
+        ztp_collection.update_one(query, {"$set": {"expiry": expiry}}, upsert=True)
+
+        await interaction.response.send_message(f"<:checkmark:1541253462413549669> Successfully gave {member.mention} the ZTP role for **{duration}** (Expires <t:{int(expiry)}:R>).", ephemeral=True)
+
+    @app_commands.command(name="ztp-list", description="View active users with the ZTP role and remaining timers.")
+    async def ztp_list_command(self, interaction: discord.Interaction):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
+        if not self.check_ztp_permissions(interaction.user):
             await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
             return
 
@@ -338,22 +365,25 @@ class ZTPSystem(commands.Cog):
             role = None
 
         if not role:
-            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1545756479678586890` could not be fetched).", ephemeral=True)
+            await interaction.followup.send(f"❌ ZTP role configuration error (Role ID `{ZTP_ROLE_ID}` could not be fetched).", ephemeral=True)
             return
 
-        current_time = time.time()
         data = []
-        for member in role.members:
-            query = {"guild_id": interaction.guild.id, "user_id": member.id}
-            doc = ztp_collection.find_one(query)
+        docs = list(ztp_collection.find({"guild_id": interaction.guild.id}))
+        for doc in docs:
+            user_id = doc["user_id"]
+            expiry = doc["expiry"]
+            member = interaction.guild.get_member(user_id)
+            if not member:
+                try:
+                    member = await interaction.guild.fetch_member(user_id)
+                except Exception:
+                    continue
             
-            if not doc:
-                expiry = current_time + ZTP_DURATION
-                ztp_collection.update_one(query, {"$set": {"expiry": expiry}}, upsert=True)
+            if role in member.roles:
+                data.append((member, expiry))
             else:
-                expiry = doc["expiry"]
-                
-            data.append((member, expiry))
+                ztp_collection.delete_one({"guild_id": interaction.guild.id, "user_id": user_id})
 
         view = ZTPPaginationView(interaction.guild, data)
         await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
