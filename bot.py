@@ -175,18 +175,21 @@ text_setups = {}
 
 
 # ============================================================
-# ZTP SYSTEM (Zero Tolerance Period)
+# ZTP SYSTEM (Zero Tolerance Period - MongoDB Backed)
 # ============================================================
 
 ZTP_ROLE_ID = 1545756479678586890
 ZTP_COMMAND_ROLE_ID = 1527053931304321130
 ZTP_DURATION = 300  # 5 minutes in seconds
 
+# Connect to MongoDB collection using your existing db instance
+ztp_collection = db["ztp_timers"]
+
 class ZTPPaginationView(discord.ui.View):
     def __init__(self, guild: discord.Guild, data: list):
         super().__init__(timeout=180)
         self.guild = guild
-        self.data = data
+        self.data = data  # List of tuples: (discord.Member, expiration_timestamp)
         self.current_page = 0
         self.per_page = 10
         self.max_pages = max(1, (len(data) + self.per_page - 1) // self.per_page)
@@ -245,7 +248,6 @@ class ZTPPaginationView(discord.ui.View):
 class ZTPSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.ztp_timers = {}
         self.check_loop.start()
 
     def cog_unload(self):
@@ -259,28 +261,33 @@ class ZTPSystem(commands.Cog):
         has_before = any(r.id == ZTP_ROLE_ID for r in before.roles)
         has_after = any(r.id == ZTP_ROLE_ID for r in after.roles)
 
-        key = (after.guild.id, after.id)
+        query = {"guild_id": after.guild.id, "user_id": after.id}
 
+        # Role added
         if not has_before and has_after:
             expiry = time.time() + ZTP_DURATION
-            self.ztp_timers[key] = expiry
+            ztp_collection.update_one(
+                query,
+                {"$set": {"expiry": expiry}},
+                upsert=True
+            )
             print(f"[ZTP] Assigned 5-min timer for {after} in {after.guild.name}")
 
+        # Role manually removed before timer expires
         elif has_before and not has_after:
-            if key in self.ztp_timers:
-                del self.ztp_timers[key]
+            ztp_collection.delete_one(query)
 
     @tasks.loop(seconds=5)
     async def check_loop(self):
         now = time.time()
-        expired_keys = []
+        expired_docs = list(ztp_collection.find({"expiry": {"$lte": now}}))
 
-        for key, expiry in list(self.ztp_timers.items()):
-            if now >= expiry:
-                expired_keys.append(key)
-
-        for guild_id, user_id in expired_keys:
-            self.ztp_timers.pop((guild_id, user_id), None)
+        for doc in expired_docs:
+            guild_id = doc["guild_id"]
+            user_id = doc["user_id"]
+            
+            ztp_collection.delete_one({"guild_id": guild_id, "user_id": user_id})
+            
             guild = self.bot.get_guild(guild_id)
             if not guild:
                 continue
@@ -326,16 +333,23 @@ class ZTPSystem(commands.Cog):
 
         role = interaction.guild.get_role(ZTP_ROLE_ID)
         if not role:
-            await interaction.followup.send("❌ ZTP role configuration error (Role not found).", ephemeral=True)
+            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1545756479678586890` not found in this server).", ephemeral=True)
             return
 
         current_time = time.time()
         data = []
         for member in role.members:
-            key = (interaction.guild.id, member.id)
-            if key not in self.ztp_timers:
-                self.ztp_timers[key] = current_time + ZTP_DURATION
-            data.append((member, self.ztp_timers[key]))
+            query = {"guild_id": interaction.guild.id, "user_id": member.id}
+            doc = ztp_collection.find_one(query)
+            
+            if not doc:
+                # Fallback if role was added outside bot tracking
+                expiry = current_time + ZTP_DURATION
+                ztp_collection.update_one(query, {"$set": {"expiry": expiry}}, upsert=True)
+            else:
+                expiry = doc["expiry"]
+                
+            data.append((member, expiry))
 
         view = ZTPPaginationView(interaction.guild, data)
         await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
@@ -466,7 +480,7 @@ async def on_ready():
         traceback.print_exc()
 
 
-        # ============================================================
+# ============================================================
 # MARKETPLACE
 # ============================================================
 
