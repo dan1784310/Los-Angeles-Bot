@@ -1,6 +1,6 @@
 """
 Role Management System Module
-Contains /role-create, /role-delete, /role-give, /role-in, /role-remove.
+Contains /role-create, /role-delete, /role-give, /role-in, /role-remove, and /auto-role.
 """
 
 import re
@@ -9,16 +9,12 @@ from discord import app_commands
 from discord.ext import commands
 from typing import Optional, List
 
-import aiohttp
-
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
 
-# Anyone with this role, or a role positioned higher than it in the server's
 ROLE_MANAGEMENT_ROLE_ID = 1527053931304321130
-
 HEX_COLOR_PATTERN = re.compile(r"^#?[0-9a-fA-F]{6}$")
 
 
@@ -49,18 +45,6 @@ def _bot_can_manage(guild: discord.Guild, role: Optional[discord.Role] = None) -
     return True
 
 
-async def _fetch_icon_bytes(url: str) -> Optional[bytes]:
-    """Download an image URL's raw bytes, for use as a role icon."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    return None
-                return await resp.read()
-    except Exception:
-        return None
-
-
 def _parse_color(raw: Optional[str]) -> Optional[discord.Colour]:
     """Parse a #RRGGBB / RRGGBB string into a discord.Colour, or None if blank/invalid."""
     if not raw:
@@ -72,158 +56,7 @@ def _parse_color(raw: Optional[str]) -> Optional[discord.Colour]:
 
 
 # ==========================================
-# ROLE CREATE (Custom Card Panel Flow)
-# ==========================================
-
-class RoleCreateModal(discord.ui.Modal, title="Role Name Setup"):
-    name_input = discord.ui.TextInput(
-        label="Role Name",
-        placeholder="e.g. new role",
-        max_length=100,
-        required=True
-    )
-
-    def __init__(self, supports_icon: bool):
-        super().__init__()
-        self.supports_icon = supports_icon
-
-    async def on_submit(self, interaction: discord.Interaction):
-        name = str(self.name_input.value).strip()
-        view = RoleBuilderPanel(name=name, supports_icon=self.supports_icon)
-        await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
-
-
-class ColorModal(discord.ui.Modal, title="Role Colour"):
-    color_input = discord.ui.TextInput(
-        label="Hex Color",
-        placeholder="#5865F2",
-        max_length=7,
-        required=True
-    )
-
-    def __init__(self, panel_view):
-        super().__init__()
-        self.panel_view = panel_view
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = str(self.color_input.value).strip()
-        parsed = _parse_color(raw)
-        if not parsed:
-            await interaction.response.send_message("❌ Invalid hex color code. Use format like `#5865F2`.", ephemeral=True)
-            return
-        
-        self.panel_view.color = parsed
-        self.panel_view.color_raw = raw if raw.startswith("#") else f"#{raw}"
-        await interaction.response.edit_message(embed=self.panel_view.build_embed(), view=self.panel_view)
-
-
-class IconModal(discord.ui.Modal, title="Role Icon"):
-    icon_input = discord.ui.TextInput(
-        label="Image URL or Custom Emoji",
-        placeholder="https://example.com/icon.png or 🔥",
-        max_length=200,
-        required=True
-    )
-
-    def __init__(self, panel_view):
-        super().__init__()
-        self.panel_view = panel_view
-
-    async def on_submit(self, interaction: discord.Interaction):
-        val = str(self.icon_input.value).strip()
-        if val.startswith("http://") or val.startswith("https://"):
-            self.panel_view.icon_url = val
-            self.panel_view.icon_emoji = None
-        else:
-            self.panel_view.icon_emoji = val
-            self.panel_view.icon_url = None
-
-        await interaction.response.edit_message(embed=self.panel_view.build_embed(), view=self.panel_view)
-
-
-class RoleBuilderPanel(discord.ui.View):
-    def __init__(self, name: str, supports_icon: bool):
-        super().__init__(timeout=300)
-        self.name = name
-        self.supports_icon = supports_icon
-        self.color: Optional[discord.Colour] = None
-        self.color_raw: Optional[str] = None
-        self.icon_emoji: Optional[str] = None
-        self.icon_url: Optional[str] = None
-
-    def build_embed(self) -> discord.Embed:
-        c = self.color or discord.Colour.default()
-        embed = discord.Embed(title="Role Customization Panel", color=c)
-        embed.add_field(name="Role Name", value=self.name, inline=False)
-        embed.add_field(name="Role Colour", value=self.color_raw or "Default (No Colour)", inline=True)
-        
-        icon_display = "None"
-        if self.icon_emoji:
-            icon_display = f"Emoji: {self.icon_emoji}"
-        elif self.icon_url:
-            icon_display = f"Image URL Provided"
-            embed.set_thumbnail(url=self.icon_url)
-            
-        embed.add_field(name="Role Icon", value=icon_display, inline=True)
-        return embed
-
-    @discord.ui.button(label="Choose Colour", style=discord.ButtonStyle.secondary, row=0)
-    async def choose_color_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ColorModal(self))
-
-    @discord.ui.button(label="Choose Image / Icon", style=discord.ButtonStyle.secondary, row=0)
-    async def choose_icon_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self.supports_icon:
-            await interaction.response.send_message("❌ Server does not support `ROLE_ICONS` feature.", ephemeral=True)
-            return
-        await interaction.response.send_modal(IconModal(self))
-
-    @discord.ui.button(label="✅ Create Role", style=discord.ButtonStyle.success, row=1)
-    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        guild = interaction.guild
-        
-        if not _bot_can_manage(guild):
-            await interaction.followup.send("❌ I don't have permission to manage roles here.", ephemeral=True)
-            return
-
-        try:
-            role = await guild.create_role(
-                name=self.name,
-                colour=self.color or discord.Colour.default(),
-                reason=f"Created by {interaction.user} via /role-create panel"
-            )
-
-            if self.icon_emoji and "ROLE_ICONS" in guild.features:
-                try:
-                    await role.edit(unicode_emoji=self.icon_emoji)
-                except Exception:
-                    pass
-            elif self.icon_url and "ROLE_ICONS" in guild.features:
-                icon_bytes = await _fetch_icon_bytes(self.icon_url)
-                if icon_bytes:
-                    try:
-                        await role.edit(icon=icon_bytes)
-                    except Exception:
-                        pass
-
-            await interaction.edit_original_response(
-                content=f"✅ Successfully created role {role.mention}!",
-                embed=None,
-                view=None
-            )
-        except discord.Forbidden:
-            await interaction.followup.send("❌ I don't have permission to create that role.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error creating role: {e}", ephemeral=True)
-
-    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger, row=1)
-    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="❌ Role creation cancelled.", embed=None, view=None)
-
-
-# ==========================================
-# ROLE DELETE
+# ROLE DELETE CONFIRMATION
 # ==========================================
 
 class RoleDeleteConfirmView(discord.ui.View):
@@ -261,7 +94,7 @@ class RoleDeleteConfirmView(discord.ui.View):
 
 
 # ==========================================
-# ROLE PICKER (used by give / remove / in)
+# MULTI-ROLE SELECTOR VIEWS
 # ==========================================
 
 class MultiRoleSelect(discord.ui.RoleSelect):
@@ -284,29 +117,61 @@ class MultiRoleSelectView(discord.ui.View):
 # ==========================================
 
 class RoleManagement(commands.Cog):
-    """Slash commands for creating, deleting, and assigning roles."""
+    """Slash commands for creating, deleting, assigning roles, and auto-roles."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # guild_id -> list of role IDs assigned automatically on join
+        self.auto_roles: dict[int, List[int]] = {}
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        guild_id = member.guild.id
+        if guild_id in self.auto_roles and self.auto_roles[guild_id]:
+            role_ids = self.auto_roles[guild_id]
+            roles_to_add = [member.guild.get_role(rid) for rid in role_ids]
+            roles_to_add = [r for r in roles_to_add if r is not None and _bot_can_manage(member.guild, r)]
+            if roles_to_add:
+                try:
+                    await member.add_roles(*roles_to_add, reason="Automatic join role")
+                except Exception:
+                    pass
 
     # ---------- /role-create ----------
 
-    @app_commands.command(name="role-create", description="Create a new role using an interactive panel")
-    async def role_create(self, interaction: discord.Interaction):
+    @app_commands.command(name="role-create", description="Create a new role with a name and optional color")
+    @app_commands.describe(
+        name="The name of the new role",
+        color="Hex color code (e.g. #5865F2)"
+    )
+    async def role_create(self, interaction: discord.Interaction, name: str, color: Optional[str] = None):
         if not _can_manage_roles(interaction):
-            await interaction.response.send_message(
-                "❌ You don't have permission to manage roles.", ephemeral=True
-            )
+            await interaction.response.send_message("❌ You don't have permission to manage roles.", ephemeral=True)
             return
 
         if not _bot_can_manage(interaction.guild):
+            await interaction.response.send_message("❌ I don't have permission to manage roles here.", ephemeral=True)
+            return
+
+        parsed_color = _parse_color(color) if color else discord.Colour.default()
+        if color and not parsed_color:
             await interaction.response.send_message(
-                "❌ I don't have permission to manage roles here.", ephemeral=True
+                "❌ Invalid color format. Use a hex code like `#5865F2` or `5865F2`.",
+                ephemeral=True
             )
             return
 
-        supports_icon = "ROLE_ICONS" in interaction.guild.features
-        await interaction.response.send_modal(RoleCreateModal(supports_icon))
+        try:
+            role = await interaction.guild.create_role(
+                name=name,
+                colour=parsed_color,
+                reason=f"Created by {interaction.user} via /role-create"
+            )
+            await interaction.response.send_message(f"✅ Successfully created role {role.mention}!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ I don't have permission to create that role.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error creating role: {e}", ephemeral=True)
 
     # ---------- /role-delete ----------
 
@@ -314,9 +179,7 @@ class RoleManagement(commands.Cog):
     @app_commands.describe(role="The role to delete")
     async def role_delete(self, interaction: discord.Interaction, role: discord.Role):
         if not _can_manage_roles(interaction):
-            await interaction.response.send_message(
-                "❌ You don't have permission to manage roles.", ephemeral=True
-            )
+            await interaction.response.send_message("❌ You don't have permission to manage roles.", ephemeral=True)
             return
 
         if role.is_default():
@@ -338,9 +201,7 @@ class RoleManagement(commands.Cog):
     @app_commands.describe(user="The member to give role(s) to")
     async def role_give(self, interaction: discord.Interaction, user: discord.Member):
         if not _can_manage_roles(interaction):
-            await interaction.response.send_message(
-                "❌ You don't have permission to manage roles.", ephemeral=True
-            )
+            await interaction.response.send_message("❌ You don't have permission to manage roles.", ephemeral=True)
             return
 
         async def on_select(select_interaction: discord.Interaction, roles: List[discord.Role]):
@@ -370,9 +231,7 @@ class RoleManagement(commands.Cog):
     @app_commands.describe(user="The member to remove role(s) from")
     async def role_remove(self, interaction: discord.Interaction, user: discord.Member):
         if not _can_manage_roles(interaction):
-            await interaction.response.send_message(
-                "❌ You don't have permission to manage roles.", ephemeral=True
-            )
+            await interaction.response.send_message("❌ You don't have permission to manage roles.", ephemeral=True)
             return
 
         async def on_select(select_interaction: discord.Interaction, roles: List[discord.Role]):
@@ -402,16 +261,12 @@ class RoleManagement(commands.Cog):
     @app_commands.describe(in_role="Members who have this role will receive the new role(s)")
     async def role_in(self, interaction: discord.Interaction, in_role: discord.Role):
         if not _can_manage_roles(interaction):
-            await interaction.response.send_message(
-                "❌ You don't have permission to manage roles.", ephemeral=True
-            )
+            await interaction.response.send_message("❌ You don't have permission to manage roles.", ephemeral=True)
             return
 
-        members = [m for m in in_role.members]
+        members = list(in_role.members)
         if not members:
-            await interaction.response.send_message(
-                f"❌ Nobody currently has {in_role.mention}.", ephemeral=True
-            )
+            await interaction.response.send_message(f"❌ Nobody currently has {in_role.mention}.", ephemeral=True)
             return
 
         async def on_select(select_interaction: discord.Interaction, roles: List[discord.Role]):
@@ -432,10 +287,7 @@ class RoleManagement(commands.Cog):
                 except Exception:
                     continue
 
-            message = (
-                f"✅ Gave {', '.join(r.mention for r in giveable)} to "
-                f"{given_count}/{len(members)} member(s) who have {in_role.mention}."
-            )
+            message = f"✅ Gave {', '.join(r.mention for r in giveable)} to {given_count}/{len(members)} member(s)."
             if skipped:
                 message += f"\n⚠️ Skipped (positioned above my top role): {', '.join(r.mention for r in skipped)}"
 
@@ -446,6 +298,46 @@ class RoleManagement(commands.Cog):
             view=MultiRoleSelectView(on_select),
             ephemeral=True
         )
+
+    # ---------- /auto-role group ----------
+
+    auto_role_group = app_commands.Group(name="auto-role", description="Manage auto-roles for new members joining")
+
+    @auto_role_group.command(name="add", description="Add an auto-role given automatically to new members")
+    @app_commands.describe(role="The role to automatically assign")
+    async def auto_role_add(self, interaction: discord.Interaction, role: discord.Role):
+        if not _can_manage_roles(interaction):
+            await interaction.response.send_message("❌ You don't have permission to manage roles.", ephemeral=True)
+            return
+
+        if not _bot_can_manage(interaction.guild, role):
+            await interaction.response.send_message("❌ I cannot manage that role (it is higher than or equal to my top role).", ephemeral=True)
+            return
+
+        guild_id = interaction.guild.id
+        if guild_id not in self.auto_roles:
+            self.auto_roles[guild_id] = []
+
+        if role.id in self.auto_roles[guild_id]:
+            await interaction.response.send_message(f"⚠️ {role.mention} is already configured as an auto-role.", ephemeral=True)
+            return
+
+        self.auto_roles[guild_id].append(role.id)
+        await interaction.response.send_message(f"✅ Added {role.mention} to auto-roles for new members.", ephemeral=True)
+
+    @auto_role_group.command(name="delete", description="Delete/clear all auto-roles configured for this server")
+    async def auto_role_delete(self, interaction: discord.Interaction):
+        if not _can_manage_roles(interaction):
+            await interaction.response.send_message("❌ You don't have permission to manage roles.", ephemeral=True)
+            return
+
+        guild_id = interaction.guild.id
+        if guild_id in self.auto_roles and self.auto_roles[guild_id]:
+            count = len(self.auto_roles[guild_id])
+            self.auto_roles[guild_id].clear()
+            await interaction.response.send_message(f"✅ Successfully deleted/cleared all {count} auto-role(s) for this server.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ There are no auto-roles currently configured for this server.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
