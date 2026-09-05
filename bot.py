@@ -178,7 +178,7 @@ text_setups = {}
 # ZTP SYSTEM (Zero Tolerance Period - MongoDB Backed)
 # ============================================================
 
-ZTP_ROLE_ID = 1545756479678586890
+ZTP_ROLE_ID = 1545774457124163614
 ZTP_COMMAND_ROLE_ID = 1527053931304321130
 ZTP_DURATION = 300  # 5 minutes in seconds
 
