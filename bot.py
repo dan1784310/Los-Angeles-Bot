@@ -24,6 +24,7 @@ from promotion_main import setup as setup_promotion
 from ping_protection import setup as setup_ping_protection
 from moderation_main import setup as setup_moderation
 from moderation_database import db as mod_db
+from role_management import setup as setup_role_management
 
 
 # ============================================================
@@ -234,6 +235,14 @@ async def on_ready():
         print("[SETUP] Moderation system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading moderation system: {e}")
+        traceback.print_exc()
+
+    print("[SETUP] Loading role management system...")
+    try:
+        await setup_role_management(bot)
+        print("[SETUP] Role management system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading role management system: {e}")
         traceback.print_exc()
 
     try:
@@ -1315,7 +1324,7 @@ async def serverinfo(interaction: discord.Interaction):
         container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
 
         # Header
-        container.add_item(discord.ui.TextDisplay("🏛️ **SERVER INFORMATION**"))
+        container.add_item(discord.ui.TextDisplay("**SERVER INFORMATION**"))
         container.add_item(discord.ui.TextDisplay(guild.name))
 
         container.add_item(discord.ui.Separator())
@@ -1410,7 +1419,7 @@ async def userinfo(interaction: discord.Interaction, user: discord.Member):
         container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
 
         # Header
-        container.add_item(discord.ui.TextDisplay("👤 **USER INFORMATION**"))
+        container.add_item(discord.ui.TextDisplay("**USER INFORMATION**"))
 
         # User section with avatar
         section = discord.ui.Section(
@@ -1492,7 +1501,7 @@ async def roleinfo(interaction: discord.Interaction, role: discord.Role):
         container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
 
         # Header
-        container.add_item(discord.ui.TextDisplay("🎭 **ROLE INFORMATION**"))
+        container.add_item(discord.ui.TextDisplay("**ROLE INFORMATION**"))
 
         # Role name
         container.add_item(discord.ui.TextDisplay(f"{role.mention}"))
