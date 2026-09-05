@@ -1281,12 +1281,6 @@ async def feedback_give(
 bot.tree.add_command(feedback_group)
 
 
-import discord
-from discord import app_commands
-
-# Assuming 'bot' is already defined as commands.Bot or discord.Client with an app_commands.CommandTree
-# bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
-
 # ============================================================
 # SERVER INFO
 # ============================================================
@@ -1323,14 +1317,6 @@ async def serverinfo(interaction: discord.Interaction):
         # Header
         container.add_item(discord.ui.TextDisplay("🏛️ **SERVER INFORMATION**"))
         container.add_item(discord.ui.TextDisplay(guild.name))
-
-        # Server icon
-        if guild.icon:
-            section = discord.ui.Section(
-                discord.ui.TextDisplay("Server Icon"),
-                accessory=discord.ui.Thumbnail(media=guild.icon.url)
-            )
-            container.add_item(section)
 
         container.add_item(discord.ui.Separator())
 
@@ -1509,7 +1495,7 @@ async def roleinfo(interaction: discord.Interaction, role: discord.Role):
         container.add_item(discord.ui.TextDisplay("🎭 **ROLE INFORMATION**"))
 
         # Role name
-        container.add_item(discord.ui.TextDisplay(f"🟦 {role.mention}"))
+        container.add_item(discord.ui.TextDisplay(f"{role.mention}"))
 
         container.add_item(discord.ui.Separator())
 
