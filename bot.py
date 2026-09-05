@@ -178,7 +178,7 @@ text_setups = {}
 # ZTP SYSTEM (Zero Tolerance Period - MongoDB Backed)
 # ============================================================
 
-ZTP_ROLE_ID = 1545756479678586890
+ZTP_ROLE_ID = 1527377838536265908
 ZTP_COMMAND_ROLE_ID = 1527053931304321130
 ZTP_DURATION = 300  # 5 minutes in seconds
 
@@ -341,7 +341,7 @@ class ZTPSystem(commands.Cog):
             role = None
 
         if not role:
-            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1545756479678586890` could not be fetched).", ephemeral=True)
+            await interaction.followup.send("❌ ZTP role configuration error (Role ID `1527377838536265908` could not be fetched).", ephemeral=True)
             return
 
         current_time = time.time()
