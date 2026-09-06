@@ -229,7 +229,7 @@ async def on_message(message: discord.Message):
                     pass
     
     # Check for banned words
-    if message.guild and not message.author.bot
+    if message.guild and not message.author.bot:
         print(f"[BANNED WORD CHECK] Checking message: {message.content}")
         print(f"[BANNED WORD CHECK] Banned words: {BANNED_WORDS}")
         print(f"[BANNED WORD CHECK] Whitelisted words: {WHITELISTED_WORDS}")
