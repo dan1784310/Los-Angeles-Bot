@@ -455,28 +455,30 @@ class GeneralCommands(commands.Cog):
         guild = interaction.guild
         total_members = guild.member_count
         
-        # Calculate online members (not offline status)
-        online_members = sum(1 for m in guild.members if m.status in [discord.Status.online, discord.Status.idle, discord.Status.dnd])
+        # Calculate online members using approximate presence count for large servers
+        if hasattr(guild, 'approximate_presence_count') and guild.approximate_presence_count:
+            online_members = guild.approximate_presence_count
+        else:
+            online_members = sum(1 for m in guild.members if m.status in [discord.Status.online, discord.Status.idle, discord.Status.dnd])
         
         # Calculate bot count
         bot_count = sum(1 for m in guild.members if m.bot)
 
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+        embed = discord.Embed(
+            title=f"{guild.name}",
+            color=discord.Color.from_rgb(37, 37, 41)
+        )
         
-        container.add_item(discord.ui.TextDisplay("**Member Count**"))
-        container.add_item(discord.ui.TextDisplay(f"{total_members}"))
-        container.add_item(discord.ui.Separator())
+        if guild.icon:
+            embed.set_thumbnail(url=guild.icon.url)
         
-        container.add_item(discord.ui.TextDisplay("**Online Members**"))
-        container.add_item(discord.ui.TextDisplay(f"{online_members}"))
-        container.add_item(discord.ui.Separator())
+        embed.add_field(name="Member Count", value=f"{total_members}", inline=True)
+        embed.add_field(name="Online Members", value=f"{online_members}", inline=True)
+        embed.add_field(name="Bots", value=f"{bot_count}", inline=True)
         
-        container.add_item(discord.ui.TextDisplay("**Bots**"))
-        container.add_item(discord.ui.TextDisplay(f"{bot_count}"))
+        embed.set_footer(text=f"Requested by {interaction.user.display_name}")
         
-        view.add_item(container)
-        await interaction.response.send_message(view=view)
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="afk", description="Sets your AFK status.")
     @app_commands.choices(reason=[
