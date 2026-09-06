@@ -26,6 +26,7 @@ from ping_protection import setup as setup_ping_protection
 from moderation_main import setup as setup_moderation
 from moderation_database import db as mod_db
 from role_management import setup as setup_role_management
+from banned_words import BANNED_WORDS, WHITELISTED_WORDS
 
 
 # ============================================================
@@ -74,40 +75,41 @@ RULES_CHANNEL_ID = 1526890579080773693
 # BANNED WORD SYSTEM
 # ============================================================
 
-BANNED_WORDS = ["67", "sex"]
-WHITELISTED_WORDS = ["567", "678"]
+# Banned words are now imported from banned_words.py]
+
 
 
 def contains_banned_word(message: str) -> bool:
     """
     Check if message contains banned words, but allow whitelisted variations.
+    Uses more precise matching to avoid false positives.
     Example: "67" is banned, but "567" and "678" are whitelisted.
     """
     message_lower = message.lower()
     print(f"[BANNED WORD LOGIC] Checking: '{message_lower}'")
     
+    # First check if any whitelisted word is in the message
+    for whitelisted in WHITELISTED_WORDS:
+        whitelisted_lower = whitelisted.lower()
+        if whitelisted_lower in message_lower:
+            print(f"[BANNED WORD LOGIC] Message contains whitelisted word '{whitelisted_lower}' - ALLOWING")
+            return False
+    
+    # Then check for banned words with more precise matching
     for banned in BANNED_WORDS:
         banned_lower = banned.lower()
         print(f"[BANNED WORD LOGIC] Checking banned word: '{banned_lower}'")
         
-        # Check if banned word appears in message
-        if banned_lower in message_lower:
-            print(f"[BANNED WORD LOGIC] Found banned word '{banned_lower}' in message")
-            # Check if it's part of any whitelisted word
-            is_whitelisted = False
-            for whitelisted in WHITELISTED_WORDS:
-                whitelisted_lower = whitelisted.lower()
-                print(f"[BANNED WORD LOGIC] Checking if whitelisted word '{whitelisted_lower}' is in message")
-                if whitelisted_lower in message_lower:
-                    # The whitelisted word contains the banned word
-                    if banned_lower in whitelisted_lower:
-                        print(f"[BANNED WORD LOGIC] Message contains whitelisted word '{whitelisted_lower}' - allowing")
-                        is_whitelisted = True
-                        break
-            
-            if not is_whitelisted:
-                print(f"[BANNED WORD LOGIC] Banned word found and not whitelisted - BLOCKING")
-                return True
+        # Use regex for more precise matching with word boundaries
+        # This prevents matching partial words incorrectly
+        pattern = r'\b' + re.escape(banned_lower) + r'\b'
+        if re.search(pattern, message_lower):
+            print(f"[BANNED WORD LOGIC] Found banned word '{banned_lower}' as exact match - BLOCKING")
+            return True
+        # For patterns that include spaces or special chars, use simple substring matching
+        elif not banned_lower.isalnum() and banned_lower in message_lower:
+            print(f"[BANNED WORD LOGIC] Found banned word '{banned_lower}' as pattern match - BLOCKING")
+            return True
     
     print(f"[BANNED WORD LOGIC] No banned words found - ALLOWING")
     return False
@@ -231,8 +233,8 @@ async def on_message(message: discord.Message):
     # Check for banned words
     if message.guild and not message.author.bot:
         print(f"[BANNED WORD CHECK] Checking message: {message.content}")
-        print(f"[BANNED WORD CHECK] Banned words: {BANNED_WORDS}")
-        print(f"[BANNED WORD CHECK] Whitelisted words: {WHITELISTED_WORDS}")
+        print(f"[BANNED WORD CHECK] Banned words count: {len(BANNED_WORDS)}")
+        print(f"[BANNED WORD CHECK] Whitelisted words count: {len(WHITELISTED_WORDS)}")
         
         result = contains_banned_word(message.content)
         print(f"[BANNED WORD CHECK] Result: {result}")
