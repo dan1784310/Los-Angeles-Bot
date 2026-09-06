@@ -29,6 +29,14 @@ from role_management import setup as setup_role_management
 
 
 # ============================================================
+# DATABASE COLLECTIONS
+# ============================================================
+
+# Initialize collections that are needed in event handlers
+afk_collection = mod_db.db["afk_status"]
+
+
+# ============================================================
 # COMMAND ROLE PERMISSIONS
 # ============================================================
 
@@ -214,10 +222,14 @@ async def on_message(message: discord.Message):
     
     # Check for banned words
     if message.guild and not message.author.bot and not message.author.guild_permissions.administrator:
-        if contains_banned_word(message.content):
+        print(f"[BANNED WORD CHECK] Checking message: {message.content}")
+        result = contains_banned_word(message.content)
+        print(f"[BANNED WORD CHECK] Result: {result}")
+        if result:
             try:
                 await message.delete()
                 await message.channel.send("That word is banned from the server", delete_after=5)
+                print(f"[BANNED WORD] Deleted message from {message.author}")
             except Exception as e:
                 print(f"[BANNED WORD] Could not delete message: {e}")
     
@@ -483,8 +495,6 @@ class ZTPSystem(commands.Cog):
 # ============================================================
 # GENERAL UTILITY COMMANDS (Components V2 / Everyone)
 # ============================================================
-
-afk_collection = mod_db.db["afk_status"]
 
 class GeneralCommands(commands.Cog):
     def __init__(self, bot):
