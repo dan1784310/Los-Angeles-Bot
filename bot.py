@@ -152,7 +152,7 @@ async def on_message(message: discord.Message):
             view.add_item(container)
             
             try:
-                await message.channel.send(view=view, delete_after=5)
+                await message.channel.send(view=view, delete_after=5, reference=message)
             except Exception:
                 pass
     
@@ -165,7 +165,7 @@ async def on_message(message: discord.Message):
             query = {"guild_id": message.guild.id, "user_id": mentioned_user.id}
             afk_data = afk_collection.find_one(query)
             if afk_data:
-                reason = afk_data.get("reason", "AFK").lower()
+                reason = afk_data.get("reason", "AFK")
                 
                 view = discord.ui.LayoutView(timeout=None)
                 container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
@@ -173,7 +173,7 @@ async def on_message(message: discord.Message):
                 view.add_item(container)
                 
                 try:
-                    await message.channel.send(view=view, delete_after=10)
+                    await message.channel.send(view=view, delete_after=10, reference=message)
                 except Exception:
                     pass
     
@@ -455,8 +455,8 @@ class GeneralCommands(commands.Cog):
         guild = interaction.guild
         total_members = guild.member_count
         
-        # Calculate online members
-        online_members = sum(1 for m in guild.members if m.status != discord.Status.offline)
+        # Calculate online members (not offline status)
+        online_members = sum(1 for m in guild.members if m.status in [discord.Status.online, discord.Status.idle, discord.Status.dnd])
         
         # Calculate bot count
         bot_count = sum(1 for m in guild.members if m.bot)
@@ -504,9 +504,9 @@ class GeneralCommands(commands.Cog):
             upsert=True
         )
 
-        new_nick = f"[AFK] {original_nick}"
+        new_nick = f"[AFK] ({original_nick})"
         if len(new_nick) > 32:
-            new_nick = "[AFK] " + original_nick[:26]
+            new_nick = "[AFK] (" + original_nick[:22] + ")"
 
         try:
             await member.edit(nick=new_nick, reason=f"Set AFK: {reason}")
