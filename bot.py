@@ -62,6 +62,41 @@ EMOJI_NITRO = discord.PartialEmoji.from_str("<:nitro_gem:1541553100547162132>")
 FEEDBACK_CHANNEL_ID = 1527066281084321863
 RULES_CHANNEL_ID = 1526890579080773693
 
+# ============================================================
+# BANNED WORD SYSTEM
+# ============================================================
+
+BANNED_WORDS = ["67", "sex"]
+WHITELISTED_WORDS = ["567", "678"]
+
+
+def contains_banned_word(message: str) -> bool:
+    """
+    Check if message contains banned words, but allow whitelisted variations.
+    Example: "67" is banned, but "567" and "678" are whitelisted.
+    """
+    message_lower = message.lower()
+    
+    for banned in BANNED_WORDS:
+        banned_lower = banned.lower()
+        
+        # Check if banned word appears in message
+        if banned_lower in message_lower:
+            # Check if it's part of any whitelisted word
+            is_whitelisted = False
+            for whitelisted in WHITELISTED_WORDS:
+                whitelisted_lower = whitelisted.lower()
+                if whitelisted_lower in message_lower:
+                    # The whitelisted word contains the banned word
+                    if banned_lower in whitelisted_lower:
+                        is_whitelisted = True
+                        break
+            
+            if not is_whitelisted:
+                return True
+    
+    return False
+
 
 # ============================================================
 # PERMISSION HELPERS
@@ -176,6 +211,15 @@ async def on_message(message: discord.Message):
                     await message.channel.send(view=view, delete_after=10, reference=message)
                 except Exception:
                     pass
+    
+    # Check for banned words
+    if message.guild and not message.author.bot and not message.author.guild_permissions.administrator:
+        if contains_banned_word(message.content):
+            try:
+                await message.delete()
+                await message.channel.send("That word is banned from the server", delete_after=5)
+            except Exception as e:
+                print(f"[BANNED WORD] Could not delete message: {e}")
     
     await bot.process_commands(message)
 
