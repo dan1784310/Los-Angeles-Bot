@@ -84,25 +84,32 @@ def contains_banned_word(message: str) -> bool:
     Example: "67" is banned, but "567" and "678" are whitelisted.
     """
     message_lower = message.lower()
+    print(f"[BANNED WORD LOGIC] Checking: '{message_lower}'")
     
     for banned in BANNED_WORDS:
         banned_lower = banned.lower()
+        print(f"[BANNED WORD LOGIC] Checking banned word: '{banned_lower}'")
         
         # Check if banned word appears in message
         if banned_lower in message_lower:
+            print(f"[BANNED WORD LOGIC] Found banned word '{banned_lower}' in message")
             # Check if it's part of any whitelisted word
             is_whitelisted = False
             for whitelisted in WHITELISTED_WORDS:
                 whitelisted_lower = whitelisted.lower()
+                print(f"[BANNED WORD LOGIC] Checking if whitelisted word '{whitelisted_lower}' is in message")
                 if whitelisted_lower in message_lower:
                     # The whitelisted word contains the banned word
                     if banned_lower in whitelisted_lower:
+                        print(f"[BANNED WORD LOGIC] Message contains whitelisted word '{whitelisted_lower}' - allowing")
                         is_whitelisted = True
                         break
             
             if not is_whitelisted:
+                print(f"[BANNED WORD LOGIC] Banned word found and not whitelisted - BLOCKING")
                 return True
     
+    print(f"[BANNED WORD LOGIC] No banned words found - ALLOWING")
     return False
 
 
@@ -174,7 +181,8 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    print(f"[MESSAGE DEBUG] {message.content}")
+    print(f"[MESSAGE DEBUG] Author: {message.author}, Content: {message.content}")
+    print(f"[MESSAGE DEBUG] Is guild: {message.guild}, Is admin: {message.author.guild_permissions.administrator if message.guild else 'N/A'}")
     
     # Check if user is AFK and remove status
     if message.guild and isinstance(message.author, discord.Member):
@@ -223,15 +231,22 @@ async def on_message(message: discord.Message):
     # Check for banned words
     if message.guild and not message.author.bot and not message.author.guild_permissions.administrator:
         print(f"[BANNED WORD CHECK] Checking message: {message.content}")
+        print(f"[BANNED WORD CHECK] Banned words: {BANNED_WORDS}")
+        print(f"[BANNED WORD CHECK] Whitelisted words: {WHITELISTED_WORDS}")
+        
         result = contains_banned_word(message.content)
         print(f"[BANNED WORD CHECK] Result: {result}")
+        
         if result:
+            print(f"[BANNED WORD] Attempting to delete message from {message.author}")
             try:
                 await message.delete()
                 await message.channel.send("That word is banned from the server", delete_after=5)
-                print(f"[BANNED WORD] Deleted message from {message.author}")
+                print(f"[BANNED WORD] Successfully deleted message from {message.author}")
             except Exception as e:
                 print(f"[BANNED WORD] Could not delete message: {e}")
+        else:
+            print(f"[BANNED WORD] Message allowed - no banned words found")
     
     await bot.process_commands(message)
 
@@ -612,6 +627,12 @@ class GeneralCommands(commands.Cog):
         view.add_item(container)
 
         await interaction.response.send_message(view=view)
+
+    @app_commands.command(name="test-banned", description="Test the banned word system")
+    @app_commands.describe(message="Message to test")
+    async def test_banned(self, interaction: discord.Interaction, message: str):
+        result = contains_banned_word(message)
+        await interaction.response.send_message(f"Testing message: '{message}'\nContains banned word: {result}", ephemeral=True)
 
 
 # ============================================================
