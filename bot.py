@@ -80,75 +80,118 @@ RULES_CHANNEL_ID = 1526890579080773693
 
 
 
+def normalize_banned_text(text: str) -> str:
+    """
+    Aggressively normalizes Unicode text so font/emoji variations
+    can be detected by the banned-word system.
+    """
+
+    result = []
+
+    for char in text:
+        # First try Unicode compatibility normalization.
+        normalized_char = unicodedata.normalize("NFKC", char)
+
+        # Some emoji-style Unicode letters don't normalize with NFKC.
+        # Use their Unicode name to recover the actual letter.
+        name = unicodedata.name(char, "")
+
+        match = re.search(
+            r"LATIN (?:CAPITAL|SMALL) LETTER ([A-Z])",
+            name
+        )
+
+        if match:
+            result.append(match.group(1).lower())
+        else:
+            result.append(normalized_char)
+
+    text = "".join(result).casefold()
+
+    # Remove Discord custom emoji markup while checking the emoji name.
+    # <:name:id> / <a:name:id>
+    text = re.sub(
+        r"<a?:([^:>]+):\d+>",
+        r" \1 ",
+        text
+    )
+
+    # Remove Unicode variation selectors, emoji modifiers,
+    # keycap marks, punctuation, spaces, etc.
+    text = re.sub(
+        r"[\W_]+",
+        "",
+        text,
+        flags=re.UNICODE
+    )
+
+    return text
+
+
 def contains_banned_word(message: str) -> bool:
     """
-    Check whether a message contains a banned word.
+    Checks a message against the banned-word list after aggressive
+    Unicode/emoji normalization.
 
-    The message is normalized so common variations such as:
-        67
-        6 7
-        6-7
-        6.7
-        ６７
-        ⁶⁷
-        6️⃣7️⃣
-
-    can be detected.
-
-    Numeric words such as 567 and 678 are not treated as containing
-    the standalone banned word 67.
+    Whitelisted users are handled separately in on_message().
     """
 
-    # Normalize Unicode characters
-    normalized = unicodedata.normalize("NFKC", message).casefold()
+    normalized = normalize_banned_text(message)
 
-    # Remove separators, punctuation, spaces and emoji modifiers.
-    # This makes things such as "6-7", "6 7", "６７", etc. become "67".
-    normalized = re.sub(r"[\W_]+", "", normalized, flags=re.UNICODE)
+    print(f"[BANNED WORD] Original: {message!r}")
+    print(f"[BANNED WORD] Normalized: {normalized!r}")
 
-    print(f"[BANNED WORD LOGIC] Original: {message!r}")
-    print(f"[BANNED WORD LOGIC] Normalized: {normalized!r}")
-
+    # Check banned words
     for banned in BANNED_WORDS:
-        banned_normalized = unicodedata.normalize(
-            "NFKC",
-            banned
-        ).casefold()
 
-        banned_normalized = re.sub(
-            r"[\W_]+",
-            "",
-            banned_normalized,
-            flags=re.UNICODE
-        )
+        banned_normalized = normalize_banned_text(banned)
 
         if not banned_normalized:
             continue
 
-        # If the banned term is purely numeric, make sure it isn't
-        # part of a larger number.
-        if banned_normalized.isdigit():
-            pattern = rf"(?<!\d){re.escape(banned_normalized)}(?!\d)"
+        # Special handling for 67.
+        if banned_normalized == "67":
 
-            if re.search(pattern, normalized):
+            for match in re.finditer("67", normalized):
+
+                start = match.start()
+                end = match.end()
+
+                # Find the complete number around the match.
+                left = start
+                right = end
+
+                while left > 0 and normalized[left - 1].isdigit():
+                    left -= 1
+
+                while right < len(normalized) and normalized[right].isdigit():
+                    right += 1
+
+                surrounding_number = normalized[left:right]
+
+                # These are explicitly allowed.
+                if surrounding_number in WHITELISTED_WORDS:
+                    print(
+                        f"[BANNED WORD] "
+                        f"'{surrounding_number}' is whitelisted."
+                    )
+                    continue
+
                 print(
-                    f"[BANNED WORD LOGIC] "
-                    f"Found banned number '{banned_normalized}' - BLOCKING"
+                    f"[BANNED WORD] "
+                    f"Found 67 in '{surrounding_number}' - BLOCKING"
                 )
                 return True
 
         else:
-            # For normal words, prevent matching inside another word.
-            pattern = rf"(?<![a-z0-9]){re.escape(banned_normalized)}(?![a-z0-9])"
-
-            if re.search(pattern, normalized):
+            # Normal banned words.
+            if banned_normalized in normalized:
                 print(
-                    f"[BANNED WORD LOGIC] "
-                    f"Found banned word '{banned_normalized}' - BLOCKING"
+                    f"[BANNED WORD] "
+                    f"Found banned term '{banned_normalized}' - BLOCKING"
                 )
                 return True
 
-    print("[BANNED WORD LOGIC] No banned words found - ALLOWING")
     return False
 
 
@@ -217,31 +260,31 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_message(message: discord.Message):
+
     if message.author.bot:
         return
 
+    # ============================================================
     # BANNED WORD SYSTEM
+    # ============================================================
 
     if message.guild:
 
-        # Users in WHITELISTED_USERS completely bypass the filter.
+        # Completely bypass banned-word filtering for these users.
         if message.author.id in WHITELISTED_USERS:
+
             print(
                 f"[BANNED WORD] "
-                f"{message.author} ({message.author.id}) is whitelisted - ALLOWING"
+                f"{message.author} is whitelisted."
             )
 
         else:
-            print(f"[BANNED WORD CHECK] Checking message: {message.content}")
 
-            result = contains_banned_word(message.content)
+            if contains_banned_word(message.content):
 
-            print(f"[BANNED WORD CHECK] Result: {result}")
-
-            if result:
                 print(
                     f"[BANNED WORD] "
-                    f"Attempting to delete message from {message.author}"
+                    f"Deleting message from {message.author}"
                 )
 
                 try:
@@ -252,25 +295,22 @@ async def on_message(message: discord.Message):
                         delete_after=5
                     )
 
-                    print(
-                        f"[BANNED WORD] "
-                        f"Successfully deleted message from {message.author}"
-                    )
-
                 except discord.Forbidden:
                     print(
-                        "[BANNED WORD] ERROR: "
+                        "[BANNED WORD] "
                         "I don't have permission to delete messages."
                     )
 
                 except discord.NotFound:
                     print(
-                        "[BANNED WORD] Message was already deleted."
+                        "[BANNED WORD] "
+                        "Message was already deleted."
                     )
 
                 except Exception as e:
                     print(
-                        f"[BANNED WORD] Could not delete message: {e}"
+                        f"[BANNED WORD] "
+                        f"Error deleting message: {e}"
                     )
 
 
