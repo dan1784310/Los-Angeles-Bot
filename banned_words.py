@@ -3,6 +3,7 @@
 # Words / phrases that should be blocked.
 BANNED_WORDS = [
     "67",
+    "six seven",
     "sex",
 ]
 
@@ -26,6 +27,5 @@ WHITELISTED_WORDS = [
 #
 # Keep this empty if nobody should be exempt.
 WHITELISTED_USERS = [
-    1488252011374710958,
     1070969846508028007,
 ]
