@@ -1,117 +1,31 @@
-# Banned words configuration
-# This file contains the list of banned words and whitelisted words
+# banned_words.py
 
+# Words / phrases that should be blocked.
 BANNED_WORDS = [
     "67",
     "sex",
-    "6 7",
-    "6-7",
-    "6_7",
-    "6.7",
-    "6,7",
-    "6/7",
-    "6\\7",
-    "6:7",
-    "6;7",
-    "6|7",
-    "6+7",
-    "6=7",
-    "6~7",
-    "6*7",
-    "6#7",
-    "6@7",
-    "6&7",
-    "6%7",
-    "6^7",
-    "67!",
-    "67?",
-    "67.",
-    "67,",
-    "67:",
-    "67;",
-    "67-",
-    "-67",
-    "+67",
-    "067",
-    "0067",
-    "00067",
-    "67th",
-    "67TH",
-    "Six Seven",
-    "six seven",
-    "SIX SEVEN",
-    "Six-Seven",
-    "six-seven",
-    "SIX-SEVEN",
-    "Sixty-seven",
-    "sixty-seven",
-    "SIXTY-SEVEN",
-    "Sixty Seven",
-    "sixty seven",
-    "SIXTY SEVEN",
-    "Six7",
-    "6Seven",
-    "six7",
-    "6seven",
-    "SIX7",
-    "6SEVEN",
-    "⑥⑦",
-    "６７",
-    "⁶⁷",
-    "₆₇",
-    "❻❼",
-    "➏➐",
-    "➅➆",
-    "𝟔𝟕",
-    "𝟞𝟟",
-    "𝟨𝟩",
-    "𝟲𝟳",
-    "𝟼𝟽",
-    "6️⃣7️⃣",
-    "6️⃣ 7️⃣",
-    "6️⃣-7️⃣",
-    "6️⃣.7️⃣",
-    "6️⃣/7️⃣",
-    "6️⃣7",
-    "6  7",
-    "6   7",
-    "6\t7",
-    "6\n7",
-    "6\r7",
-    "67 ",
-    " 67",
-    " 67 ",
-    "67\n",
-    "67\t",
-    "67!!",
-    "67??",
-    "67...",
-    "(67)",
-    "[67]",
-    "{67}",
-    "<67>",
-    "«67»",
-    "\"67\"",
-    "'67'",
-    "`67`",
-    "**67**",
-    "__67__",
-    "~~67~~",
-    "#67",
-    "##67",
-    "@67",
-    "# 67",
-    "6•7",
-    "6·7",
-    "6°7",
-    "6→7",
-    "6←7",
-    "6→ 7",
-    "6 / 7",
-    "6 . 7"
 ]
 
+# These are allowed even though they contain "67".
+# Example:
+# 567 -> allowed
+# 678 -> allowed
 WHITELISTED_WORDS = [
     "567",
-    "678"
+    "678",
+]
+
+# Discord USER IDs that completely bypass the banned-word system.
+# Put the user's numeric Discord ID inside the list.
+#
+# Example:
+# WHITELISTED_USERS = [
+#     123456789012345678,
+#     987654321098765432,
+# ]
+#
+# Keep this empty if nobody should be exempt.
+WHITELISTED_USERS = [
+    1488252011374710958,
+    1070969846508028007,
 ]
