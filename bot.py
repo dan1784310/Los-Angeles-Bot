@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import os
+import random
 import re
 import threading
 import time
@@ -59,6 +60,7 @@ EMOJI_STAR = discord.PartialEmoji.from_str("<:star:1541552889993101323>")
 EMOJI_NITRO = discord.PartialEmoji.from_str("<:nitro_gem:1541553100547162132>")
 
 FEEDBACK_CHANNEL_ID = 1527066281084321863
+RULES_CHANNEL_ID = 1526890579080773693
 
 
 # ============================================================
@@ -130,6 +132,51 @@ async def on_message(message: discord.Message):
         return
 
     print(f"[MESSAGE DEBUG] {message.content}")
+    
+    # Check if user is AFK and remove status
+    if message.guild and isinstance(message.author, discord.Member):
+        query = {"guild_id": message.guild.id, "user_id": message.author.id}
+        afk_data = afk_collection.find_one(query)
+        if afk_data:
+            original_nick = afk_data.get("original_nick", message.author.name)
+            afk_collection.delete_one(query)
+            
+            try:
+                await message.author.edit(nick=original_nick, reason="User is back online")
+            except Exception:
+                pass
+            
+            view = discord.ui.LayoutView(timeout=None)
+            container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+            container.add_item(discord.ui.TextDisplay("✅ You are back online, AFK status removed."))
+            view.add_item(container)
+            
+            try:
+                await message.channel.send(view=view, delete_after=5)
+            except Exception:
+                pass
+    
+    # Check if message mentions any AFK users
+    if message.guild and message.mentions:
+        for mentioned_user in message.mentions:
+            if mentioned_user.bot:
+                continue
+                
+            query = {"guild_id": message.guild.id, "user_id": mentioned_user.id}
+            afk_data = afk_collection.find_one(query)
+            if afk_data:
+                reason = afk_data.get("reason", "AFK").lower()
+                
+                view = discord.ui.LayoutView(timeout=None)
+                container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+                container.add_item(discord.ui.TextDisplay(f"👋 The user is currently **{reason}**."))
+                view.add_item(container)
+                
+                try:
+                    await message.channel.send(view=view, delete_after=10)
+                except Exception:
+                    pass
+    
     await bot.process_commands(message)
 
 
@@ -399,7 +446,7 @@ class GeneralCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="membercount", description="Shows the server member count, online members, and bots.")
+    @app_commands.command(name="membercount", description="Shows the server member count.")
     async def membercount(self, interaction: discord.Interaction):
         if not interaction.guild:
             await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
@@ -408,35 +455,26 @@ class GeneralCommands(commands.Cog):
         guild = interaction.guild
         total_members = guild.member_count
         
-        # Calculate online/active members status count
-        online_members = sum(
-            1 for m in guild.members 
-            if m.status != discord.Status.offline and not m.bot
-        )
+        # Calculate online members
+        online_members = sum(1 for m in guild.members if m.status != discord.Status.offline)
         
         # Calculate bot count
         bot_count = sum(1 for m in guild.members if m.bot)
 
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
-
-        # Header section with server icon and name matching the style
-        icon_url = guild.icon.url if guild.icon else None
-        if icon_url:
-            section = discord.ui.Section(
-                discord.ui.TextDisplay(f"### {guild.name}"),
-                accessory=discord.ui.Thumbnail(source=icon_url)
-            )
-            container.add_item(section)
-            container.add_item(discord.ui.Separator())
-        else:
-            container.add_item(discord.ui.TextDisplay(f"### {guild.name}"))
-            container.add_item(discord.ui.Separator())
-
-        # Column headers & stats layout
-        container.add_item(discord.ui.TextDisplay("**Member Count** | **Online Members** | **Bots**"))
-        container.add_item(discord.ui.TextDisplay(f"{total_members}                 | {online_members}                  | {bot_count}"))
-
+        
+        container.add_item(discord.ui.TextDisplay("**Member Count**"))
+        container.add_item(discord.ui.TextDisplay(f"{total_members}"))
+        container.add_item(discord.ui.Separator())
+        
+        container.add_item(discord.ui.TextDisplay("**Online Members**"))
+        container.add_item(discord.ui.TextDisplay(f"{online_members}"))
+        container.add_item(discord.ui.Separator())
+        
+        container.add_item(discord.ui.TextDisplay("**Bots**"))
+        container.add_item(discord.ui.TextDisplay(f"{bot_count}"))
+        
         view.add_item(container)
         await interaction.response.send_message(view=view)
 
@@ -492,7 +530,7 @@ class GeneralCommands(commands.Cog):
 
         await interaction.response.send_message(view=view)
 
-    @app_commands.command(name="roll", description="Rolls a random number between a lowest and highest number.")
+    @app_commands.command(name="roll-number", description="Rolls a random number between a lowest and highest number.")
     @app_commands.describe(lowest_number="The minimum possible number", highest_number="The maximum possible number")
     async def roll(self, interaction: discord.Interaction, lowest_number: int, highest_number: int):
         if lowest_number > highest_number:
@@ -508,6 +546,10 @@ class GeneralCommands(commands.Cog):
 
     @app_commands.command(name="rules", description="Displays server rules location.")
     async def rules(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message("❌ This command can only be used in a server.", ephemeral=True)
+            return
+
         view = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
         container.add_item(discord.ui.TextDisplay(f"📜 The rules are in <#{RULES_CHANNEL_ID}>, go read it."))
