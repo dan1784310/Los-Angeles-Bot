@@ -6,7 +6,6 @@ import re
 import threading
 import time
 import traceback
-import unicodedata
 from typing import Optional
 
 import discord
@@ -27,8 +26,6 @@ from ping_protection import setup as setup_ping_protection
 from moderation_main import setup as setup_moderation
 from moderation_database import db as mod_db
 from role_management import setup as setup_role_management
-from banned_words import BANNED_WORDS, WHITELISTED_WORDS, WHITELISTED_USERS
-recent_banned_messages = {}
 
 # ============================================================
 # DATABASE COLLECTIONS
@@ -71,197 +68,6 @@ EMOJI_NITRO = discord.PartialEmoji.from_str("<:nitro_gem:1541553100547162132>")
 
 FEEDBACK_CHANNEL_ID = 1527066281084321863
 RULES_CHANNEL_ID = 1526890579080773693
-
-# ============================================================
-# BANNED WORD SYSTEM
-# ============================================================
-
-def normalize_banned_text(text: str) -> str:
-    """
-    Converts common Unicode/fancy/emoji representations into
-    something the banned-word filter can understand.
-    """
-
-    # Unicode compatibility normalization
-    text = unicodedata.normalize("NFKC", text)
-
-    # Lowercase
-    text = text.casefold()
-
-    # Discord custom emojis:
-    #
-    # <:six:123456789>
-    # <a:seven:123456789>
-    #
-    # Keep the emoji NAME so we can inspect it.
-    text = re.sub(
-        r"<a?:([^:>]+):\d+>",
-        r" \1 ",
-        text
-    )
-
-    # Remove variation selectors / emoji modifiers
-    text = re.sub(
-        r"[\ufe00-\ufe0f\u200d]",
-        "",
-        text
-    )
-
-    # Convert common emoji-style numbers.
-    emoji_number_map = {
-        "0️⃣": "0",
-        "1️⃣": "1",
-        "2️⃣": "2",
-        "3️⃣": "3",
-        "4️⃣": "4",
-        "5️⃣": "5",
-        "6️⃣": "6",
-        "7️⃣": "7",
-        "8️⃣": "8",
-        "9️⃣": "9",
-
-        "⓪": "0",
-        "①": "1",
-        "②": "2",
-        "③": "3",
-        "④": "4",
-        "⑤": "5",
-        "⑥": "6",
-        "⑦": "7",
-        "⑧": "8",
-        "⑨": "9",
-
-        "❶": "1",
-        "❷": "2",
-        "❸": "3",
-        "❹": "4",
-        "❺": "5",
-        "❻": "6",
-        "❼": "7",
-        "❽": "8",
-        "❾": "9",
-
-        "➀": "1",
-        "➁": "2",
-        "➂": "3",
-        "➃": "4",
-        "➄": "5",
-        "➅": "6",
-        "➆": "7",
-        "➇": "8",
-        "➈": "9",
-
-        "⁶": "6",
-        "⁷": "7",
-        "₆": "6",
-        "₇": "7",
-    }
-
-    for emoji, replacement in emoji_number_map.items():
-        text = text.replace(emoji, replacement)
-
-    # Common fancy Latin characters.
-    # NFKC handles many of these already, but this catches
-    # additional common substitutions.
-    confusable_map = str.maketrans({
-        "ⓢ": "s",
-        "ⓘ": "i",
-        "ⓧ": "x",
-        "ⓔ": "e",
-        "ⓥ": "v",
-        "ⓕ": "f",
-        "ⓣ": "t",
-        "ⓢ": "s",
-
-        "€": "e",
-        "✓": "v",
-        "♗": "i",
-        "♫": "n",
-        "⌘": "x",
-        "💲": "s",
-
-        "ɨ": "i",
-        "✗": "x",
-
-        "９": "9",
-        "６": "6",
-        "７": "7",
-    })
-
-    text = text.translate(confusable_map)
-
-    # Turn punctuation/spaces into separators first.
-    text = re.sub(r"[\W_]+", " ", text, flags=re.UNICODE)
-
-    # Collapse whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-
-    return text
-
-    def contains_banned_word(message: str) -> bool:
-
-    normalized = normalize_banned_text(message)
-
-    print(f"[BANNED WORD] Original: {message!r}")
-    print(f"[BANNED WORD] Normalized: {normalized!r}")
-
-
-    # Check banned terms
-    for banned in BANNED_WORDS:
-
-        banned_normalized = normalize_banned_text(banned)
-
-        if not banned_normalized:
-            continue
-
-        # Special handling for 67
-
-        if banned_normalized == "67":
-
-            # Remove separators ONLY for this numeric check.
-            compact = re.sub(r"\D", "", normalized)
-
-            # Check the original normalized text for 67.
-            for match in re.finditer(r"67", compact):
-
-                start = match.start()
-                end = match.end()
-
-                # Find the complete number around this occurrence.
-                left = start
-                right = end
-
-                while left > 0 and compact[left - 1].isdigit():
-                    left -= 1
-
-                while right < len(compact) and compact[right].isdigit():
-                    right += 1
-
-                number = compact[left:right]
-
-                # Explicitly allowed numbers.
-                if number in WHITELISTED_WORDS:
-                    continue
-
-                print(
-                    f"[BANNED WORD] Found 67 in '{number}'"
-                )
-                return True
-
-        # --------------------------------------------------------
-        # Normal banned phrases
-        # --------------------------------------------------------
-
-        else:
-
-            if banned_normalized in normalized:
-                print(
-                    f"[BANNED WORD] "
-                    f"Found '{banned_normalized}'"
-                )
-                return True
-
-    return False
 
 
 # ============================================================
@@ -329,200 +135,56 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_message(message: discord.Message):
-
     if message.author.bot:
         return
 
-    # ============================================================
-    # BANNED WORD SYSTEM
-    # ============================================================
-
-    if message.guild:
-
-        # Completely bypass banned-word filtering for these users.
-        if message.author.id in WHITELISTED_USERS:
-
-            print(
-                f"[BANNED WORD] "
-                f"{message.author} is whitelisted."
-            )
-
-        else:
-
-            if contains_banned_word(message.content):
-
-                print(
-                    f"[BANNED WORD] "
-                    f"Deleting message from {message.author}"
-                )
-
+    print(f"[MESSAGE DEBUG] Author: {message.author}, Content: {message.content}")
+    
+    # Check if user is AFK and remove status
+    if message.guild and isinstance(message.author, discord.Member):
+        query = {"guild_id": message.guild.id, "user_id": message.author.id}
+        afk_data = afk_collection.find_one(query)
+        if afk_data:
+            original_nick = afk_data.get("original_nick", message.author.name)
+            afk_collection.delete_one(query)
+            
+            try:
+                await message.author.edit(nick=original_nick, reason="User is back online")
+            except Exception:
+                pass
+            
+            view = discord.ui.LayoutView(timeout=None)
+            container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+            container.add_item(discord.ui.TextDisplay("✅ You are back online, AFK status removed."))
+            view.add_item(container)
+            
+            try:
+                await message.channel.send(view=view, delete_after=5, reference=message)
+            except Exception:
+                pass
+    
+    # Check if message mentions any AFK users
+    if message.guild and message.mentions:
+        for mentioned_user in message.mentions:
+            if mentioned_user.bot:
+                continue
+                
+            query = {"guild_id": message.guild.id, "user_id": mentioned_user.id}
+            afk_data = afk_collection.find_one(query)
+            if afk_data:
+                reason = afk_data.get("reason", "AFK")
+                
+                view = discord.ui.LayoutView(timeout=None)
+                container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+                container.add_item(discord.ui.TextDisplay(f"👋 The user is currently **{reason}**."))
+                view.add_item(container)
+                
                 try:
-                    await message.delete()
-
-                    await message.channel.send(
-                        "That word is banned from the server.",
-                        delete_after=5
-                    )
-
-                except discord.Forbidden:
-                    print(
-                        "[BANNED WORD] "
-                        "I don't have permission to delete messages."
-                    )
-
-                except discord.NotFound:
-                    print(
-                        "[BANNED WORD] "
-                        "Message was already deleted."
-                    )
-
-                except Exception as e:
-                    print(
-                        f"[BANNED WORD] "
-                        f"Error deleting message: {e}"
-                    )
-
-@bot.event
-async def on_raw_message_edit(payload: discord.RawMessageUpdateEvent):
-
-    # Ignore DMs
-    if payload.guild_id is None:
-        return
-
-    # Ignore whitelisted users
-    author_id = payload.data.get("author", {}).get("id")
-
-    if author_id:
-        try:
-            if int(author_id) in WHITELISTED_USERS:
-                return
-        except ValueError:
-            pass
-
-    # Discord doesn't always include the author in the raw edit.
-    # Fetch the actual message so we know who edited it.
-    try:
-        channel = bot.get_channel(payload.channel_id)
-
-        if channel is None:
-            channel = await bot.fetch_channel(payload.channel_id)
-
-        message = await channel.fetch_message(payload.message_id)
-
-    except Exception as e:
-        print(f"[BANNED WORD EDIT] Could not fetch message: {e}")
-        return
-
-    if message.author.bot:
-        return
-
-    # Check the EDITED content.
-    if contains_banned_word(message.content):
-
-        print(
-            f"[BANNED WORD EDIT] "
-            f"Detected banned content from {message.author}"
-        )
-
-        try:
-            await message.delete()
-
-            await message.channel.send(
-                "That word is banned from the server.",
-                delete_after=5
-            )
-
-            print(
-                f"[BANNED WORD EDIT] "
-                f"Deleted edited message from {message.author}"
-            )
-
-        except discord.Forbidden:
-            print(
-                "[BANNED WORD EDIT] "
-                "I don't have permission to delete messages."
-            )
-
-        except discord.NotFound:
-            pass
-
-        except Exception as e:
-            print(
-                f"[BANNED WORD EDIT] "
-                f"Could not delete message: {e}"
-            )
-
-            # ============================================================
-# CHECK CONSECUTIVE MESSAGES
-# ============================================================
-
-if message.guild and message.author.id not in WHITELISTED_USERS:
-
-    normalized_current = normalize_banned_text(message.content)
-
-    key = (message.guild.id, message.channel.id, message.author.id)
-
-    previous = recent_banned_messages.get(key)
-
-    now = time.monotonic()
-
-    if previous:
-        previous_content, previous_time, previous_message_id = previous
-
-        # Only consider messages sent within 3 seconds.
-        if now - previous_time <= 3:
-
-            combined = previous_content + normalized_current
-
-            # Examples:
-            #
-            # "6" + "7"       -> 67
-            # "six" + "seven" -> sixseven
-            #
-            if (
-                contains_banned_word(combined)
-                or combined in ("67", "sixseven")
-            ):
-
-                print(
-                    f"[BANNED WORD] "
-                    f"Detected banned phrase across messages "
-                    f"from {message.author}"
-                )
-
-                try:
-                    await message.delete()
+                    await message.channel.send(view=view, delete_after=10, reference=message)
                 except Exception:
                     pass
-
-                # Try deleting the previous message too.
-                try:
-                    previous_message = await message.channel.fetch_message(
-                        previous_message_id
-                    )
-
-                    await previous_message.delete()
-
-                except Exception:
-                    pass
-
-                await message.channel.send(
-                    "That word is banned from the server.",
-                    delete_after=5
-                )
-
-                recent_banned_messages.pop(key, None)
-
-                return
-
-    # Save current message
-    recent_banned_messages[key] = (
-        normalized_current,
-        now,
-        message.id
-    )
-
-
+    
+    await bot.process_commands(message)
 
 @bot.command()
 async def test(ctx: commands.Context):
@@ -901,11 +563,6 @@ class GeneralCommands(commands.Cog):
 
         await interaction.response.send_message(view=view)
 
-    @app_commands.command(name="test-banned", description="Test the banned word system")
-    @app_commands.describe(message="Message to test")
-    async def test_banned(self, interaction: discord.Interaction, message: str):
-        result = contains_banned_word(message)
-        await interaction.response.send_message(f"Testing message: '{message}'\nContains banned word: {result}", ephemeral=True)
 
 
 # ============================================================

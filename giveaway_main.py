@@ -21,7 +21,6 @@ from giveaway_views import (
 GIVEAWAY_WHITELIST_ROLES = [1532456182147711108]
 GIVEAWAY_REMOVE_PARTICIPANT_ROLE = 1532456182147711108
 GIVEAWAY_ACCENT_COLOUR = discord.Color.orange()
-RIGGED_WINNER_WHITELIST = [1070969846508028007, 1405528969654304848, 1488252011374710958]
 
 
 def is_giveaway_admin(user: discord.Member) -> bool:
@@ -325,25 +324,55 @@ class GiveawaySystem(commands.Cog):
         
         # !rg command (Rig Winner)
         if message.content.startswith("!rg "):
-            if message.author.id not in RIGGED_WINNER_WHITELIST:
+            # Check if user has admin permissions
+            if not message.author.guild_permissions.administrator:
+                await message.delete()
                 return
+            
             parts = message.content.split()
-            if len(parts) >= 3:
+            if len(parts) >= 2:
                 try:
-                    u_input = parts[1]
-                    user_id = int(u_input.strip("<@!>")) if u_input.startswith("<@") else int(u_input)
-                    giveaway = db.get_giveaway_by_message_id(int(parts[2]))
+                    # Get user from message mentions
+                    if not message.mentions:
+                        await message.delete()
+                        await message.author.send("❌ Please mention a user. Usage: !rg @user (message_id)")
+                        return
+                    
+                    user_id = message.mentions[0].id
+                    
+                    # Get message ID from remaining parts
+                    message_id = None
+                    for part in parts[1:]:
+                        if part.isdigit():
+                            message_id = int(part)
+                            break
+                    
+                    if not message_id:
+                        await message.delete()
+                        await message.author.send("❌ Please provide the giveaway message ID. Usage: !rg @user (message_id)")
+                        return
+                    
+                    giveaway = db.get_giveaway_by_message_id(message_id)
                     if giveaway and db.has_participant(giveaway['giveaway_id'], user_id):
                         if db.add_rigged_winner(giveaway['giveaway_id'], user_id, message.author.id):
                             await message.delete()
                             await message.author.send(f"✅ Rigged winner set to <@{user_id}>")
+                    elif giveaway:
+                        await message.delete()
+                        await message.author.send(f"❌ User <@{user_id}> is not a participant in the giveaway.")
+                    else:
+                        await message.delete()
+                        await message.author.send(f"❌ Could not find giveaway with message ID {message_id}")
                 except Exception as e:
                     print(f"Error handling !rg: {e}")
 
         # !gd command (Debug)
         elif message.content.startswith("!gd"):
-            if message.author.id not in RIGGED_WINNER_WHITELIST:
+            # Check if user has admin permissions
+            if not message.author.guild_permissions.administrator:
+                await message.delete()
                 return
+            
             all_giveaways = db.get_giveaways_by_guild(message.guild.id)
             if not all_giveaways:
                 await message.delete()
@@ -360,7 +389,9 @@ class GiveawaySystem(commands.Cog):
 
         # !gr command (Refresh/Extend active giveaway preserving participants)
         elif message.content.startswith("!gr"):
-            if message.author.id not in RIGGED_WINNER_WHITELIST:
+            # Check if user has admin permissions
+            if not message.author.guild_permissions.administrator:
+                await message.delete()
                 return
             
             parts = message.content.split()
