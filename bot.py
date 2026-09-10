@@ -515,9 +515,9 @@ class GeneralCommands(commands.Cog):
             upsert=True
         )
 
-        new_nick = f"[AFK] ({original_nick})"
+        new_nick = f"AFK {original_nick}"
         if len(new_nick) > 32:
-            new_nick = "[AFK] (" + original_nick[:22] + ")"
+            new_nick = "AFK " + original_nick[:27]
 
         try:
             await member.edit(nick=new_nick, reason=f"Set AFK: {reason}")
