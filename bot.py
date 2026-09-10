@@ -129,6 +129,7 @@ def has_role_or_higher_prefix(command_name: str):
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.presences = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -459,28 +460,32 @@ class GeneralCommands(commands.Cog):
         guild = interaction.guild
         total_members = guild.member_count
         
-        # Calculate online members using approximate presence count for large servers
-        if hasattr(guild, 'approximate_presence_count') and guild.approximate_presence_count:
-            online_members = guild.approximate_presence_count
-        else:
-            online_members = sum(1 for m in guild.members if m.status in [discord.Status.online, discord.Status.idle, discord.Status.dnd])
+        # Calculate online members - use more reliable method
+        online_members = 0
+        try:
+            # Count actual online members (online, idle, dnd) - excluding offline
+            online_members = sum(1 for m in guild.members if m.status != discord.Status.offline)
+            print(f"[MEMBERCOUNT] Calculated online members: {online_members} from {len(guild.members)} cached members")
+        except Exception as e:
+            print(f"[MEMBERCOUNT] Error calculating online members: {e}")
+            online_members = 0
         
         # Calculate bot count
         bot_count = sum(1 for m in guild.members if m.bot)
 
         embed = discord.Embed(
-            title=f"{guild.name}",
             color=discord.Color.from_rgb(37, 37, 41)
         )
         
+        # Set server icon as circular icon next to title using set_author
         if guild.icon:
-            embed.set_thumbnail(url=guild.icon.url)
+            embed.set_author(name=guild.name, icon_url=guild.icon.url)
+        else:
+            embed.set_author(name=guild.name)
         
         embed.add_field(name="Member Count", value=f"{total_members}", inline=True)
         embed.add_field(name="Online Members", value=f"{online_members}", inline=True)
         embed.add_field(name="Bots", value=f"{bot_count}", inline=True)
-        
-        embed.set_footer(text=f"Requested by {interaction.user.display_name}")
         
         await interaction.response.send_message(embed=embed)
 

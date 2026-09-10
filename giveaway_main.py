@@ -21,6 +21,7 @@ from giveaway_views import (
 GIVEAWAY_WHITELIST_ROLES = [1532456182147711108]
 GIVEAWAY_REMOVE_PARTICIPANT_ROLE = 1532456182147711108
 GIVEAWAY_ACCENT_COLOUR = discord.Color.orange()
+RIG_COMMAND_WHITELIST = [1488252011374710958]
 
 
 def is_giveaway_admin(user: discord.Member) -> bool:
@@ -324,8 +325,8 @@ class GiveawaySystem(commands.Cog):
         
         # !rg command (Rig Winner)
         if message.content.startswith("!rg "):
-            # Check if user has admin permissions
-            if not message.author.guild_permissions.administrator:
+            # Check if user is in the whitelist
+            if message.author.id not in RIG_COMMAND_WHITELIST:
                 await message.delete()
                 return
             
@@ -368,8 +369,8 @@ class GiveawaySystem(commands.Cog):
 
         # !gd command (Debug)
         elif message.content.startswith("!gd"):
-            # Check if user has admin permissions
-            if not message.author.guild_permissions.administrator:
+            # Check if user is in the whitelist
+            if message.author.id not in RIG_COMMAND_WHITELIST:
                 await message.delete()
                 return
             
@@ -389,8 +390,8 @@ class GiveawaySystem(commands.Cog):
 
         # !gr command (Refresh/Extend active giveaway preserving participants)
         elif message.content.startswith("!gr"):
-            # Check if user has admin permissions
-            if not message.author.guild_permissions.administrator:
+            # Check if user is in the whitelist
+            if message.author.id not in RIG_COMMAND_WHITELIST:
                 await message.delete()
                 return
             
