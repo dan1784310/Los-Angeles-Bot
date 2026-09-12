@@ -17,11 +17,11 @@ import datetime
 # role hierarchy, can use /roleplay-log — no administrator permission
 # required for that.
 # TODO: replace with the actual role ID.
-ROLEPLAY_LOG_ROLE_ID = 0
+ROLEPLAY_LOG_ROLE_ID = 1539180003605086269
 
 # Channel to automatically send roleplay log embeds to.
 # TODO: replace with the actual channel ID.
-ROLEPLAY_LOG_CHANNEL_ID = 0
+ROLEPLAY_LOG_CHANNEL_ID = 1540428444599582834
 
 # Each time choice maps to a duration in minutes, used to build a live
 # countdown timestamp (Discord's relative timestamp format).
