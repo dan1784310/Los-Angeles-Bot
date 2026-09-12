@@ -103,7 +103,8 @@ class TicketDatabase:
     def save_ticket_category(self, guild_id: int, name: str,
                              title: Optional[str] = None, description: Optional[str] = None,
                              ping_role_ids: Optional[List[int]] = None,
-                             visible_role_ids: Optional[List[int]] = None) -> int:
+                             visible_role_ids: Optional[List[int]] = None,
+                             discord_category_id: Optional[int] = None) -> int:
         """Add a new ticket category for this guild, returning its sequential id."""
         cat_id = self.categories.count_documents({"guild_id": guild_id}) + 1
         self.categories.insert_one({
@@ -113,7 +114,8 @@ class TicketDatabase:
             "title": title,
             "description": description,
             "ping_role_ids": ping_role_ids or [],
-            "visible_role_ids": visible_role_ids or []
+            "visible_role_ids": visible_role_ids or [],
+            "discord_category_id": discord_category_id
         })
         return cat_id
 

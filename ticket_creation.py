@@ -201,8 +201,14 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
         The created ticket channel
     """
     
-    # Discord channel category (the folder) tickets get created under
-    channel_category = guild.get_channel(settings['ticket_category_id'])
+    # Discord channel category (the folder) tickets get created under —
+    # this ticket category's own custom Discord category if one was set
+    # during setup, otherwise the guild's global ticket category.
+    channel_category = None
+    if ticket_category_info and ticket_category_info.get('discord_category_id'):
+        channel_category = guild.get_channel(ticket_category_info['discord_category_id'])
+    if not channel_category:
+        channel_category = guild.get_channel(settings['ticket_category_id'])
     
     # Build permissions
     overwrites = {
@@ -303,7 +309,7 @@ async def close_ticket(interaction: discord.Interaction, channel_id: int):
 
     # Post the transcript (channel still exists at this point)
     if channel:
-        await post_ticket_transcript(channel)
+        await post_ticket_transcript(channel, closed_by=interaction.user)
     
     await asyncio.sleep(3)
     
@@ -581,7 +587,7 @@ async def on_remove_user_submit(interaction: discord.Interaction, channel_id: in
         await interaction.response.send_message(f"❌ Error removing user: {str(e)}", ephemeral=True)
 
 
-async def post_ticket_transcript(channel: discord.TextChannel):
+async def post_ticket_transcript(channel: discord.TextChannel, closed_by: discord.abc.User = None):
     """
     Generate the ticket's transcript and post it to TRANSCRIPT_LOG_CHANNEL_ID.
     Called once, when the ticket is closed.
@@ -595,11 +601,11 @@ async def post_ticket_transcript(channel: discord.TextChannel):
     from ticket_transcripts import create_transcript
 
     try:
-        transcript_file = await create_transcript(channel)
-        await log_channel.send(
-            f"📄 Transcript generated for {channel.mention}",
-            file=transcript_file
-        )
+        transcript_file = await create_transcript(channel, closed_by=closed_by)
+        content = f"📄 Transcript generated for {channel.mention}"
+        if closed_by:
+            content += f" — closed by {closed_by.mention}"
+        await log_channel.send(content, file=transcript_file)
     except Exception as e:
         print(f"Error posting transcript for channel {channel.id}: {e}")
 

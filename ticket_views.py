@@ -84,6 +84,25 @@ class CategoryInputModal(ui.Modal, title='Add Ticket Category'):
         await self.on_submit_callback(interaction, self.category_name.value)
 
 
+class DiscordCategoryNameModal(ui.Modal, title='New Discord Category'):
+    """Modal for naming a new Discord channel category dedicated to a
+    specific ticket type (e.g. a "Guide Tickets" category)."""
+
+    category_name = ui.TextInput(
+        label='Discord Category Name',
+        placeholder='e.g., Guide Tickets',
+        style=discord.TextStyle.short,
+        required=True
+    )
+
+    def __init__(self, on_submit: Callable):
+        super().__init__()
+        self.on_submit_callback = on_submit
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.on_submit_callback(interaction, self.category_name.value)
+
+
 class BottomBannerModal(ui.Modal, title='Bottom Banner Image'):
     """Modal for bottom banner image URL."""
     

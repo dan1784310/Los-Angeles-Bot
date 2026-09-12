@@ -10,12 +10,13 @@ import datetime
 from datetime import timezone
 
 
-async def create_transcript(channel: discord.TextChannel) -> discord.File:
+async def create_transcript(channel: discord.TextChannel, closed_by: discord.abc.User = None) -> discord.File:
     """
     Create a transcript of all messages in a ticket channel.
     
     Args:
         channel: The ticket channel to transcribe
+        closed_by: The user who closed the ticket, if any (adds a line noting who closed it)
     
     Returns:
         A discord.File containing the transcript
@@ -41,6 +42,8 @@ async def create_transcript(channel: discord.TextChannel) -> discord.File:
     transcript_lines.append(f"Guild: {channel.guild.name}")
     transcript_lines.append(f"Channel ID: {channel.id}")
     transcript_lines.append(f"Generated: {datetime.datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    if closed_by:
+        transcript_lines.append(f"Closed By: {closed_by} ({closed_by.id})")
     transcript_lines.append("=" * 50)
     transcript_lines.append("")
     
@@ -85,12 +88,13 @@ async def create_transcript(channel: discord.TextChannel) -> discord.File:
     )
 
 
-async def create_html_transcript(channel: discord.TextChannel) -> discord.File:
+async def create_html_transcript(channel: discord.TextChannel, closed_by: discord.abc.User = None) -> discord.File:
     """
     Create an HTML transcript of all messages in a ticket channel.
     
     Args:
         channel: The ticket channel to transcribe
+        closed_by: The user who closed the ticket, if any (adds a line noting who closed it)
     
     Returns:
         A discord.File containing the HTML transcript
@@ -158,6 +162,7 @@ async def create_html_transcript(channel: discord.TextChannel) -> discord.File:
         <p>Guild: {channel.guild.name}</p>
         <p>Channel ID: {channel.id}</p>
         <p>Generated: {datetime.datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+        {f'<p>Closed By: {closed_by} ({closed_by.id})</p>' if closed_by else ''}
     </div>
 """
     

@@ -12,7 +12,7 @@ import asyncio
 from ticket_database import db
 from ticket_views import (
     ChannelSelectView, RoleSelectView, BannerURLModal, TextBlockModal,
-    CategoryInputModal, CategoryConfigModal,
+    CategoryInputModal, CategoryConfigModal, DiscordCategoryNameModal,
     NavigationButtons, CategoryConfigView, ModalStepView,
     BlacklistRoleSelectView, CategoryPingRoleSelectView
 )
@@ -486,11 +486,72 @@ class TicketSetup(commands.Cog):
 
     async def on_category_visible_roles_submit(self, interaction: discord.Interaction, category_name: str,
                                                 role_ids: List[int]):
-        """Handle a category's visibility role selection (or skip), then advance."""
+        """Handle a category's visibility role selection (or skip), then ask about a dedicated Discord category."""
         await interaction.response.defer(ephemeral=True)
 
         session = self.setup_sessions[interaction.user.id]
         session['category_configs'][category_name]['visible_role_ids'] = role_ids
+
+        await self.prompt_category_discord_category(interaction, category_name)
+
+    async def prompt_category_discord_category(self, interaction: discord.Interaction, category_name: str):
+        """Ask whether this category should get its own dedicated Discord
+        category (channel folder), separate from the guild's global one."""
+
+        message = f"Do you want to make a separate **{category_name}** category?"
+        view = discord.ui.View(timeout=None)
+
+        yes_button = discord.ui.Button(label="Yes", style=discord.ButtonStyle.success)
+        no_button = discord.ui.Button(label="No", style=discord.ButtonStyle.secondary)
+
+        async def on_yes(button_interaction: discord.Interaction):
+            await button_interaction.response.send_modal(
+                DiscordCategoryNameModal(
+                    lambda i, name: self.on_category_discord_category_name_submit(i, category_name, name)
+                )
+            )
+
+        async def on_no(button_interaction: discord.Interaction):
+            await button_interaction.response.defer(ephemeral=True)
+            await self._advance_after_category(button_interaction, category_name)
+
+        yes_button.callback = on_yes
+        no_button.callback = on_no
+        view.add_item(yes_button)
+        view.add_item(no_button)
+
+        if interaction.response.is_done():
+            await interaction.followup.send(message, view=view, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, view=view, ephemeral=True)
+
+    async def on_category_discord_category_name_submit(self, interaction: discord.Interaction,
+                                                        category_name: str, new_category_name: str):
+        """Create the dedicated Discord category and attach it to this ticket category."""
+        await interaction.response.defer(ephemeral=True)
+
+        session = self.setup_sessions[interaction.user.id]
+        name = new_category_name.strip() or category_name
+
+        try:
+            new_discord_category = await interaction.guild.create_category(name)
+            session['category_configs'][category_name]['discord_category_id'] = new_discord_category.id
+            await interaction.followup.send(
+                f"✅ Created Discord category **{new_discord_category.name}** for **{category_name}** tickets.",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Couldn't create that category ({e}) — **{category_name}** tickets will use the default "
+                f"ticket category instead.",
+                ephemeral=True
+            )
+
+        await self._advance_after_category(interaction, category_name)
+
+    async def _advance_after_category(self, interaction: discord.Interaction, category_name: str):
+        """Move on to the next category to configure, or show the preview if this was the last one."""
+        session = self.setup_sessions[interaction.user.id]
 
         current_index = session['categories'].index(category_name)
         if current_index < len(session['categories']) - 1:
@@ -521,13 +582,16 @@ class TicketSetup(commands.Cog):
             ping_text = ", ".join(f"<@&{rid}>" for rid in ping_role_ids) if ping_role_ids else "None"
             visible_role_ids = config.get('visible_role_ids', [])
             visible_text = ", ".join(f"<@&{rid}>" for rid in visible_role_ids) if visible_role_ids else "Global Support Roles"
+            discord_category_id = config.get('discord_category_id')
+            discord_category_text = f"<#{discord_category_id}>" if discord_category_id else "Default ticket category"
             embed.add_field(
                 name=f"📌 {category_name}",
                 value=(
                     f"**Title:** {config.get('title', 'N/A')}\n"
                     f"**Description:** {description_preview}...\n"
                     f"**Ping Roles:** {ping_text}\n"
-                    f"**Visible To:** {visible_text}"
+                    f"**Visible To:** {visible_text}\n"
+                    f"**Discord Category:** {discord_category_text}"
                 ),
                 inline=False
             )
@@ -803,7 +867,35 @@ class TicketSetup(commands.Cog):
         await interaction.response.send_message(message, view=view, ephemeral=True)
 
     async def on_quick_category_visible_roles_submit(self, interaction: discord.Interaction, role_ids: List[int]):
-        """Handle visibility role selection for a quick-edit category, then save it."""
+        """Handle visibility role selection for a quick-edit category, then ask for its Discord category."""
+        session = self.quick_edit_sessions.get(interaction.user.id)
+        if not session:
+            await interaction.response.send_message("❌ Something went wrong — session expired.", ephemeral=True)
+            return
+
+        session['visible_role_ids'] = role_ids
+
+        message = (
+            f"Set a dedicated Discord category for **{session['name']}** tickets "
+            f"(optional — click **Skip** to keep using the default ticket category):"
+        )
+        view = ModalStepView(
+            modal_label="🗂️ Set Category",
+            on_open_modal=lambda i: self._quick_open_discord_category_modal(i),
+            on_skip=lambda i: self.on_quick_category_discord_category_submit(i, None)
+        )
+        await interaction.response.send_message(message, view=view, ephemeral=True)
+
+    async def _quick_open_discord_category_modal(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(
+            DiscordCategoryNameModal(
+                lambda i, name: self.on_quick_category_discord_category_submit(i, name)
+            )
+        )
+
+    async def on_quick_category_discord_category_submit(self, interaction: discord.Interaction,
+                                                         new_category_name: Optional[str]):
+        """Handle the (optional) dedicated Discord category for a quick-edit category, then save it."""
         await interaction.response.defer(ephemeral=True)
 
         session = self.quick_edit_sessions.pop(interaction.user.id, None)
@@ -811,7 +903,18 @@ class TicketSetup(commands.Cog):
             await interaction.followup.send("❌ Something went wrong — session expired.", ephemeral=True)
             return
 
-        session['visible_role_ids'] = role_ids
+        discord_category_id = None
+        name = (new_category_name or "").strip()
+        if name:
+            try:
+                new_discord_category = await interaction.guild.create_category(name)
+                discord_category_id = new_discord_category.id
+            except Exception as e:
+                await interaction.followup.send(
+                    f"❌ Couldn't create that category ({e}) — **{session['name']}** tickets will use the "
+                    f"default ticket category instead.",
+                    ephemeral=True
+                )
 
         if session['is_new']:
             db.save_ticket_category(
@@ -820,7 +923,8 @@ class TicketSetup(commands.Cog):
                 session['title'],
                 session['description'],
                 session['ping_role_ids'],
-                session['visible_role_ids']
+                session['visible_role_ids'],
+                discord_category_id
             )
         else:
             db.update_ticket_category(
@@ -829,7 +933,8 @@ class TicketSetup(commands.Cog):
                 title=session['title'],
                 description=session['description'],
                 ping_role_ids=session['ping_role_ids'],
-                visible_role_ids=session['visible_role_ids']
+                visible_role_ids=session['visible_role_ids'],
+                discord_category_id=discord_category_id
             )
 
         from ticket_panel import update_panel
@@ -881,7 +986,8 @@ class TicketSetup(commands.Cog):
                     config.get('title', category_name),
                     config.get('description', ''),
                     config.get('ping_role_ids', []),
-                    config.get('visible_role_ids', [])
+                    config.get('visible_role_ids', []),
+                    config.get('discord_category_id')
                 )
 
             await self.deploy_panel(interaction)
