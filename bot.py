@@ -26,6 +26,7 @@ from ping_protection import setup as setup_ping_protection
 from moderation_main import setup as setup_moderation
 from moderation_database import db as mod_db
 from role_management import setup as setup_role_management
+from roleplay_log import setup as setup_roleplay_log
 
 # ============================================================
 # DATABASE COLLECTIONS
@@ -639,6 +640,14 @@ async def on_ready():
         print("[SETUP] Role management system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading role management system: {e}")
+        traceback.print_exc()
+
+    print("[SETUP] Loading roleplay log system...")
+    try:
+        await setup_roleplay_log(bot)
+        print("[SETUP] Roleplay log system loaded successfully")
+    except Exception as e:
+        print(f"[SETUP] Error loading roleplay log system: {e}")
         traceback.print_exc()
 
     print("[SETUP] Loading ZTP system...")
