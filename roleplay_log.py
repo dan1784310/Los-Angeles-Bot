@@ -16,18 +16,18 @@ from discord.ext import commands
 # role hierarchy, can use /roleplay-log — no administrator permission
 # required for that.
 # TODO: replace with the actual role ID.
-ROLEPLAY_LOG_ROLE_ID = 0
+ROLEPLAY_LOG_ROLE_ID = 1539180003605086269
 
 # Channel to automatically send roleplay log embeds to.
 # TODO: replace with the actual channel ID.
-ROLEPLAY_LOG_CHANNEL_ID = 0
+ROLEPLAY_LOG_CHANNEL_ID = 1540428444599582834
 
 TIME_CHOICES = [
     "30 mins",
     "45 mins",
     "1 hour",
     "1h 30 mins",
-    "two hours"
+    "2 hours"
 ]
 
 
