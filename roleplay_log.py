@@ -6,6 +6,7 @@ Contains the /roleplay-log slash command for logging completed roleplay sessions
 import discord
 from discord import app_commands
 from discord.ext import commands
+import datetime
 
 
 # ==========================================
@@ -16,19 +17,22 @@ from discord.ext import commands
 # role hierarchy, can use /roleplay-log — no administrator permission
 # required for that.
 # TODO: replace with the actual role ID.
-ROLEPLAY_LOG_ROLE_ID = 1539180003605086269
+ROLEPLAY_LOG_ROLE_ID = 0
 
 # Channel to automatically send roleplay log embeds to.
 # TODO: replace with the actual channel ID.
-ROLEPLAY_LOG_CHANNEL_ID = 1540428444599582834
+ROLEPLAY_LOG_CHANNEL_ID = 0
 
-TIME_CHOICES = [
-    "30 mins",
-    "45 mins",
-    "1 hour",
-    "1h 30 mins",
-    "2 hours"
-]
+# Each time choice maps to a duration in minutes, used to build a live
+# countdown timestamp (Discord's relative timestamp format).
+TIME_CHOICE_MINUTES = {
+    "30 mins": 30,
+    "45 mins": 45,
+    "1 hour": 60,
+    "1h 30 mins": 90,
+    "2 hours": 120
+}
+TIME_CHOICES = list(TIME_CHOICE_MINUTES.keys())
 
 
 def _can_log_roleplay(interaction: discord.Interaction) -> bool:
@@ -96,7 +100,7 @@ class RoleplayLog(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="Roleplay log",
+            description="# Roleplay log",
             color=discord.Color.from_rgb(37, 37, 41),
             timestamp=discord.utils.utcnow()
         )
@@ -109,9 +113,15 @@ class RoleplayLog(commands.Cog):
             icon_url=guild_icon_url
         )
 
+        # Countdown timestamp — Discord renders <t:...:R> as a live-updating
+        # relative time (e.g. "in 1 hour"), counting down on its own.
+        minutes = TIME_CHOICE_MINUTES.get(time.value, 0)
+        ends_at = discord.utils.utcnow() + datetime.timedelta(minutes=minutes)
+        time_display = f"<t:{int(ends_at.timestamp())}:R>"
+
         embed.add_field(name="User", value=user.mention, inline=False)
         embed.add_field(name="Team members", value=team_members, inline=False)
-        embed.add_field(name="Time", value=time.value, inline=False)
+        embed.add_field(name="Time", value=time_display, inline=False)
         embed.add_field(name="Type", value=type, inline=False)
 
         try:
