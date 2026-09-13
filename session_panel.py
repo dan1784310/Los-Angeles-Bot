@@ -8,7 +8,7 @@ from datetime import datetime
 # CONFIGURATION SECTION
 # ==========================================
 
-SESSION_CHANNEL_ID: int = 1545523858726060193  # Target channel ID
+SESSION_CHANNEL_ID: int = 1528497650595270707  # Target channel ID
 REGULATIONS_CHANNEL_ID: int = 1526890579080773693  # Replace with actual regulations channel ID
 
 # Shared Universal Assets
@@ -278,7 +278,7 @@ def create_session_card(
         # Staff Section with Button Accessory & Last Updated Subtext
         container.add_item(
             discord.ui.Section(
-                f"**Staff**\n-# How many staff are in-game moderating\n-# Last updated: <t:{cached_erlc_stats['last_updated_timestamp']}:R>",
+                f"**Staff**\n-# How many staff are in-game moderating\n\n-# Last updated: <t:{cached_erlc_stats['last_updated_timestamp']}:R>",
                 accessory=discord.ui.Button(
                     style=discord.ButtonStyle.secondary,
                     label=cached_erlc_stats['staff'],
