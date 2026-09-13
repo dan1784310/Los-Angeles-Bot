@@ -77,7 +77,14 @@ async def fetch_erlc_stats():
     """Fetch current server stats from ERLC API."""
     try:
         from erlc_api import ERLCClient
+        import os
+        
         erlc_client = ERLCClient()
+        server_key = os.getenv("ERLC_SERVER_KEY", "")
+        
+        print(f"[ERLC STATS] Server key configured: {bool(server_key)}")
+        print(f"[ERLC STATS] Server key length: {len(server_key)}")
+        
         if not erlc_client.configured:
             print("[ERLC STATS] ERLC client not configured - check ERLC_SERVER_KEY")
             return None
@@ -86,29 +93,35 @@ async def fetch_erlc_stats():
         # Fetch server info with players and staff
         data = erlc_client.get_server(Players=True, Staff=True)
         
-        print(f"[ERLC STATS] API Response: {data}")  # Debug logging
+        print(f"[ERLC STATS] Full API Response: {data}")  # Debug logging
+        print(f"[ERLC STATS] Response type: {type(data)}")
+        print(f"[ERLC STATS] Response keys: {data.keys() if isinstance(data, dict) else 'N/A'}")
         
-        # Extract relevant information
-        players = data.get("Players", {})
-        staff = data.get("Staff", {})
+        # Extract relevant information - check different possible key names
+        # Try different casing variations
+        players = data.get("Players") or data.get("players") or {}
+        staff = data.get("Staff") or data.get("staff") or {}
+        
+        print(f"[ERLC STATS] Players data: {players}")
+        print(f"[ERLC STATS] Staff data: {staff}")
         
         # Format player count (current/max)
-        current_players = players.get("current", 0)
-        max_players = players.get("max", 50)
+        current_players = players.get("current") or players.get("Current") or players.get("count") or 0
+        max_players = players.get("max") or players.get("Max") or 50
         players_text = f"{current_players}/{max_players}"
         
         # Get queue count (typically players waiting to join)
-        queue_count = str(players.get("queue", 0))
+        queue_count = str(players.get("queue") or players.get("Queue") or 0)
         
         # Get staff count - handle different possible data structures
         if isinstance(staff, list):
             staff_count = str(len(staff))
         elif isinstance(staff, dict):
-            staff_count = str(staff.get("count", len(staff)))
+            staff_count = str(staff.get("count") or staff.get("Count") or len(staff))
         else:
             staff_count = "0"
         
-        print(f"[ERLC STATS] Staff data type: {type(staff)}, Staff count: {staff_count}")  # Debug logging
+        print(f"[ERLC STATS] Final stats - Players: {players_text}, Queue: {queue_count}, Staff: {staff_count}")
         
         return {
             "players": players_text,
@@ -125,20 +138,31 @@ async def update_erlc_stats():
     """Update cached ERLC stats."""
     global cached_erlc_stats
     try:
+        print("[ERLC STATS] Starting stats update...")
         stats = await fetch_erlc_stats()
         if stats:
             cached_erlc_stats.update(stats)
             # Update the timestamp to current time for Discord timestamp
             cached_erlc_stats["last_updated_timestamp"] = int(datetime.now().timestamp())
+            print(f"[ERLC STATS] Stats updated successfully: {stats}")
+        else:
+            print("[ERLC STATS] Stats update failed - no data returned")
     except Exception as e:
         print(f"[ERLC STATS] Error updating stats: {e}")
+        import traceback
+        traceback.print_exc()
 
 async def erlc_stats_updater(bot: commands.Bot):
     """Background task to update ERLC stats every minute."""
+    print("[ERLC STATS] Stats updater task started, waiting for bot to be ready...")
     await bot.wait_until_ready()
+    print("[ERLC STATS] Bot is ready, starting stats update loop...")
     while not bot.is_closed():
+        print(f"[ERLC STATS] Running stats update cycle at {datetime.now()}")
         await update_erlc_stats()
+        print(f"[ERLC STATS] Sleeping for {ERLC_STATS_UPDATE_INTERVAL} seconds...")
         await asyncio.sleep(ERLC_STATS_UPDATE_INTERVAL)
+    print("[ERLC STATS] Stats updater task stopped")
 
 
 # ==========================================
