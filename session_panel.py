@@ -293,14 +293,11 @@ class SessionPanelView(discord.ui.View):
         )
 
         try:
-            webhook = await channel.create_webhook(name="Session Manager")
-            await webhook.send(view=card_view)
-            await webhook.delete()
-
+            await channel.send(view=card_view)
             await interaction.followup.send("✅ Session update posted!", ephemeral=True)
         except discord.Forbidden:
             await interaction.followup.send(
-                "❌ Missing permissions to create/send webhooks in target channel.",
+                "❌ Missing permissions to send messages in target channel.",
                 ephemeral=True
             )
         except Exception as e:
