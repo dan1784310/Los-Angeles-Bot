@@ -13,7 +13,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from flask import Flask, request
 
-from config import TOKEN, ERLC_SERVER_KEY
+from config import TOKEN, ERLC_SERVER_KEY, MELONLY_API_TOKEN
 from erlc_api import ERLCClient, ERLCAPIError
 from ticket_database import db
 from ticket_setup import TicketSetup
@@ -568,6 +568,46 @@ class GeneralCommands(commands.Cog):
         view.add_item(container)
 
         await interaction.response.send_message(view=view)
+
+    @app_commands.command(name="test-melonly", description="Test Melonly API connection.")
+    async def test_melonly(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            from melonly_api import MelonlyClient, MelonlyAPIError
+
+            client = MelonlyClient()
+
+            if not client.configured:
+                await interaction.followup.send("❌ Melonly API token not configured. Check MELONLY_API_TOKEN.", ephemeral=True)
+                return
+
+            # requests is synchronous — run it off the event loop so the
+            # bot doesn't block while waiting on the network call.
+            data = await asyncio.to_thread(client.test_connection)
+
+            embed = discord.Embed(
+                title="✅ Connected to Melonly",
+                color=discord.Color.from_rgb(37, 37, 41)
+            )
+            embed.add_field(name="Server Name", value=data.get("name", "Unknown"), inline=False)
+            embed.add_field(name="Server ID", value=str(data.get("id", "Unknown")), inline=True)
+            embed.add_field(name="Join Code", value=str(data.get("joinCode", "N/A")), inline=True)
+
+            discord_guild_id = data.get("discordGuildId")
+            if discord_guild_id:
+                embed.add_field(name="Linked Discord Guild ID", value=str(discord_guild_id), inline=False)
+
+            created_at = data.get("createdAt")
+            if created_at:
+                embed.add_field(name="Server Created", value=f"<t:{int(created_at)}:F>", inline=False)
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except MelonlyAPIError as e:
+            await interaction.followup.send(f"❌ Melonly API error: {e}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error testing Melonly connection: {e}", ephemeral=True)
 
 
 

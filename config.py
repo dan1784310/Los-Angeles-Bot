@@ -5,5 +5,6 @@ load_dotenv()  # loads .env for local dev; harmless no-op if no .env file exists
 
 TOKEN = os.getenv("TOKEN")
 ERLC_SERVER_KEY = os.getenv("ERLC_SERVER_KEY")
+MELONLY_API_TOKEN = os.getenv("MELONLY_API_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority")
 
