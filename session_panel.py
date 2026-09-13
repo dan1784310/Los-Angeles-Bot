@@ -31,6 +31,12 @@ cached_erlc_stats = {
     "last_updated_timestamp": int(datetime.now().timestamp())
 }
 
+# Tracks the currently "live" Session Start message (channel_id, message_id)
+# so the background updater can edit it in place with fresh stats every
+# ERLC_STATS_UPDATE_INTERVAL seconds. Cleared when a new Session Start is
+# posted (old one stops updating) or when Session End is pressed.
+active_session_start_message = None
+
 # --- SESSION START CONFIG ---
 SESSION_START_BANNER: str = GLOBAL_BANNER_URL
 SESSION_START_BOTTOM_BANNER: str = GLOBAL_BOTTOM_BANNER_URL
@@ -83,43 +89,37 @@ def fetch_erlc_stats():
         server_key = os.getenv("ERLC_SERVER_KEY", "")
         
         print(f"[ERLC STATS] Server key configured: {bool(server_key)}")
-        print(f"[ERLC STATS] Server key length: {len(server_key)}")
         
         if not erlc_client.configured:
             print("[ERLC STATS] ERLC client not configured - check ERLC_SERVER_KEY")
             return None
         
         print("[ERLC STATS] Fetching stats from ERLC API...")
-        # Fetch server info with players and staff
-        data = erlc_client.get_server(Players=True, Staff=True)
+        # Staff=True gives the Admins/Mods/Helpers breakdown, Queue=True
+        # gives the queue array. CurrentPlayers/MaxPlayers are always
+        # present on the base response, no query param needed for those.
+        data = erlc_client.get_server(Staff=True, Queue=True)
         
         print(f"[ERLC STATS] Full API Response: {data}")  # Debug logging
-        print(f"[ERLC STATS] Response type: {type(data)}")
-        print(f"[ERLC STATS] Response keys: {data.keys() if isinstance(data, dict) else 'N/A'}")
         
-        # Extract relevant information - check different possible key names
-        # Try different casing variations
-        players = data.get("Players") or data.get("players") or {}
-        staff = data.get("Staff") or data.get("staff") or {}
-        
-        print(f"[ERLC STATS] Players data: {players}")
-        print(f"[ERLC STATS] Staff data: {staff}")
-        
-        # Format player count (current/max)
-        current_players = players.get("current") or players.get("Current") or players.get("count") or 0
-        max_players = players.get("max") or players.get("Max") or 50
+        # Player count — CurrentPlayers/MaxPlayers are top-level integers
+        # on the response, not nested under a "Players" key.
+        current_players = data.get("CurrentPlayers", 0)
+        max_players = data.get("MaxPlayers", 0)
         players_text = f"{current_players}/{max_players}"
         
-        # Get queue count (typically players waiting to join)
-        queue_count = str(players.get("queue") or players.get("Queue") or 0)
+        # Queue — an array of player IDs waiting to join; count = length.
+        queue_list = data.get("Queue") or []
+        queue_count = str(len(queue_list))
         
-        # Get staff count - handle different possible data structures
-        if isinstance(staff, list):
-            staff_count = str(len(staff))
-        elif isinstance(staff, dict):
-            staff_count = str(staff.get("count") or staff.get("Count") or len(staff))
-        else:
-            staff_count = "0"
+        # Staff — {"Admins": {...}, "Mods": {...}, "Helpers": {...}}, each
+        # mapping Roblox ID -> username. Total staff = sum of all three.
+        staff = data.get("Staff") or {}
+        staff_count = str(
+            len(staff.get("Admins") or {}) +
+            len(staff.get("Mods") or {}) +
+            len(staff.get("Helpers") or {})
+        )
         
         print(f"[ERLC STATS] Final stats - Players: {players_text}, Queue: {queue_count}, Staff: {staff_count}")
         
@@ -162,9 +162,54 @@ async def erlc_stats_updater(bot: commands.Bot):
         # Run the synchronous function in a thread pool
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, update_erlc_stats)
+        await refresh_active_session_message(bot)
         print(f"[ERLC STATS] Sleeping for {ERLC_STATS_UPDATE_INTERVAL} seconds...")
         await asyncio.sleep(ERLC_STATS_UPDATE_INTERVAL)
     print("[ERLC STATS] Stats updater task stopped")
+
+
+async def refresh_active_session_message(bot: commands.Bot):
+    """Edit the currently posted Session Start message in place with the
+    freshly-updated stats/timestamp, so the counters and the 'Last updated'
+    line actually change instead of sitting frozen at whatever they were
+    when the message was first sent."""
+    global active_session_start_message
+
+    if not active_session_start_message:
+        return
+
+    channel = bot.get_channel(active_session_start_message["channel_id"])
+    if not channel:
+        print("[ERLC STATS] Tracked session channel not found — clearing.")
+        active_session_start_message = None
+        return
+
+    try:
+        message = await channel.fetch_message(active_session_start_message["message_id"])
+    except (discord.NotFound, discord.Forbidden):
+        print("[ERLC STATS] Tracked session message no longer exists — clearing.")
+        active_session_start_message = None
+        return
+    except Exception as e:
+        print(f"[ERLC STATS] Error fetching tracked session message: {e}")
+        return
+
+    new_view = create_session_card(
+        banner_url=SESSION_START_BANNER,
+        text=SESSION_START_INFO_TEXT,
+        color=SESSION_START_COLOUR,
+        button_url=SESSION_START_BUTTON_URL,
+        button_label="Quick Join",
+        server_details=SESSION_START_SERVER_TEXT,
+        bottom_banner_url=SESSION_START_BOTTOM_BANNER,
+        include_stats=True
+    )
+
+    try:
+        await message.edit(view=new_view)
+        print("[ERLC STATS] Refreshed live session panel with new stats.")
+    except Exception as e:
+        print(f"[ERLC STATS] Error editing tracked session message: {e}")
 
 
 # ==========================================
@@ -311,19 +356,29 @@ class SessionPanelView(discord.ui.View):
         )
 
         try:
-            await channel.send(view=card_view)
+            message = await channel.send(view=card_view)
             await interaction.followup.send("✅ Session update posted!", ephemeral=True)
+            return message
         except discord.Forbidden:
             await interaction.followup.send(
                 "❌ Missing permissions to send messages in target channel.",
                 ephemeral=True
             )
+            return None
         except Exception as e:
             await interaction.followup.send(f"❌ Error sending card: {e}", ephemeral=True)
+            return None
 
     @discord.ui.button(label="Session Start", style=discord.ButtonStyle.success, custom_id="session_panel:start")
     async def session_start(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.send_session_card(
+        global active_session_start_message
+
+        # Refresh the cache first so the very first post already shows live
+        # numbers, instead of waiting up to 60s for the background updater.
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, update_erlc_stats)
+
+        message = await self.send_session_card(
             interaction=interaction,
             banner_url=SESSION_START_BANNER,
             text=SESSION_START_INFO_TEXT,
@@ -334,6 +389,11 @@ class SessionPanelView(discord.ui.View):
             bottom_banner_url=SESSION_START_BOTTOM_BANNER,
             include_stats=True
         )
+        if message:
+            active_session_start_message = {
+                "channel_id": message.channel.id,
+                "message_id": message.id
+            }
 
     @discord.ui.button(label="Full Players", style=discord.ButtonStyle.primary, custom_id="session_panel:full")
     async def full_players(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -347,6 +407,8 @@ class SessionPanelView(discord.ui.View):
 
     @discord.ui.button(label="Session End", style=discord.ButtonStyle.danger, custom_id="session_panel:end")
     async def session_end(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global active_session_start_message
+        active_session_start_message = None
         await self.send_session_card(
             interaction=interaction,
             banner_url=SESSION_END_BANNER,
