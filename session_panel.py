@@ -199,8 +199,8 @@ def create_session_card(
                 )
             )
         )
-        # Empty line
-        container.add_item(discord.ui.TextDisplay(""))
+        # Empty line (using a space to meet Discord's length requirement)
+        container.add_item(discord.ui.TextDisplay(" "))
 
         # Queue Section with Button Accessory
         container.add_item(
@@ -213,8 +213,8 @@ def create_session_card(
                 )
             )
         )
-        # Empty line
-        container.add_item(discord.ui.TextDisplay(""))
+        # Empty line (using a space to meet Discord's length requirement)
+        container.add_item(discord.ui.TextDisplay(" "))
 
         # Staff Section with Button Accessory & Last Updated Subtext
         container.add_item(
