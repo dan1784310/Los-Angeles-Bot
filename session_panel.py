@@ -8,7 +8,7 @@ from datetime import datetime
 # CONFIGURATION SECTION
 # ==========================================
 
-SESSION_CHANNEL_ID: int = 1528497650595270707  # Target channel ID
+SESSION_CHANNEL_ID: int = 1545523858726060193  # Target channel ID
 REGULATIONS_CHANNEL_ID: int = 1526890579080773693  # Replace with actual regulations channel ID
 
 # Shared Universal Assets
@@ -196,7 +196,6 @@ def create_session_card(
                 )
             )
         )
-        container.add_item(discord.ui.Separator())
 
         # Queue Section with Button Accessory
         container.add_item(
@@ -209,7 +208,6 @@ def create_session_card(
                 )
             )
         )
-        container.add_item(discord.ui.Separator())
 
         # Staff Section with Button Accessory & Last Updated Subtext
         container.add_item(
