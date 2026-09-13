@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+import asyncio
+from datetime import datetime
 
 # ==========================================
 # CONFIGURATION SECTION
@@ -13,12 +15,21 @@ REGULATIONS_CHANNEL_ID: int = 1526890579080773693  # Replace with actual regulat
 GLOBAL_BANNER_URL: str = "https://i.postimg.cc/rpjqr24b/azrp-sessions-banner.jpg"
 GLOBAL_BOTTOM_BANNER_URL: str = "https://cdn.imageurlgenerator.com/uploads/85ff6f6b-754f-4988-b505-56a171cef43b.png"
 GLOBAL_RGB_COLOR: discord.Color = discord.Color.from_rgb(37, 37, 41)
-GLOBAL_JOIN_URL: str = "https://www.roblox.com/games/2534724415/Emergency-Response-Liberty-County"
+GLOBAL_JOIN_URL: str = "https://erlc.gg/join/ypOye"
 
 # Server Information Configuration
 SERVER_CODE: str = "ypOye"
 SERVER_NAME: str = "Arizona State Roleplay I Realistic I New"
 SERVER_OWNER: str = "Certified_Pro02"
+
+# ERLC Stats Configuration
+ERLC_STATS_UPDATE_INTERVAL: int = 60  # Update every 60 seconds
+cached_erlc_stats = {
+    "players": "0/50",
+    "queue": "0",
+    "staff": "0",
+    "last_updated": "Just now"
+}
 
 # --- SESSION START CONFIG ---
 SESSION_START_BANNER: str = GLOBAL_BANNER_URL
@@ -59,6 +70,84 @@ SESSION_END_COLOUR: discord.Color = GLOBAL_RGB_COLOR
 
 
 # ==========================================
+# ERLC STATS SECTION
+# ==========================================
+
+async def fetch_erlc_stats():
+    """Fetch current server stats from ERLC API."""
+    try:
+        from erlc_api import ERLCClient
+        erlc_client = ERLCClient()
+        if not erlc_client.configured:
+            return None
+        
+        # Fetch server info with players and staff
+        data = erlc_client.get_server(Players=True, Staff=True)
+        
+        print(f"[ERLC STATS] API Response: {data}")  # Debug logging
+        
+        # Extract relevant information
+        players = data.get("Players", {})
+        staff = data.get("Staff", {})
+        
+        # Format player count (current/max)
+        current_players = players.get("current", 0)
+        max_players = players.get("max", 50)
+        players_text = f"{current_players}/{max_players}"
+        
+        # Get queue count (typically players waiting to join)
+        queue_count = str(players.get("queue", 0))
+        
+        # Get staff count - handle different possible data structures
+        if isinstance(staff, list):
+            staff_count = str(len(staff))
+        elif isinstance(staff, dict):
+            # If staff is a dict, it might have count or be a dict of staff members
+            staff_count = str(staff.get("count", len(staff)))
+        else:
+            staff_count = "0"
+        
+        print(f"[ERLC STATS] Staff data type: {type(staff)}, Staff count: {staff_count}")  # Debug logging
+        
+        return {
+            "players": players_text,
+            "queue": queue_count,
+            "staff": staff_count
+        }
+    except Exception as e:
+        print(f"[ERLC STATS] Error fetching stats: {e}")
+        return None
+
+async def update_erlc_stats():
+    """Update cached ERLC stats."""
+    global cached_erlc_stats
+    try:
+        stats = await fetch_erlc_stats()
+        if stats:
+            cached_erlc_stats.update(stats)
+            # Calculate time ago
+            now = datetime.now()
+            time_diff = now - cached_erlc_stats.get("last_update_time", now)
+            minutes_ago = int(time_diff.total_seconds() / 60)
+            if minutes_ago == 0:
+                cached_erlc_stats["last_updated"] = "Just now"
+            elif minutes_ago == 1:
+                cached_erlc_stats["last_updated"] = "1 minute ago"
+            else:
+                cached_erlc_stats["last_updated"] = f"{minutes_ago} minutes ago"
+            cached_erlc_stats["last_update_time"] = now
+    except Exception as e:
+        print(f"[ERLC STATS] Error updating stats: {e}")
+
+async def erlc_stats_updater(bot: commands.Bot):
+    """Background task to update ERLC stats every minute."""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        await update_erlc_stats()
+        await asyncio.sleep(ERLC_STATS_UPDATE_INTERVAL)
+
+
+# ==========================================
 # V2 CARD BUILDER HELPER
 # ==========================================
 
@@ -69,7 +158,8 @@ def create_session_card(
     button_url: str = None,
     button_label: str = "Quick Join",
     server_details: str = None,
-    bottom_banner_url: str = None
+    bottom_banner_url: str = None,
+    include_stats: bool = False
 ) -> discord.ui.LayoutView:
     """Builds a Components V2 LayoutView card."""
     view = discord.ui.LayoutView(timeout=None)
@@ -92,7 +182,21 @@ def create_session_card(
         container.add_item(discord.ui.Separator())
         container.add_item(discord.ui.TextDisplay(server_details))
 
-    # 4. Quick Join Button Section (Separator above, no bottom banner)
+    # 4. ERLC Stats Section (only for Session Start)
+    if include_stats:
+        container.add_item(discord.ui.Separator())
+        
+        # Format stats section as text blocks
+        stats_text = (
+            f"**Players**\n{cached_erlc_stats['players']}\n\n"
+            f"**Queue**\n{cached_erlc_stats['queue']}\n\n"
+            f"**Staff**\n{cached_erlc_stats['staff']}\n\n"
+            f"Last updated: {cached_erlc_stats['last_updated']}"
+        )
+        container.add_item(discord.ui.TextDisplay(stats_text))
+        container.add_item(discord.ui.Separator())
+
+    # 5. Quick Join Button Section (Separator above, no bottom banner)
     if button_url:
         container.add_item(discord.ui.Separator())
         row = discord.ui.ActionRow()
@@ -105,7 +209,7 @@ def create_session_card(
         )
         container.add_item(row)
 
-    # 5. Bottom Media Banner
+    # 6. Bottom Media Banner
     if bottom_banner_url and bottom_banner_url.startswith("http"):
         container.add_item(discord.ui.Separator())
         container.add_item(
@@ -135,7 +239,8 @@ class SessionPanelView(discord.ui.View):
         button_url: str = None,
         button_label: str = "Quick Join",
         server_details: str = None,
-        bottom_banner_url: str = None
+        bottom_banner_url: str = None,
+        include_stats: bool = False
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -154,7 +259,8 @@ class SessionPanelView(discord.ui.View):
             button_url=button_url,
             button_label=button_label,
             server_details=server_details,
-            bottom_banner_url=bottom_banner_url
+            bottom_banner_url=bottom_banner_url,
+            include_stats=include_stats
         )
 
         try:
@@ -181,7 +287,8 @@ class SessionPanelView(discord.ui.View):
             button_url=SESSION_START_BUTTON_URL,
             button_label="Quick Join",
             server_details=SESSION_START_SERVER_TEXT,
-            bottom_banner_url=SESSION_START_BOTTOM_BANNER
+            bottom_banner_url=SESSION_START_BOTTOM_BANNER,
+            include_stats=True
         )
 
     @discord.ui.button(label="Full Players", style=discord.ButtonStyle.primary, custom_id="session_panel:full")
@@ -244,3 +351,9 @@ def setup_session_commands(bot: commands.Bot, has_role_or_higher):
         panel_layout.add_item(container)
         
         await interaction.response.send_message(view=panel_layout, ephemeral=True)
+
+
+# Function to start ERLC stats updater (call this from bot.py on_ready)
+def start_erlc_stats_updater(bot: commands.Bot):
+    """Start the ERLC stats updater task. Call this from bot.py on_ready."""
+    asyncio.create_task(erlc_stats_updater(bot))

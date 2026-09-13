@@ -592,6 +592,14 @@ async def on_ready():
         print("[SETUP] Ticket system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading ticket system: {e}")
+
+    print("[ERLC STATS] Starting ERLC stats updater...")
+    try:
+        from session_panel import start_erlc_stats_updater
+        start_erlc_stats_updater(bot)
+        print("[ERLC STATS] ERLC stats updater started")
+    except Exception as e:
+        print(f"[ERLC STATS] Error starting ERLC stats updater: {e}")
         traceback.print_exc()
 
     print("[SETUP] Loading giveaway system...")
