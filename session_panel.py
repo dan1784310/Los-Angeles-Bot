@@ -73,8 +73,8 @@ SESSION_END_COLOUR: discord.Color = GLOBAL_RGB_COLOR
 # ERLC STATS SECTION
 # ==========================================
 
-async def fetch_erlc_stats():
-    """Fetch current server stats from ERLC API."""
+def fetch_erlc_stats():
+    """Fetch current server stats from ERLC API (synchronous)."""
     try:
         from erlc_api import ERLCClient
         import os
@@ -134,12 +134,12 @@ async def fetch_erlc_stats():
         traceback.print_exc()
         return None
 
-async def update_erlc_stats():
-    """Update cached ERLC stats."""
+def update_erlc_stats():
+    """Update cached ERLC stats (synchronous)."""
     global cached_erlc_stats
     try:
         print("[ERLC STATS] Starting stats update...")
-        stats = await fetch_erlc_stats()
+        stats = fetch_erlc_stats()
         if stats:
             cached_erlc_stats.update(stats)
             # Update the timestamp to current time for Discord timestamp
@@ -159,7 +159,9 @@ async def erlc_stats_updater(bot: commands.Bot):
     print("[ERLC STATS] Bot is ready, starting stats update loop...")
     while not bot.is_closed():
         print(f"[ERLC STATS] Running stats update cycle at {datetime.now()}")
-        await update_erlc_stats()
+        # Run the synchronous function in a thread pool
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, update_erlc_stats)
         print(f"[ERLC STATS] Sleeping for {ERLC_STATS_UPDATE_INTERVAL} seconds...")
         await asyncio.sleep(ERLC_STATS_UPDATE_INTERVAL)
     print("[ERLC STATS] Stats updater task stopped")
