@@ -124,16 +124,18 @@ async def update_erlc_stats():
         stats = await fetch_erlc_stats()
         if stats:
             cached_erlc_stats.update(stats)
-            # Calculate time ago
+            # Calculate time ago with more precision
             now = datetime.now()
             time_diff = now - cached_erlc_stats.get("last_update_time", now)
-            minutes_ago = int(time_diff.total_seconds() / 60)
-            if minutes_ago == 0:
-                cached_erlc_stats["last_updated"] = "Just now"
-            elif minutes_ago == 1:
-                cached_erlc_stats["last_updated"] = "1 minute ago"
+            seconds_ago = int(time_diff.total_seconds())
+            
+            if seconds_ago < 60:
+                cached_erlc_stats["last_updated"] = f"{seconds_ago} sec ago"
+            elif seconds_ago < 120:
+                cached_erlc_stats["last_updated"] = "1 min ago"
             else:
-                cached_erlc_stats["last_updated"] = f"{minutes_ago} minutes ago"
+                minutes_ago = seconds_ago // 60
+                cached_erlc_stats["last_updated"] = f"{minutes_ago} min ago"
             cached_erlc_stats["last_update_time"] = now
     except Exception as e:
         print(f"[ERLC STATS] Error updating stats: {e}")
@@ -188,7 +190,7 @@ def create_session_card(
         # Players Section with Button Accessory
         container.add_item(
             discord.ui.Section(
-                "**Players**\nHow many players are in-game",
+                "**Players**\n-# How many players are in-game",
                 accessory=discord.ui.Button(
                     style=discord.ButtonStyle.secondary,
                     label=cached_erlc_stats['players'],
@@ -200,7 +202,7 @@ def create_session_card(
         # Queue Section with Button Accessory
         container.add_item(
             discord.ui.Section(
-                "**Queue**\nHow many players are waiting to join",
+                "**Queue**\n-# How many players are waiting to join",
                 accessory=discord.ui.Button(
                     style=discord.ButtonStyle.secondary,
                     label=cached_erlc_stats['queue'],
@@ -212,7 +214,7 @@ def create_session_card(
         # Staff Section with Button Accessory & Last Updated Subtext
         container.add_item(
             discord.ui.Section(
-                f"**Staff**\nHow many staff are in-game moderating\n-# Last updated: {cached_erlc_stats['last_updated']}",
+                f"**Staff**\n-# How many staff are in-game moderating\n-# Last updated: {cached_erlc_stats['last_updated']}",
                 accessory=discord.ui.Button(
                     style=discord.ButtonStyle.secondary,
                     label=cached_erlc_stats['staff'],
@@ -220,7 +222,6 @@ def create_session_card(
                 )
             )
         )
-        container.add_item(discord.ui.Separator())
 
     # 5. Quick Join Button Section (Separator above, no bottom banner)
     if button_url:
