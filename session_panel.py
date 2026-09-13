@@ -28,8 +28,7 @@ cached_erlc_stats = {
     "players": "0/50",
     "queue": "0",
     "staff": "0",
-    "last_updated": "0 sec ago",
-    "last_update_time": datetime.now()
+    "last_updated_timestamp": int(datetime.now().timestamp())
 }
 
 # --- SESSION START CONFIG ---
@@ -80,8 +79,10 @@ async def fetch_erlc_stats():
         from erlc_api import ERLCClient
         erlc_client = ERLCClient()
         if not erlc_client.configured:
+            print("[ERLC STATS] ERLC client not configured - check ERLC_SERVER_KEY")
             return None
         
+        print("[ERLC STATS] Fetching stats from ERLC API...")
         # Fetch server info with players and staff
         data = erlc_client.get_server(Players=True, Staff=True)
         
@@ -116,6 +117,8 @@ async def fetch_erlc_stats():
         }
     except Exception as e:
         print(f"[ERLC STATS] Error fetching stats: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 async def update_erlc_stats():
@@ -125,19 +128,8 @@ async def update_erlc_stats():
         stats = await fetch_erlc_stats()
         if stats:
             cached_erlc_stats.update(stats)
-            # Calculate time ago with more precision
-            now = datetime.now()
-            time_diff = now - cached_erlc_stats.get("last_update_time", now)
-            seconds_ago = int(time_diff.total_seconds())
-            
-            if seconds_ago < 60:
-                cached_erlc_stats["last_updated"] = f"{seconds_ago} sec ago"
-            elif seconds_ago < 120:
-                cached_erlc_stats["last_updated"] = "1 min ago"
-            else:
-                minutes_ago = seconds_ago // 60
-                cached_erlc_stats["last_updated"] = f"{minutes_ago} min ago"
-            cached_erlc_stats["last_update_time"] = now
+            # Update the timestamp to current time for Discord timestamp
+            cached_erlc_stats["last_updated_timestamp"] = int(datetime.now().timestamp())
     except Exception as e:
         print(f"[ERLC STATS] Error updating stats: {e}")
 
@@ -215,7 +207,7 @@ def create_session_card(
         # Staff Section with Button Accessory & Last Updated Subtext
         container.add_item(
             discord.ui.Section(
-                f"**Staff**\n-# How many staff are in-game moderating\n-# Last updated: {cached_erlc_stats['last_updated']}",
+                f"**Staff**\n-# How many staff are in-game moderating\n-# Last updated: <t:{cached_erlc_stats['last_updated_timestamp']}:R>",
                 accessory=discord.ui.Button(
                     style=discord.ButtonStyle.secondary,
                     label=cached_erlc_stats['staff'],
