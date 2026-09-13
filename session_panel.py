@@ -186,14 +186,51 @@ def create_session_card(
     if include_stats:
         container.add_item(discord.ui.Separator())
         
-        # Format stats section as text blocks
-        stats_text = (
-            f"**Players**\n{cached_erlc_stats['players']}\n\n"
-            f"**Queue**\n{cached_erlc_stats['queue']}\n\n"
-            f"**Staff**\n{cached_erlc_stats['staff']}\n\n"
-            f"Last updated: {cached_erlc_stats['last_updated']}"
+        # Players Section - label left, disabled button right
+        players_row = discord.ui.ActionRow()
+        players_row.add_item(
+            discord.ui.TextDisplay(f"**Players**")
         )
-        container.add_item(discord.ui.TextDisplay(stats_text))
+        players_row.add_item(
+            discord.ui.Button(
+                label=cached_erlc_stats['players'],
+                style=discord.ButtonStyle.secondary,
+                disabled=True
+            )
+        )
+        container.add_item(players_row)
+        
+        # Queue Section
+        queue_row = discord.ui.ActionRow()
+        queue_row.add_item(
+            discord.ui.TextDisplay(f"**Queue**")
+        )
+        queue_row.add_item(
+            discord.ui.Button(
+                label=cached_erlc_stats['queue'],
+                style=discord.ButtonStyle.secondary,
+                disabled=True
+            )
+        )
+        container.add_item(queue_row)
+        
+        # Staff Section
+        staff_row = discord.ui.ActionRow()
+        staff_row.add_item(
+            discord.ui.TextDisplay(f"**Staff**")
+        )
+        staff_row.add_item(
+            discord.ui.Button(
+                label=cached_erlc_stats['staff'],
+                style=discord.ButtonStyle.secondary,
+                disabled=True
+            )
+        )
+        container.add_item(staff_row)
+        
+        # Last Updated
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"Last updated: {cached_erlc_stats['last_updated']}"))
         container.add_item(discord.ui.Separator())
 
     # 5. Quick Join Button Section (Separator above, no bottom banner)
