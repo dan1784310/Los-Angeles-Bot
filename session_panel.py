@@ -102,7 +102,6 @@ async def fetch_erlc_stats():
         if isinstance(staff, list):
             staff_count = str(len(staff))
         elif isinstance(staff, dict):
-            # If staff is a dict, it might have count or be a dict of staff members
             staff_count = str(staff.get("count", len(staff)))
         else:
             staff_count = "0"
@@ -271,6 +270,7 @@ class SessionPanelView(discord.ui.View):
         bottom_banner_url: str = None,
         include_stats: bool = False
     ):
+        # Deferred immediately to prevent a 10062 Unknown Interaction timeout error
         await interaction.response.defer(ephemeral=True)
 
         channel = interaction.guild.get_channel(SESSION_CHANNEL_ID)
