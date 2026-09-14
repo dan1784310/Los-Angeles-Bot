@@ -812,7 +812,7 @@ class TicketSetup(commands.Cog):
         )
         
         async def on_category_select(select_interaction: discord.Interaction):
-            category_id = int(select_interaction.values[0])
+            category_id = int(select_interaction.data['values'][0])
             category = next((cat for cat in categories if cat['id'] == category_id), None)
             if category:
                 await self.show_discord_category_channel_selector(select_interaction, category)
@@ -847,7 +847,7 @@ class TicketSetup(commands.Cog):
         )
         
         async def on_discord_category_select(select_interaction: discord.Interaction):
-            discord_category_id = int(select_interaction.values[0])
+            discord_category_id = int(select_interaction.data['values'][0])
             
             # Update the category in the database
             try:
