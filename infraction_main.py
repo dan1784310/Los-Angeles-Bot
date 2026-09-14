@@ -53,6 +53,49 @@ def _can_issue_infraction(interaction: discord.Interaction) -> bool:
 # INFRACTION COG
 # ==========================================
 
+class VoidButton(discord.ui.View):
+    """Button view for voiding infractions."""
+    
+    def __init__(self, message_id: int, channel_id: int, void_role_id: int):
+        super().__init__(timeout=None)
+        self.message_id = message_id
+        self.channel_id = channel_id
+        self.void_role_id = void_role_id
+    
+    @discord.ui.button(label="Void Infraction", style=discord.ButtonStyle.danger, custom_id="void_infraction_button")
+    async def void_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Check if user has the void role or higher
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("❌ This can only be used in a server.", ephemeral=True)
+            return
+        
+        void_role = interaction.guild.get_role(self.void_role_id)
+        if not void_role or interaction.user.top_role < void_role:
+            await interaction.response.send_message("❌ You don't have permission to void this infraction.", ephemeral=True)
+            return
+        
+        target_channel = interaction.guild.get_channel(self.channel_id)
+        if not target_channel:
+            await interaction.response.send_message("❌ Could not find the infraction channel.", ephemeral=True)
+            return
+        
+        try:
+            target_message = await target_channel.fetch_message(self.message_id)
+            if not target_message.embeds:
+                await interaction.response.send_message("❌ This message doesn't contain an embed.", ephemeral=True)
+                return
+            
+            embed = target_message.embeds[0]
+            embed.title = f"Voided by @{interaction.user.display_name}"
+            embed.color = discord.Color.red()
+            
+            await target_message.edit(embed=embed, view=None)  # Remove the button after voiding
+            await interaction.response.send_message("✅ Successfully voided infraction.", ephemeral=True)
+            
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error voiding infraction: {e}", ephemeral=True)
+
+
 class InfractionSystem(commands.Cog):
     """Main infraction system cog with control proxy capabilities."""
     
@@ -74,7 +117,7 @@ class InfractionSystem(commands.Cog):
         clean_content = message.content.strip().lower()
 
         # Ignore state toggles and command prefixes so they run normally
-        if clean_content.startswith("!m") or clean_content.startswith("!reply") or clean_content.startswith("!void"):
+        if clean_content.startswith("!m") or clean_content.startswith("!reply"):
             return
 
         # Check if the author has an active proxy session set up
@@ -349,54 +392,27 @@ class InfractionSystem(commands.Cog):
             
         description += f"• **Notes:** {formatted_notes}"
         embed.description = description
-        await channel.send(content=f"{recipient.mention}", embed=embed)
-
-    # ==========================================
-    # VOID COMMAND
-    # ==========================================
-
-    @commands.command(name="void")
-    async def void_command(
-        self, 
-        ctx: commands.Context, 
-        message_id: str, 
-        channel: Optional[discord.TextChannel] = None
-    ):
-        if not ctx.guild or not isinstance(ctx.author, discord.Member):
-            await ctx.send("This command can only be used in a server.")
-            return
         
-        void_role = ctx.guild.get_role(VOID_ROLE_ID)
-        if not void_role or ctx.author.top_role < void_role:
-            await ctx.send("You don't have permission to use this command.")
-            return
+        # Create the void button view
+        void_view = VoidButton(0, channel.id, VOID_ROLE_ID)  # message_id will be set after sending
         
-        target_channel = channel or ctx.guild.get_channel(INFRACTION_CHANNEL_ID) or ctx.channel
+        # Send the message with the view
+        message = await channel.send(content=f"{recipient.mention}", embed=embed, view=void_view)
         
+        # Update the view with the actual message ID
+        void_view.message_id = message.id
+        
+        # Create a thread for the infraction
         try:
-            target_message = await target_channel.fetch_message(int(message_id))
-            if not target_message.embeds:
-                await ctx.send(f"This message in {target_channel.mention} doesn't contain an embed.")
-                return
-            
-            embed = target_message.embeds[0]
-            embed.title = f"Voided by @{ctx.author.display_name}"
-            embed.color = discord.Color.red()
-            
-            await target_message.edit(embed=embed)
-            await ctx.send(f"Successfully voided infraction in {target_channel.mention}.", delete_after=3)
-            
-            try:
-                await ctx.message.delete()
-            except discord.HTTPException:
-                pass
-            
-        except ValueError:
-            await ctx.send("Invalid message ID. Please provide a numerical message ID.")
-        except discord.NotFound:
-            await ctx.send(f"Message not found in {target_channel.mention}.")
+            thread = await message.create_thread(
+                name=f"Infraction - {recipient.display_name} - {action}",
+                auto_archive_duration=1440  # 24 hours
+            )
+            await thread.send(f"📋 Thread created for infraction discussion. Use this thread to discuss this infraction.")
         except Exception as e:
-            await ctx.send(f"Error voiding infraction: {e}")
+            print(f"Error creating thread for infraction: {e}")
+
+
 
 
 async def setup(bot: commands.Bot):
