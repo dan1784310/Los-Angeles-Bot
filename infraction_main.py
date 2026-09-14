@@ -408,7 +408,6 @@ class InfractionSystem(commands.Cog):
                 name=f"Infraction - {recipient.display_name} - {action}",
                 auto_archive_duration=1440  # 24 hours
             )
-            await thread.send(f"📋 Thread created for infraction discussion. Use this thread to discuss this infraction.")
         except Exception as e:
             print(f"Error creating thread for infraction: {e}")
 
