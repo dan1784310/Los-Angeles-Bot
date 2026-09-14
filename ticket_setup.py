@@ -772,14 +772,158 @@ class TicketSetup(commands.Cog):
         add_button.callback = on_add
         view.add_item(add_button)
 
-        message = "Select an existing category to edit, or add a new one:" if categories else "No categories yet — add one:"
+        # Add button to quickly set Discord categories for existing categories
+        set_discord_cat_button = discord.ui.Button(label="🗂️ Set Discord Categories", style=discord.ButtonStyle.primary)
+
+        async def on_set_discord_cat(button_interaction: discord.Interaction):
+            await self.show_discord_category_selector(button_interaction)
+
+        set_discord_cat_button.callback = on_set_discord_cat
+        view.add_item(set_discord_cat_button)
+
+        message = "Select an existing category to edit, add a new one, or set Discord categories:" if categories else "No categories yet — add one:"
 
         if interaction.response.is_done():
             await interaction.followup.send(message, view=view, ephemeral=True)
         else:
             await interaction.response.send_message(message, view=view, ephemeral=True)
 
+    async def show_discord_category_selector(self, interaction: discord.Interaction):
+        """Show a selector to quickly set Discord categories for existing ticket categories."""
+        categories = db.get_ticket_categories(interaction.guild_id)
+        
+        if not categories:
+            await interaction.response.send_message("❌ No ticket categories found.", ephemeral=True)
+            return
+        
+        view = discord.ui.View(timeout=None)
+        
+        # Select which ticket category to configure
+        category_select = discord.ui.Select(
+            placeholder="Select a ticket category...",
+            options=[
+                discord.SelectOption(label=cat['name'], value=str(cat['id']))
+                for cat in categories[:25]
+            ]
+        )
+        
+        async def on_category_select(select_interaction: discord.Interaction):
+            category_id = int(select_interaction.values[0])
+            category = next((cat for cat in categories if cat['id'] == category_id), None)
+            if category:
+                await self.show_discord_category_channel_selector(select_interaction, category)
+        
+        category_select.callback = on_category_select
+        view.add_item(category_select)
+        
+        await interaction.response.send_message(
+            "Select a ticket category to set its Discord category:",
+            view=view,
+            ephemeral=True
+        )
+    
+    async def show_discord_category_channel_selector(self, interaction: discord.Interaction, category: dict):
+        """Show a selector to choose a Discord category for the selected ticket category."""
+        view = discord.ui.View(timeout=None)
+        
+        # Select which Discord category to use
+        category_select = discord.ui.Select(
+            placeholder="Select a Discord category...",
+            options=[
+                discord.SelectOption(label=cat.name, value=str(cat.id))
+                for cat in interaction.guild.categories[:25]
+            ]
+        )
+        
+        async def on_discord_category_select(select_interaction: discord.Interaction):
+            discord_category_id = int(select_interaction.values[0])
+            
+            # Update the category in the database
+            try:
+                result = db.update_ticket_category(
+                    interaction.guild_id,
+                    category['id'],
+                    discord_category_id=discord_category_id
+                )
+                
+                if result:
+                    discord_category = interaction.guild.get_channel(discord_category_id)
+                    await select_interaction.followup.send(
+                        f"✅ Set Discord category **{discord_category.name}** for ticket category **{category['name']}**.",
+                        ephemeral=True
+                    )
+                else:
+                    await select_interaction.followup.send(
+                        "❌ Failed to update Discord category.",
+                        ephemeral=True
+                    )
+            except Exception as e:
+                await select_interaction.followup.send(
+                    f"❌ Error updating Discord category: {e}",
+                    ephemeral=True
+                )
+        
+        category_select.callback = on_discord_category_select
+        view.add_item(category_select)
+        
+        # Add option to clear (use default)
+        clear_button = discord.ui.Button(label="Use Default Category", style=discord.ButtonStyle.secondary)
+        
+        async def on_clear(button_interaction: discord.Interaction):
+            try:
+                result = db.update_ticket_category(
+                    interaction.guild_id,
+                    category['id'],
+                    discord_category_id=None
+                )
+                
+                if result:
+                    await button_interaction.followup.send(
+                        f"✅ Removed custom Discord category for **{category['name']}**. It will now use the default ticket category.",
+                        ephemeral=True
+                    )
+                else:
+                    await button_interaction.followup.send(
+                        "❌ Failed to remove custom Discord category.",
+                        ephemeral=True
+                    )
+            except Exception as e:
+                await button_interaction.followup.send(
+                    f"❌ Error removing custom Discord category: {e}",
+                    ephemeral=True
+                )
+        
+        clear_button.callback = on_clear
+        view.add_item(clear_button)
+        
+        await interaction.response.send_message(
+            f"Select a Discord category for **{category['name']}** tickets:",
+            view=view,
+            ephemeral=True
+        )
+
     async def start_quick_edit_category(self, interaction: discord.Interaction, category_id: int):
+        """Begin editing an existing category's title/description/ping/visibility."""
+        category = db.get_ticket_category_by_id(interaction.guild_id, category_id)
+        if not category:
+            await interaction.response.send_message("❌ Category not found.", ephemeral=True)
+            return
+
+        self.quick_edit_sessions[interaction.user.id] = {
+            'guild_id': interaction.guild_id,
+            'category_id': category_id,
+            'name': category['name'],
+            'is_new': False
+        }
+
+        await interaction.response.send_modal(
+            CategoryConfigModal(
+                category['name'],
+                lambda i, name, title, description: self.on_quick_category_config_submit(i, title, description),
+                existing_title=category.get('title'),
+                existing_description=category.get('description')
+            )
+        )
         """Begin editing an existing category's title/description/ping/visibility."""
         category = db.get_ticket_category_by_id(interaction.guild_id, category_id)
         if not category:
