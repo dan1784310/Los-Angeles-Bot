@@ -618,6 +618,7 @@ class GeneralCommands(commands.Cog):
 @bot.event
 async def on_ready():
     print(f"[READY] Logged in as {bot.user} ({bot.user.id})")
+    print(f"[READY] Connected to {len(bot.guilds)} guild(s)")
 
     print("[COMMANDS] Registered prefix commands:")
     for command in bot.commands:
@@ -632,6 +633,7 @@ async def on_ready():
         print("[SETUP] Ticket system loaded successfully")
     except Exception as e:
         print(f"[SETUP] Error loading ticket system: {e}")
+        traceback.print_exc()
 
     print("[ERLC STATS] Starting ERLC stats updater...")
     try:
@@ -758,6 +760,8 @@ async def on_ready():
     except Exception as e:
         print(f"Error refreshing ticket panels: {e}")
         traceback.print_exc()
+    
+    print("[READY] Bot startup complete!")
 
 
 # ============================================================
@@ -2374,7 +2378,9 @@ if __name__ == "__main__":
 
     try:
         print("[Discord] Logging in...")
+        print(f"[DEBUG] About to call bot.run(TOKEN)")
         bot.run(TOKEN)
+        print("[DEBUG] bot.run() completed (shouldn't reach here)")
     except discord.HTTPException as e:
         if e.status == 429:
             print(
