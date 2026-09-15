@@ -104,7 +104,7 @@ async def on_category_select(interaction: discord.Interaction, category_id: str,
 
 
 async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: int, db_instance,
-                                    settings: dict, category_id_int: int, category: dict, issue_text: str):
+                                   settings: dict, category_id_int: int, category: dict, issue_text: str):
     """
     Create the ticket channel once the user has submitted the "What seems
     to be the issue?" modal.
@@ -671,6 +671,14 @@ class TicketCreation(commands.Cog):
         if not custom_id:
             return
         
+        # Handle panel dropdown selection
+        if custom_id.startswith("ticket_select_") or custom_id == "ticket_dropdown":
+            selected_values = interaction.data.get("values", [])
+            if selected_values:
+                category_id = selected_values[0]
+                await on_category_select(interaction, category_id, interaction.guild.id, db)
+            return
+
         # Handle close ticket button
         if custom_id == "close_ticket":
             await close_ticket(interaction, interaction.channel_id)
