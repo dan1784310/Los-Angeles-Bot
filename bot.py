@@ -654,9 +654,9 @@ class GeneralCommands(commands.Cog):
             await interaction.followup.send(f"❌ Error testing Melonly connection: {e}", ephemeral=True)
 
 
-# ============================================================
+# ===========================================================
 # STARTUP / RECONNECT PROTECTION
-# ============================================================
+# ===========================================================
 
 _startup_complete = False
 _erlc_poll_started = False
