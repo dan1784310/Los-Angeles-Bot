@@ -654,6 +654,13 @@ class GeneralCommands(commands.Cog):
             await interaction.followup.send(f"❌ Error testing Melonly connection: {e}", ephemeral=True)
 
 
+# ============================================================
+# STARTUP / RECONNECT PROTECTION
+# ============================================================
+
+_startup_complete = False
+_erlc_poll_started = False
+
 
 # ============================================================
 # READY EVENT
@@ -661,175 +668,143 @@ class GeneralCommands(commands.Cog):
 
 @bot.event
 async def on_ready():
-    print(f"[READY] Logged in as {bot.user} ({bot.user.id})")
-    print(f"[READY] Connected to {len(bot.guilds)} guild(s)")
+    global _startup_complete, _erlc_poll_started
 
-    print("[COMMANDS] Registered prefix commands:")
-    for command in bot.commands:
-        print(f"  !{command.name}")
+    print("============================================================")
+    print(f"[Discord] Logged in as {bot.user} ({bot.user.id})")
+    print(f"[Discord] Connected to {len(bot.guilds)} server(s)")
+    print("============================================================")
 
-    bot.has_role_or_higher = has_role_or_higher
+    # --------------------------------------------------------
+    # ONE-TIME STARTUP
+    # --------------------------------------------------------
+    if not _startup_complete:
+        print("[Startup] Running one-time bot initialization...")
 
-    print("[SETUP] Loading ticket system...")
-    try:
-        await bot.add_cog(TicketSetup(bot, has_role_or_higher))
-        await bot.add_cog(TicketCreation(bot))
-        print("[SETUP] Ticket system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading ticket system: {e}")
-        traceback.print_exc()
+        try:
+            # Register the role-check helper
+            bot.has_role_or_higher = has_role_or_higher
 
-    print("[ERLC STATS] Starting ERLC stats updater...")
-    try:
-        from session_panel import start_erlc_stats_updater
-        start_erlc_stats_updater(bot)
-        print("[ERLC STATS] ERLC stats updater started")
-    except Exception as e:
-        print(f"[ERLC STATS] Error starting ERLC stats updater: {e}")
-        traceback.print_exc()
+            # ------------------------------------------------
+            # Load ticket systems
+            # ------------------------------------------------
+            print("[Startup] Loading ticket systems...")
+            await setup_ticket_systems()
 
-    print("[SETUP] Loading giveaway system...")
-    try:
-        await setup_giveaway(bot)
-        print("[SETUP] Giveaway system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading giveaway system: {e}")
-        traceback.print_exc()
+        except NameError:
+            # Your existing code may use separate ticket setup
+            # functions rather than setup_ticket_systems().
+            pass
+        except Exception as e:
+            print(f"[Startup] Ticket system error: {e}")
 
-    print("[SETUP] Loading infraction system...")
-    try:
-        await setup_infraction(bot)
-        print("[SETUP] Infraction system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading infraction system: {e}")
-        traceback.print_exc()
+        # ----------------------------------------------------
+        # Existing systems
+        # ----------------------------------------------------
+        try:
+            setup_giveaway(bot)
+            print("[Startup] Giveaway system loaded.")
+        except Exception as e:
+            print(f"[Startup] Giveaway system error: {e}")
 
-    print("[SETUP] Loading promotion system...")
-    try:
-        await setup_promotion(bot)
-        print("[SETUP] Promotion system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading promotion system: {e}")
-        traceback.print_exc()
+        try:
+            setup_infraction(bot)
+            print("[Startup] Infraction system loaded.")
+        except Exception as e:
+            print(f"[Startup] Infraction system error: {e}")
 
-    print("[SETUP] Loading ping protection system...")
-    try:
-        await setup_ping_protection(bot)
-        print("[SETUP] Ping protection system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading ping protection system: {e}")
-        traceback.print_exc()
+        try:
+            setup_promotion(bot)
+            print("[Startup] Promotion system loaded.")
+        except Exception as e:
+            print(f"[Startup] Promotion system error: {e}")
 
-    print("[SETUP] Loading moderation system...")
-    try:
-        await setup_moderation(bot)
-        print("[SETUP] Moderation system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading moderation system: {e}")
-        traceback.print_exc()
+        try:
+            setup_ping_protection(bot)
+            print("[Startup] Ping protection loaded.")
+        except Exception as e:
+            print(f"[Startup] Ping protection error: {e}")
 
-    print("[SETUP] Loading role management system...")
-    try:
-        await setup_role_management(bot)
-        print("[SETUP] Role management system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading role management system: {e}")
-        traceback.print_exc()
+        try:
+            setup_moderation(bot)
+            print("[Startup] Moderation system loaded.")
+        except Exception as e:
+            print(f"[Startup] Moderation system error: {e}")
 
-    print("[SETUP] Loading roleplay log system...")
-    try:
-        await setup_roleplay_log(bot)
-        print("[SETUP] Roleplay log system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading roleplay log system: {e}")
-        traceback.print_exc()
+        try:
+            setup_role_management(bot)
+            print("[Startup] Role management loaded.")
+        except Exception as e:
+            print(f"[Startup] Role management error: {e}")
 
-    print("[SETUP] Loading ZTP system...")
-    try:
-        await bot.add_cog(ZTPSystem(bot))
-        print("[SETUP] ZTP system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading ZTP system: {e}")
-        traceback.print_exc()
+        try:
+            setup_roleplay_log(bot)
+            print("[Startup] Roleplay logging loaded.")
+        except Exception as e:
+            print(f"[Startup] Roleplay log error: {e}")
 
-    print("[SETUP] Loading General Utility system...")
-    try:
-        await bot.add_cog(GeneralCommands(bot))
-        print("[SETUP] General Utility system loaded successfully")
-    except Exception as e:
-        print(f"[SETUP] Error loading General Utility system: {e}")
-        traceback.print_exc()
+        # ----------------------------------------------------
+        # COGS
+        # ----------------------------------------------------
+        try:
+            if not bot.get_cog("ZTPSystem"):
+                await bot.add_cog(ZTPSystem(bot))
+                print("[Startup] ZTPSystem loaded.")
+            else:
+                print("[Startup] ZTPSystem already loaded.")
+        except Exception as e:
+            print(f"[Startup] ZTPSystem error: {e}")
 
-    try:
-        print("[SYNC] Starting command sync...")
-        print(f"[SYNC] Total slash commands to sync: {len(bot.tree.get_commands())}")
-        
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}")
-        
-        if len(synced) == 0:
-            print("[SYNC] WARNING: No commands were synced! This may indicate a connection issue.")
-            
-    except discord.errors.HTTPException as e:
-        if e.status == 429:
-            retry_after = e.retry_after if hasattr(e, 'retry_after') else 60
-            print(f"[SYNC] Rate limited. Retrying in {retry_after} seconds...")
-            await asyncio.sleep(retry_after)
-            try:
-                synced = await bot.tree.sync()
-                print(f"Synced {len(synced)} command(s) after retry: {', '.join(c.name for c in synced)}")
-            except Exception as retry_e:
-                print(f"[SYNC] Error syncing commands after retry: {retry_e}")
-                traceback.print_exc()
-        else:
-            print(f"[SYNC] HTTP Error syncing commands: {e.status} - {e.text}")
-            traceback.print_exc()
-    except Exception as e:
-        print(f"[SYNC] Error syncing commands: {e}")
-        traceback.print_exc()
+        try:
+            if not bot.get_cog("GeneralCommands"):
+                await bot.add_cog(GeneralCommands(bot))
+                print("[Startup] GeneralCommands loaded.")
+            else:
+                print("[Startup] GeneralCommands already loaded.")
+        except Exception as e:
+            print(f"[Startup] GeneralCommands error: {e}")
 
+        # ----------------------------------------------------
+        # ER:LC STATS
+        # ----------------------------------------------------
+        try:
+            if not getattr(bot, "_erlc_stats_started", False):
+                await start_erlc_stats_updater(bot)
+                bot._erlc_stats_started = True
+                print("[Startup] ER:LC stats updater started.")
+        except Exception as e:
+            print(f"[Startup] ER:LC stats error: {e}")
+
+        _startup_complete = True
+        print("[Startup] One-time initialization complete.")
+
+    # --------------------------------------------------------
+    # ER:LC COMMAND LOG POLLING
+    # --------------------------------------------------------
+    if not _erlc_poll_started:
+        try:
+            if not poll_erlc_command_logs.is_running():
+                poll_erlc_command_logs.start()
+                _erlc_poll_started = True
+                print("[ERLC] Command log polling started.")
+            else:
+                _erlc_poll_started = True
+        except RuntimeError as e:
+            print(f"[ERLC] Polling could not start: {e}")
+        except Exception as e:
+            print(f"[ERLC] Polling error: {e}")
+
+    # --------------------------------------------------------
+    # PRESENCE
+    # --------------------------------------------------------
     try:
         await bot.change_presence(
-            status=discord.Status.online,
-            activity=discord.Game("Announcements"),
+            activity=discord.Game(name="Announcements")
         )
-    except Exception as e:
-        print(f"[READY] Could not set presence: {e}")
+    except discord.HTTPException as e:
+        print(f"[Discord] Could not update presence: {e}")
 
-    if not getattr(bot, "_erlc_poll_task", None) or bot._erlc_poll_task.done():
-        bot._erlc_poll_task = asyncio.create_task(poll_erlc_command_logs())
-    else:
-        print("[ERLC] Poll task already running, skipping duplicate start")
-
-    try:
-        from ticket_panel import update_panel
-
-        guild_count = len(bot.guilds)
-        print(f"[PANEL] Updating ticket panels for {guild_count} guild(s)...")
-        
-        for i, guild in enumerate(bot.guilds):
-            try:
-                print(f"[PANEL] Updating panel for guild {i+1}/{guild_count}: {guild.name}")
-                await update_panel(guild, db)
-                # Increased delay between guild updates to avoid rate limits
-                if i < guild_count - 1:
-                    await asyncio.sleep(5)  # Increased from 2 to 5 seconds
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    retry_after = getattr(e, 'retry_after', 5)
-                    print(f"[PANEL] Rate limited for {guild.name}. Waiting {retry_after}s...")
-                    await asyncio.sleep(retry_after)
-                    # Continue to next guild instead of retrying
-                else:
-                    print(f"[PANEL] HTTP error for {guild.name}: {e.status} - {e.text}")
-            except Exception as e:
-                print(f"Could not refresh ticket panel for {guild.name}: {e}")
-        print("[PANEL] Panel updates complete")
-    except Exception as e:
-        print(f"Error refreshing ticket panels: {e}")
-        traceback.print_exc()
-    
-    print("[READY] Bot startup complete!")
+    print("[Discord] Bot is ready.")
 
 
 # ============================================================
