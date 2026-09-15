@@ -2214,7 +2214,7 @@ async def send_llc_log(
 
     target_word = parts[1]
 
-    if len(target_word) < 4:
+       if len(target_word) < 4:
         now = datetime.datetime.now()
         date_str = now.strftime("%d/%m/%Y")
         time_str = now.strftime("%I:%M %p").lower()
@@ -2235,41 +2235,34 @@ async def send_llc_log(
         container.add_item(discord.ui.TextDisplay(content))
         view.add_item(container)
 
+        # Send LLC log with Discord rate-limit handling
         for attempt in range(3):
-    try:
-        await target_channel.send(view=view)
-        break
-    except discord.HTTPException as e:
-        if e.status == 429:
-            retry_after = getattr(e, "retry_after", 5)
-            print(
-                f"[Rate Limit] Discord 429 hit. Retrying in {retry_after}s..."
-            )
-            await asyncio.sleep(retry_after)
+            try:
+                await target_channel.send(view=view)
+                break
+
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    retry_after = getattr(e, "retry_after", 5)
+
+                    print(
+                        f"[Rate Limit] Discord 429 hit while sending LLC log. "
+                        f"Retrying in {retry_after}s... "
+                        f"(attempt {attempt + 1}/3)"
+                    )
+
+                    await asyncio.sleep(retry_after)
+
+                else:
+                    print(
+                        f"[Discord Error] Could not send LLC log: {e}"
+                    )
+                    break
+
         else:
-            print(f"[Discord Error] Could not send LLC log: {e}")
-            break
-
-except discord.HTTPException as e:
-    if e.status == 429:
-        retry_after = getattr(e, "retry_after", 60)
-
-        print(
-            f"[Rate Limit] Discord API returned 429 during connection. "
-            f"Discord requested a {retry_after:.0f}s wait."
-        )
-
-        # Do NOT immediately restart the bot.
-        # discord.py normally handles gateway reconnects itself.
-        time.sleep(retry_after)
-
-    else:
-        print(f"[Discord Error] {e}")
-        traceback.print_exc()
-
-except Exception as e:
-    print(f"[Fatal Error] {e}")
-    traceback.print_exc()
+            print(
+                "[Discord Error] Failed to send LLC log after 3 attempts."
+            )
 
 
 # ============================================================
@@ -2278,7 +2271,7 @@ except Exception as e:
 
 _erlc_seen_commands = set()
 _erlc_command_poll_first_run = True
-ERLC_COMMAND_POLL_INTERVAL = 30  # Increased from 15 to 30 seconds to reduce API load
+ERLC_COMMAND_POLL_INTERVAL = 30
 
 
 async def poll_erlc_command_logs():
@@ -2287,11 +2280,18 @@ async def poll_erlc_command_logs():
     await bot.wait_until_ready()
 
     erlc_client = ERLCClient()
+
     if not erlc_client.configured:
-        print("[ERLC] Command log polling disabled — ERLC_SERVER_KEY is not set.")
+        print(
+            "[ERLC] Command log polling disabled — "
+            "ERLC_SERVER_KEY is not set."
+        )
         return
 
-    print(f"[ERLC] Polling command logs every {ERLC_COMMAND_POLL_INTERVAL}s...")
+    print(
+        f"[ERLC] Polling command logs every "
+        f"{ERLC_COMMAND_POLL_INTERVAL}s..."
+    )
 
     while not bot.is_closed():
         try:
@@ -2299,6 +2299,7 @@ async def poll_erlc_command_logs():
                 erlc_client.get_server,
                 CommandLogs=True,
             )
+
             logs = data.get("CommandLogs", []) or []
 
             if _erlc_command_poll_first_run:
@@ -2310,7 +2311,9 @@ async def poll_erlc_command_logs():
                     )
                     for log in logs
                 }
+
                 _erlc_command_poll_first_run = False
+
             else:
                 for log in logs:
                     key = (
@@ -2318,12 +2321,16 @@ async def poll_erlc_command_logs():
                         log.get("Timestamp"),
                         log.get("Command"),
                     )
+
                     if key in _erlc_seen_commands:
                         continue
 
                     _erlc_seen_commands.add(key)
+
                     player_field = log.get("Player") or "Unknown:0"
+
                     username, _, roblox_id_str = player_field.partition(":")
+
                     command_text = log.get("Command") or ""
 
                     if command_text:
@@ -2337,9 +2344,13 @@ async def poll_erlc_command_logs():
                                 ),
                                 full_command=command_text,
                             )
-                        except Exception as e:
-                            print(f"[ERLC] Error forwarding command log: {e}")
 
+                        except Exception as e:
+                            print(
+                                f"[ERLC] Error forwarding command log: {e}"
+                            )
+
+                # Prevent the seen-command cache from growing forever
                 if len(_erlc_seen_commands) > 1000:
                     _erlc_seen_commands = set(
                         list(_erlc_seen_commands)[-500:]
@@ -2347,8 +2358,11 @@ async def poll_erlc_command_logs():
 
         except ERLCAPIError as e:
             print(f"[ERLC] Error polling command logs: {e}")
+
         except Exception as e:
-            print(f"[ERLC] Unexpected error polling command logs: {e}")
+            print(
+                f"[ERLC] Unexpected error polling command logs: {e}"
+            )
 
         await asyncio.sleep(ERLC_COMMAND_POLL_INTERVAL)
 
@@ -2377,6 +2391,7 @@ def erlc_events():
     """Receive ER:LC webhook data without exposing the server key."""
     try:
         payload = request.get_json(silent=True) or {}
+
     except Exception:
         return "Invalid JSON", 400
 
@@ -2386,12 +2401,24 @@ def erlc_events():
     # Keep support for payloads that contain a command directly.
     if event_type == "CommandLog" or "Command" in data:
         player_info = data.get("Player", {})
+
         if not isinstance(player_info, dict):
             player_info = {}
 
-        username = player_info.get("Name") or data.get("PlayerName", "Unknown")
-        roblox_id = player_info.get("UserId") or data.get("PlayerId", 0)
-        command_text = data.get("Command") or data.get("command_text", "")
+        username = (
+            player_info.get("Name")
+            or data.get("PlayerName", "Unknown")
+        )
+
+        roblox_id = (
+            player_info.get("UserId")
+            or data.get("PlayerId", 0)
+        )
+
+        command_text = (
+            data.get("Command")
+            or data.get("command_text", "")
+        )
 
         if command_text and bot.is_ready():
             try:
@@ -2403,8 +2430,11 @@ def erlc_events():
                     ),
                     bot.loop,
                 )
+
             except Exception as e:
-                print(f"[ERLC WEBHOOK] Failed to queue LLC log: {e}")
+                print(
+                    f"[ERLC WEBHOOK] Failed to queue LLC log: {e}"
+                )
 
     return "OK", 200
 
@@ -2430,46 +2460,48 @@ def run_web():
 
 if __name__ == "__main__":
     if not TOKEN:
-        raise SystemExit("TOKEN environment variable is not set on Render.")
+        raise SystemExit(
+            "TOKEN environment variable is not set on Render."
+        )
 
-    threading.Thread(target=run_web, daemon=True).start()
+    threading.Thread(
+        target=run_web,
+        daemon=True,
+    ).start()
 
     if ERLC_SERVER_KEY:
         print("[ERLC] Server key configured successfully.")
         print("[ERLC] Event webhook endpoint: /erlc/events")
+
     else:
-        print("[ERLC] WARNING: ERLC_SERVER_KEY is not configured.")
+        print(
+            "[ERLC] WARNING: ERLC_SERVER_KEY is not configured."
+        )
 
     try:
         print("[Discord] Logging in...")
         bot.run(TOKEN)
+
     except discord.HTTPException as e:
         if e.status == 429:
             retry_after = getattr(e, "retry_after", 60)
+
             print(
                 f"[Rate Limit] Discord API returned 429 during connection. "
-                f"Discord's retry_after: {retry_after} seconds. "
-                f"Cannot retry - process will exit to respect rate limit. "
-                f"Render will restart automatically after appropriate delay."
+                f"Discord requested a {retry_after} second wait."
             )
+
+            # Do not attempt another login from inside bot.py.
+            # Render/discord.py should handle the connection lifecycle.
+            print(
+                "[Discord] Process will stop instead of repeatedly "
+                "reconnecting and increasing the rate limit."
+            )
+
         else:
             print(f"[Discord Error] {e}")
+            traceback.print_exc()
+
     except Exception as e:
         print(f"[Fatal Error] {e}")
         traceback.print_exc()
-
-        try:
-    print("[Discord] Logging in...")
-    bot.run(TOKEN)
-except discord.HTTPException as e:
-    if e.status == 429:
-        retry_after = getattr(e, "retry_after", 60)
-        print(
-            f"[Rate Limit] Discord API returned 429 during connection. "
-            f"Discord requested a {retry_after}s wait."
-        )
-    else:
-        print(f"[Discord Error] {e}")
-except Exception as e:
-    print(f"[Fatal Error] {e}")
-    traceback.print_exc()
