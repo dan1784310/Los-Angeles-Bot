@@ -2214,7 +2214,7 @@ async def send_llc_log(
 
     target_word = parts[1]
 
-       if len(target_word) < 4:
+    if len(target_word) < 4:
         now = datetime.datetime.now()
         date_str = now.strftime("%d/%m/%Y")
         time_str = now.strftime("%I:%M %p").lower()
