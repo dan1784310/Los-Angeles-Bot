@@ -2236,12 +2236,19 @@ async def send_llc_log(
         view.add_item(container)
 
         for attempt in range(3):
-            try:
-                await target_channel.send(view=view)
-                break
-            try:
-    print("[Discord] Logging in...")
-    bot.run(TOKEN)
+    try:
+        await target_channel.send(view=view)
+        break
+    except discord.HTTPException as e:
+        if e.status == 429:
+            retry_after = getattr(e, "retry_after", 5)
+            print(
+                f"[Rate Limit] Discord 429 hit. Retrying in {retry_after}s..."
+            )
+            await asyncio.sleep(retry_after)
+        else:
+            print(f"[Discord Error] Could not send LLC log: {e}")
+            break
 
 except discord.HTTPException as e:
     if e.status == 429:
@@ -2450,3 +2457,19 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[Fatal Error] {e}")
         traceback.print_exc()
+
+        try:
+    print("[Discord] Logging in...")
+    bot.run(TOKEN)
+except discord.HTTPException as e:
+    if e.status == 429:
+        retry_after = getattr(e, "retry_after", 60)
+        print(
+            f"[Rate Limit] Discord API returned 429 during connection. "
+            f"Discord requested a {retry_after}s wait."
+        )
+    else:
+        print(f"[Discord Error] {e}")
+except Exception as e:
+    print(f"[Fatal Error] {e}")
+    traceback.print_exc()
