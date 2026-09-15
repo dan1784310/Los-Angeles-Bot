@@ -2239,16 +2239,30 @@ async def send_llc_log(
             try:
                 await target_channel.send(view=view)
                 break
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    retry_after = getattr(e, "retry_after", 5)
-                    print(
-                        f"[Rate Limit] Discord 429 hit. Retrying in {retry_after}s..."
-                    )
-                    await asyncio.sleep(retry_after)
-                else:
-                    print(f"[Discord Error] Could not send LLC log: {e}")
-                    break
+            try:
+    print("[Discord] Logging in...")
+    bot.run(TOKEN)
+
+except discord.HTTPException as e:
+    if e.status == 429:
+        retry_after = getattr(e, "retry_after", 60)
+
+        print(
+            f"[Rate Limit] Discord API returned 429 during connection. "
+            f"Discord requested a {retry_after:.0f}s wait."
+        )
+
+        # Do NOT immediately restart the bot.
+        # discord.py normally handles gateway reconnects itself.
+        time.sleep(retry_after)
+
+    else:
+        print(f"[Discord Error] {e}")
+        traceback.print_exc()
+
+except Exception as e:
+    print(f"[Fatal Error] {e}")
+    traceback.print_exc()
 
 
 # ============================================================
