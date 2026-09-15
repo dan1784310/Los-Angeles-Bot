@@ -572,6 +572,59 @@ class GeneralCommands(commands.Cog):
     @app_commands.command(name="test-melonly", description="Test Melonly API connection.")
     async def test_melonly(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        
+        try:
+            from melonly_api import MelonlyClient, MelonlyAPIError
+            
+            client = MelonlyClient()
+            
+            if not client.configured:
+                await interaction.followup.send("❌ Melonly API token not configured. Check MELONLY_API_TOKEN.", ephemeral=True)
+                return
+            
+            # Test connection
+            is_connected = await asyncio.to_thread(client.test_connection)
+            
+            if is_connected:
+                await interaction.followup.send("✅ Melonly API connection successful!", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Melonly API connection failed.", ephemeral=True)
+                
+        except MelonlyAPIError as e:
+            await interaction.followup.send(f"❌ Melonly API error: {e}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error testing Melonly connection: {e}", ephemeral=True)
+
+    @app_commands.command(name="sync-commands", description="Manually sync Discord commands (debug only)")
+    async def sync_commands(self, interaction: discord.Interaction):
+        """Manually sync commands to help debug sync issues."""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            print(f"[SYNC MANUAL] Starting manual sync requested by {interaction.user}")
+            synced = await bot.tree.sync()
+            await interaction.followup.send(f"✅ Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}", ephemeral=True)
+            print(f"[SYNC MANUAL] Manual sync completed: {len(synced)} commands")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error syncing commands: {e}", ephemeral=True)
+            print(f"[SYNC MANUAL] Error: {e}")
+            traceback.print_exc()
+
+    @app_commands.command(name="sync-commands", description="Manually sync Discord commands (debug only)")
+    async def sync_commands(self, interaction: discord.Interaction):
+        """Manually sync commands to help debug sync issues."""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            print(f"[SYNC MANUAL] Starting manual sync requested by {interaction.user}")
+            synced = await bot.tree.sync()
+            await interaction.followup.send(f"✅ Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}", ephemeral=True)
+            print(f"[SYNC MANUAL] Manual sync completed: {len(synced)} commands")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error syncing commands: {e}", ephemeral=True)
+            print(f"[SYNC MANUAL] Error: {e}")
+            traceback.print_exc()
+        await interaction.response.defer(ephemeral=True)
 
         try:
             from melonly_api import MelonlyClient, MelonlyAPIError
@@ -718,8 +771,14 @@ async def on_ready():
 
     try:
         print("[SYNC] Starting command sync...")
+        print(f"[SYNC] Total slash commands to sync: {len(bot.tree.get_commands())}")
+        
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}")
+        
+        if len(synced) == 0:
+            print("[SYNC] WARNING: No commands were synced! This may indicate a connection issue.")
+            
     except discord.errors.HTTPException as e:
         if e.status == 429:
             retry_after = e.retry_after if hasattr(e, 'retry_after') else 60
@@ -732,7 +791,7 @@ async def on_ready():
                 print(f"[SYNC] Error syncing commands after retry: {retry_e}")
                 traceback.print_exc()
         else:
-            print(f"[SYNC] Error syncing commands: {e}")
+            print(f"[SYNC] HTTP Error syncing commands: {e.status} - {e.text}")
             traceback.print_exc()
     except Exception as e:
         print(f"[SYNC] Error syncing commands: {e}")
