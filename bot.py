@@ -569,27 +569,43 @@ class GeneralCommands(commands.Cog):
 
         await interaction.response.send_message(view=view)
 
+    @app_commands.command(name="sync-commands", description="Manually sync Discord commands (debug only)")
+    async def sync_commands(self, interaction: discord.Interaction):
+        """Manually sync commands to help debug sync issues."""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            print(f"[SYNC MANUAL] Starting manual sync requested by {interaction.user}")
+            synced = await bot.tree.sync()
+            await interaction.followup.send(f"✅ Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}", ephemeral=True)
+            print(f"[SYNC MANUAL] Manual sync completed: {len(synced)} commands")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error syncing commands: {e}", ephemeral=True)
+            print(f"[SYNC MANUAL] Error: {e}")
+            traceback.print_exc()
+
     @app_commands.command(name="test-melonly", description="Test Melonly API connection.")
     async def test_melonly(self, interaction: discord.Interaction):
+        # Defer immediately to avoid timeout
         await interaction.response.defer(ephemeral=True)
         
         try:
             from melonly_api import MelonlyClient, MelonlyAPIError
-            
+
             client = MelonlyClient()
-            
+
             if not client.configured:
                 await interaction.followup.send("❌ Melonly API token not configured. Check MELONLY_API_TOKEN.", ephemeral=True)
                 return
-            
+
             # Test connection
             is_connected = await asyncio.to_thread(client.test_connection)
-            
+
             if is_connected:
                 await interaction.followup.send("✅ Melonly API connection successful!", ephemeral=True)
             else:
                 await interaction.followup.send("❌ Melonly API connection failed.", ephemeral=True)
-                
+
         except MelonlyAPIError as e:
             await interaction.followup.send(f"❌ Melonly API error: {e}", ephemeral=True)
         except Exception as e:
@@ -610,22 +626,11 @@ class GeneralCommands(commands.Cog):
             print(f"[SYNC MANUAL] Error: {e}")
             traceback.print_exc()
 
-    @app_commands.command(name="sync-commands", description="Manually sync Discord commands (debug only)")
-    async def sync_commands(self, interaction: discord.Interaction):
-        """Manually sync commands to help debug sync issues."""
+    @app_commands.command(name="test-melonly", description="Test Melonly API connection.")
+    async def test_melonly(self, interaction: discord.Interaction):
+        # Defer immediately to avoid timeout
         await interaction.response.defer(ephemeral=True)
         
-        try:
-            print(f"[SYNC MANUAL] Starting manual sync requested by {interaction.user}")
-            synced = await bot.tree.sync()
-            await interaction.followup.send(f"✅ Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}", ephemeral=True)
-            print(f"[SYNC MANUAL] Manual sync completed: {len(synced)} commands")
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error syncing commands: {e}", ephemeral=True)
-            print(f"[SYNC MANUAL] Error: {e}")
-            traceback.print_exc()
-        await interaction.response.defer(ephemeral=True)
-
         try:
             from melonly_api import MelonlyClient, MelonlyAPIError
 
@@ -635,27 +640,13 @@ class GeneralCommands(commands.Cog):
                 await interaction.followup.send("❌ Melonly API token not configured. Check MELONLY_API_TOKEN.", ephemeral=True)
                 return
 
-            # requests is synchronous — run it off the event loop so the
-            # bot doesn't block while waiting on the network call.
-            data = await asyncio.to_thread(client.test_connection)
+            # Test connection
+            is_connected = await asyncio.to_thread(client.test_connection)
 
-            embed = discord.Embed(
-                title="✅ Connected to Melonly",
-                color=discord.Color.from_rgb(37, 37, 41)
-            )
-            embed.add_field(name="Server Name", value=data.get("name", "Unknown"), inline=False)
-            embed.add_field(name="Server ID", value=str(data.get("id", "Unknown")), inline=True)
-            embed.add_field(name="Join Code", value=str(data.get("joinCode", "N/A")), inline=True)
-
-            discord_guild_id = data.get("discordGuildId")
-            if discord_guild_id:
-                embed.add_field(name="Linked Discord Guild ID", value=str(discord_guild_id), inline=False)
-
-            created_at = data.get("createdAt")
-            if created_at:
-                embed.add_field(name="Server Created", value=f"<t:{int(created_at)}:F>", inline=False)
-
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            if is_connected:
+                await interaction.followup.send("✅ Melonly API connection successful!", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Melonly API connection failed.", ephemeral=True)
 
         except MelonlyAPIError as e:
             await interaction.followup.send(f"❌ Melonly API error: {e}", ephemeral=True)
@@ -811,11 +802,26 @@ async def on_ready():
     try:
         from ticket_panel import update_panel
 
-        for guild in bot.guilds:
+        guild_count = len(bot.guilds)
+        print(f"[PANEL] Updating ticket panels for {guild_count} guild(s)...")
+        
+        for i, guild in enumerate(bot.guilds):
             try:
+                print(f"[PANEL] Updating panel for guild {i+1}/{guild_count}: {guild.name}")
                 await update_panel(guild, db)
+                # Add delay between guild updates to avoid rate limits
+                if i < guild_count - 1:
+                    await asyncio.sleep(2)  # 2 second delay between guilds
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    retry_after = getattr(e, 'retry_after', 5)
+                    print(f"[PANEL] Rate limited for {guild.name}. Waiting {retry_after}s...")
+                    await asyncio.sleep(retry_after)
+                else:
+                    print(f"[PANEL] HTTP error for {guild.name}: {e.status} - {e.text}")
             except Exception as e:
                 print(f"Could not refresh ticket panel for {guild.name}: {e}")
+        print("[PANEL] Panel updates complete")
     except Exception as e:
         print(f"Error refreshing ticket panels: {e}")
         traceback.print_exc()
@@ -2442,11 +2448,14 @@ if __name__ == "__main__":
         print("[DEBUG] bot.run() completed (shouldn't reach here)")
     except discord.HTTPException as e:
         if e.status == 429:
+            retry_after = getattr(e, 'retry_after', 60)
             print(
-                "[Rate Limit] Currently blocked by Discord API (429). "
-                "Waiting 60 seconds..."
+                f"[Rate Limit] Currently blocked by Discord API (429) during connection. "
+                f"Waiting {retry_after} seconds before retry..."
             )
-            time.sleep(60)
+            time.sleep(retry_after)
+            print("[Rate Limit] Retrying connection...")
+            bot.run(TOKEN)  # Retry the connection instead of exiting
         else:
             print(f"[Discord Error] {e}")
     except Exception as e:

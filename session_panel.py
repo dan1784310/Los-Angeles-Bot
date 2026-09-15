@@ -208,6 +208,14 @@ async def refresh_active_session_message(bot: commands.Bot):
     try:
         await message.edit(view=new_view)
         print("[ERLC STATS] Refreshed live session panel with new stats.")
+    except discord.HTTPException as e:
+        if e.status == 429:
+            retry_after = getattr(e, 'retry_after', 5)
+            print(f"[ERLC STATS] Rate limited on message edit. Waiting {retry_after}s...")
+            await asyncio.sleep(retry_after)
+            # Skip this update cycle, will try again next minute
+        else:
+            print(f"[ERLC STATS] HTTP error editing tracked session message: {e.status} - {e.text}")
     except Exception as e:
         print(f"[ERLC STATS] Error editing tracked session message: {e}")
 
