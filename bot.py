@@ -798,6 +798,8 @@ async def on_ready():
 
     if not getattr(bot, "_erlc_poll_task", None) or bot._erlc_poll_task.done():
         bot._erlc_poll_task = asyncio.create_task(poll_erlc_command_logs())
+    else:
+        print("[ERLC] Poll task already running, skipping duplicate start")
 
     try:
         from ticket_panel import update_panel
@@ -809,14 +811,15 @@ async def on_ready():
             try:
                 print(f"[PANEL] Updating panel for guild {i+1}/{guild_count}: {guild.name}")
                 await update_panel(guild, db)
-                # Add delay between guild updates to avoid rate limits
+                # Increased delay between guild updates to avoid rate limits
                 if i < guild_count - 1:
-                    await asyncio.sleep(2)  # 2 second delay between guilds
+                    await asyncio.sleep(5)  # Increased from 2 to 5 seconds
             except discord.HTTPException as e:
                 if e.status == 429:
                     retry_after = getattr(e, 'retry_after', 5)
                     print(f"[PANEL] Rate limited for {guild.name}. Waiting {retry_after}s...")
                     await asyncio.sleep(retry_after)
+                    # Continue to next guild instead of retrying
                 else:
                     print(f"[PANEL] HTTP error for {guild.name}: {e.status} - {e.text}")
             except Exception as e:
@@ -2279,7 +2282,7 @@ async def send_llc_log(
 
 _erlc_seen_commands = set()
 _erlc_command_poll_first_run = True
-ERLC_COMMAND_POLL_INTERVAL = 15
+ERLC_COMMAND_POLL_INTERVAL = 30  # Increased from 15 to 30 seconds to reduce API load
 
 
 async def poll_erlc_command_logs():
@@ -2443,19 +2446,19 @@ if __name__ == "__main__":
 
     try:
         print("[Discord] Logging in...")
-        print(f"[DEBUG] About to call bot.run(TOKEN)")
         bot.run(TOKEN)
-        print("[DEBUG] bot.run() completed (shouldn't reach here)")
     except discord.HTTPException as e:
         if e.status == 429:
             retry_after = getattr(e, 'retry_after', 60)
             print(
-                f"[Rate Limit] Currently blocked by Discord API (429) during connection. "
-                f"Waiting {retry_after} seconds before retry..."
+                f"[Rate Limit] Discord API returned 429 during connection. "
+                f"Discord's retry_after: {retry_after} seconds. "
+                f"Cannot retry - process will exit to respect rate limit. "
+                f"Render will restart automatically after appropriate delay."
             )
-            time.sleep(retry_after)
-            print("[Rate Limit] Retrying connection...")
-            bot.run(TOKEN)  # Retry the connection instead of exiting
+            # Let the process exit cleanly - discord.py handles connection rate limits internally
+            # during normal operation. We should not retry the entire bot.run() here.
+            # Render will restart the process when appropriate.
         else:
             print(f"[Discord Error] {e}")
     except Exception as e:

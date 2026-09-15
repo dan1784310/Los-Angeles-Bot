@@ -23,7 +23,7 @@ SERVER_NAME: str = "Arizona State Roleplay I Realistic I New"
 SERVER_OWNER: str = "Certified_Pro02"
 
 # ERLC Stats Configuration
-ERLC_STATS_UPDATE_INTERVAL: int = 60  # Update every 60 seconds
+ERLC_STATS_UPDATE_INTERVAL: int = 120  # Increased from 60 to 120 seconds to reduce API load
 cached_erlc_stats = {
     "players": "0/50",
     "queue": "0",
@@ -162,7 +162,13 @@ async def erlc_stats_updater(bot: commands.Bot):
         # Run the synchronous function in a thread pool
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, update_erlc_stats)
-        await refresh_active_session_message(bot)
+        
+        # Only refresh if there's an active session message
+        if active_session_start_message:
+            await refresh_active_session_message(bot)
+        else:
+            print("[ERLC STATS] No active session message to refresh, skipping")
+        
         print(f"[ERLC STATS] Sleeping for {ERLC_STATS_UPDATE_INTERVAL} seconds...")
         await asyncio.sleep(ERLC_STATS_UPDATE_INTERVAL)
     print("[ERLC STATS] Stats updater task stopped")
