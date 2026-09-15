@@ -2438,16 +2438,13 @@ if __name__ == "__main__":
         bot.run(TOKEN)
     except discord.HTTPException as e:
         if e.status == 429:
-            retry_after = getattr(e, 'retry_after', 60)
+            retry_after = getattr(e, "retry_after", 60)
             print(
                 f"[Rate Limit] Discord API returned 429 during connection. "
                 f"Discord's retry_after: {retry_after} seconds. "
                 f"Cannot retry - process will exit to respect rate limit. "
                 f"Render will restart automatically after appropriate delay."
             )
-            # Let the process exit cleanly - discord.py handles connection rate limits internally
-            # during normal operation. We should not retry the entire bot.run() here.
-            # Render will restart the process when appropriate.
         else:
             print(f"[Discord Error] {e}")
     except Exception as e:
