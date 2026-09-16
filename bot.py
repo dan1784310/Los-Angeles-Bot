@@ -16,9 +16,9 @@ from flask import Flask, request
 from config import TOKEN, ERLC_SERVER_KEY, MELONLY_API_TOKEN
 from erlc_api import ERLCClient, ERLCAPIError
 from ticket_database import db
-from ticket_setup import TicketSetup, setup as setup_ticket_systems
-from ticket_creation import TicketCreation, setup as setup_ticket_creation
-from session_panel import setup_session_commands, SessionPanelView, start_erlc_stats_updater
+from ticket_setup import TicketSetup
+from ticket_creation import TicketCreation
+from session_panel import setup_session_commands, SessionPanelView
 from giveaway_main import setup as setup_giveaway
 from infraction_main import setup as setup_infraction
 from promotion_main import setup as setup_promotion
@@ -689,12 +689,12 @@ async def on_ready():
             # Load ticket systems
             # ------------------------------------------------
             print("[Startup] Loading ticket systems...")
-            if not bot.get_cog("TicketSetup"):
-                await setup_ticket_systems(bot, has_role_or_higher)
-            if not bot.get_cog("TicketCreation"):
-                await setup_ticket_creation(bot)
-            print("[Startup] Ticket systems loaded.")
+            await setup_ticket_systems()
 
+        except NameError:
+            # Your existing code may use separate ticket setup
+            # functions rather than setup_ticket_systems().
+            pass
         except Exception as e:
             print(f"[Startup] Ticket system error: {e}")
 
@@ -769,7 +769,7 @@ async def on_ready():
         # ----------------------------------------------------
         try:
             if not getattr(bot, "_erlc_stats_started", False):
-                start_erlc_stats_updater(bot)
+                await start_erlc_stats_updater(bot)
                 bot._erlc_stats_started = True
                 print("[Startup] ER:LC stats updater started.")
         except Exception as e:
