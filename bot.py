@@ -17,7 +17,8 @@ from config import TOKEN, ERLC_SERVER_KEY, MELONLY_API_TOKEN
 from erlc_api import ERLCClient, ERLCAPIError
 from ticket_database import db
 from ticket_setup import TicketSetup
-from ticket_creation import TicketCreation
+from ticket_creation import TicketCreation, setup as setup_ticket_creation
+from ticket_setup import setup as setup_ticket_setup
 from session_panel import setup_session_commands, SessionPanelView
 from giveaway_main import setup as setup_giveaway
 from infraction_main import setup as setup_infraction
@@ -655,11 +656,24 @@ class GeneralCommands(commands.Cog):
 
 
 # ===========================================================
+# TICKET SYSTEM INITIALIZATION
+# ===========================================================
+
+async def setup_ticket_systems():
+    """Load both ticket setup and ticket interaction cogs exactly once."""
+    if not bot.get_cog("TicketSetup"):
+        await setup_ticket_setup(bot, has_role_or_higher)
+    if not bot.get_cog("TicketCreation"):
+        await setup_ticket_creation(bot)
+
+
+# ===========================================================
 # STARTUP / RECONNECT PROTECTION
 # ===========================================================
 
 _startup_complete = False
 _erlc_poll_started = False
+_commands_synced = False
 
 
 # ============================================================
@@ -668,7 +682,7 @@ _erlc_poll_started = False
 
 @bot.event
 async def on_ready():
-    global _startup_complete, _erlc_poll_started
+    global _startup_complete, _erlc_poll_started, _commands_synced
 
     print("============================================================")
     print(f"[Discord] Logged in as {bot.user} ({bot.user.id})")
@@ -702,43 +716,43 @@ async def on_ready():
         # Existing systems
         # ----------------------------------------------------
         try:
-            setup_giveaway(bot)
+            await setup_giveaway(bot)
             print("[Startup] Giveaway system loaded.")
         except Exception as e:
             print(f"[Startup] Giveaway system error: {e}")
 
         try:
-            setup_infraction(bot)
+            await setup_infraction(bot)
             print("[Startup] Infraction system loaded.")
         except Exception as e:
             print(f"[Startup] Infraction system error: {e}")
 
         try:
-            setup_promotion(bot)
+            await setup_promotion(bot)
             print("[Startup] Promotion system loaded.")
         except Exception as e:
             print(f"[Startup] Promotion system error: {e}")
 
         try:
-            setup_ping_protection(bot)
+            await setup_ping_protection(bot)
             print("[Startup] Ping protection loaded.")
         except Exception as e:
             print(f"[Startup] Ping protection error: {e}")
 
         try:
-            setup_moderation(bot)
+            await setup_moderation(bot)
             print("[Startup] Moderation system loaded.")
         except Exception as e:
             print(f"[Startup] Moderation system error: {e}")
 
         try:
-            setup_role_management(bot)
+            await setup_role_management(bot)
             print("[Startup] Role management loaded.")
         except Exception as e:
             print(f"[Startup] Role management error: {e}")
 
         try:
-            setup_roleplay_log(bot)
+            await setup_roleplay_log(bot)
             print("[Startup] Roleplay logging loaded.")
         except Exception as e:
             print(f"[Startup] Roleplay log error: {e}")
@@ -793,6 +807,18 @@ async def on_ready():
             print(f"[ERLC] Polling could not start: {e}")
         except Exception as e:
             print(f"[ERLC] Polling error: {e}")
+
+    # --------------------------------------------------------
+    # SLASH COMMAND SYNCHRONIZATION
+    # --------------------------------------------------------
+    if not _commands_synced:
+        try:
+            synced = await bot.tree.sync()
+            _commands_synced = True
+            print(f"[Discord] Successfully synced {len(synced)} application command(s).")
+        except Exception as e:
+            print(f"[Discord] Application command sync failed: {e}")
+            traceback.print_exc()
 
     # --------------------------------------------------------
     # PRESENCE
