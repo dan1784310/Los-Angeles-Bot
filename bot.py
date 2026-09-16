@@ -32,7 +32,7 @@ from roleplay_log import setup as setup_roleplay_log
 # DATABASE COLLECTIONS
 # ============================================================
 
-# Initialize collections that are needed in event handlers
+# Initialize collections that are needed in event handlers.
 afk_collection = mod_db.db["afk_status"]
 
 
@@ -769,7 +769,7 @@ async def on_ready():
         # ----------------------------------------------------
         try:
             if not getattr(bot, "_erlc_stats_started", False):
-                await start_erlc_stats_updater(bot)
+                start_erlc_stats_updater(bot)
                 bot._erlc_stats_started = True
                 print("[Startup] ER:LC stats updater started.")
         except Exception as e:
