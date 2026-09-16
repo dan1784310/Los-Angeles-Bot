@@ -611,7 +611,47 @@ class GeneralCommands(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error testing Melonly connection: {e}", ephemeral=True)
 
+    @app_commands.command(name="sync-commands", description="Manually sync Discord commands (debug only)")
+    async def sync_commands(self, interaction: discord.Interaction):
+        """Manually sync commands to help debug sync issues."""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            print(f"[SYNC MANUAL] Starting manual sync requested by {interaction.user}")
+            synced = await bot.tree.sync()
+            await interaction.followup.send(f"✅ Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}", ephemeral=True)
+            print(f"[SYNC MANUAL] Manual sync completed: {len(synced)} commands")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error syncing commands: {e}", ephemeral=True)
+            print(f"[SYNC MANUAL] Error: {e}")
+            traceback.print_exc()
 
+    @app_commands.command(name="test-melonly", description="Test Melonly API connection.")
+    async def test_melonly(self, interaction: discord.Interaction):
+        # Defer immediately to avoid timeout
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            from melonly_api import MelonlyClient, MelonlyAPIError
+
+            client = MelonlyClient()
+
+            if not client.configured:
+                await interaction.followup.send("❌ Melonly API token not configured. Check MELONLY_API_TOKEN.", ephemeral=True)
+                return
+
+            # Test connection
+            is_connected = await asyncio.to_thread(client.test_connection)
+
+            if is_connected:
+                await interaction.followup.send("✅ Melonly API connection successful!", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Melonly API connection failed.", ephemeral=True)
+
+        except MelonlyAPIError as e:
+            await interaction.followup.send(f"❌ Melonly API error: {e}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error testing Melonly connection: {e}", ephemeral=True)
 
 
 # ===========================================================
@@ -625,14 +665,6 @@ _erlc_poll_started = False
 # ============================================================
 # READY EVENT
 # ============================================================
-
-async def setup_ticket_systems():
-    """Load ticket cogs exactly once."""
-    if not bot.get_cog("TicketSetup"):
-        await bot.add_cog(TicketSetup(bot, has_role_or_higher))
-    if not bot.get_cog("TicketCreation"):
-        await bot.add_cog(TicketCreation(bot))
-
 
 @bot.event
 async def on_ready():
@@ -670,43 +702,43 @@ async def on_ready():
         # Existing systems
         # ----------------------------------------------------
         try:
-            await setup_giveaway(bot)
+            setup_giveaway(bot)
             print("[Startup] Giveaway system loaded.")
         except Exception as e:
             print(f"[Startup] Giveaway system error: {e}")
 
         try:
-            await setup_infraction(bot)
+            setup_infraction(bot)
             print("[Startup] Infraction system loaded.")
         except Exception as e:
             print(f"[Startup] Infraction system error: {e}")
 
         try:
-            await setup_promotion(bot)
+            setup_promotion(bot)
             print("[Startup] Promotion system loaded.")
         except Exception as e:
             print(f"[Startup] Promotion system error: {e}")
 
         try:
-            await setup_ping_protection(bot)
+            setup_ping_protection(bot)
             print("[Startup] Ping protection loaded.")
         except Exception as e:
             print(f"[Startup] Ping protection error: {e}")
 
         try:
-            await setup_moderation(bot)
+            setup_moderation(bot)
             print("[Startup] Moderation system loaded.")
         except Exception as e:
             print(f"[Startup] Moderation system error: {e}")
 
         try:
-            await setup_role_management(bot)
+            setup_role_management(bot)
             print("[Startup] Role management loaded.")
         except Exception as e:
             print(f"[Startup] Role management error: {e}")
 
         try:
-            await setup_roleplay_log(bot)
+            setup_roleplay_log(bot)
             print("[Startup] Roleplay logging loaded.")
         except Exception as e:
             print(f"[Startup] Roleplay log error: {e}")
@@ -737,20 +769,13 @@ async def on_ready():
         # ----------------------------------------------------
         try:
             if not getattr(bot, "_erlc_stats_started", False):
-                await start_erlc_stats_updater(bot)
+                start_erlc_stats_updater(bot)
                 bot._erlc_stats_started = True
                 print("[Startup] ER:LC stats updater started.")
         except Exception as e:
             print(f"[Startup] ER:LC stats error: {e}")
 
         _startup_complete = True
-        try:
-            synced = await bot.tree.sync()
-            print(f"[Startup] Synced {len(synced)} application commands.")
-        except Exception as e:
-            print(f"[Startup] Command sync failed: {e}")
-            traceback.print_exc()
-
         print("[Startup] One-time initialization complete.")
 
     # --------------------------------------------------------
@@ -2352,9 +2377,9 @@ setup_session_commands(bot, has_role_or_higher)
 # TICKET INTERACTION LISTENER
 # ============================================================
 
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    """Handle component interactions like ticket selection dropdowns."""
+@bot.listen("on_interaction")
+async def ticket_interaction_listener(interaction: discord.Interaction):
+    """Handle ticket dropdown interactions without overwriting other handlers."""
     if interaction.type != discord.InteractionType.component:
         return
         
