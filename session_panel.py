@@ -23,7 +23,7 @@ SERVER_NAME: str = "Arizona State Roleplay I Realistic I New"
 SERVER_OWNER: str = "Certified_Pro02"
 
 # ERLC Stats Configuration
-ERLC_STATS_UPDATE_INTERVAL: int = 60  # Increased from 60 to 120 seconds to reduce API load
+ERLC_STATS_UPDATE_INTERVAL: int = 120  # Increased from 60 to 120 seconds to reduce API load
 cached_erlc_stats = {
     "players": "0/50",
     "queue": "0",

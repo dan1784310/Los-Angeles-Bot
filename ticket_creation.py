@@ -661,17 +661,6 @@ class TicketCreation(commands.Cog):
         # The callback will be set dynamically when the panel is sent
     
     @commands.Cog.listener()
-    async def on_ready(self):
-        """Re-register ticket dropdown views after every bot restart."""
-        from ticket_panel import update_panel
-        for guild in self.bot.guilds:
-            try:
-                await update_panel(guild, db, bot=self.bot)
-                print(f"[Ticket Panel] Restored persistent panel for {guild.id}")
-            except Exception as e:
-                print(f"[Ticket Panel] Restore failed for {guild.id}: {e}")
-
-    @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         """Handle button interactions for ticket management."""
         
@@ -682,6 +671,14 @@ class TicketCreation(commands.Cog):
         if not custom_id:
             return
         
+        # Handle panel dropdown selection
+        if custom_id.startswith("ticket_select_") or custom_id == "ticket_dropdown":
+            selected_values = interaction.data.get("values", [])
+            if selected_values:
+                category_id = selected_values[0]
+                await on_category_select(interaction, category_id, interaction.guild.id, db)
+            return
+
         # Handle close ticket button
         if custom_id == "close_ticket":
             await close_ticket(interaction, interaction.channel_id)

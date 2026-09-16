@@ -503,7 +503,6 @@ class TicketSelectMenu(ui.Select):
         
         super().__init__(
             placeholder='Select a ticket category...',
-            custom_id='ticket_select_category',
             min_values=1,
             max_values=1,
             options=options

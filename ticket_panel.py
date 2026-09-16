@@ -71,7 +71,7 @@ def create_panel_from_db(guild_id: int, db) -> Optional[Dict[str, Any]]:
     return {'view': view}
 
 
-async def update_panel(guild: discord.Guild, db, bot=None) -> bool:
+async def update_panel(guild: discord.Guild, db) -> bool:
     """
     Re-attach a working ticket panel in the configured channel.
 
@@ -116,15 +116,6 @@ async def update_panel(guild: discord.Guild, db, bot=None) -> bool:
         bottom_banner_url=settings.get('bottom_banner_url')
     )
 
-    # Register the persistent view after every startup/redeploy.
-    # This is required because Discord keeps the components on the message,
-    # but the Python callback must be registered again after a restart.
-    if bot is not None:
-        try:
-            bot.add_view(view)
-        except Exception as e:
-            print(f'[Ticket Panel] Persistent view registration failed: {e}')
-
     # Get existing message
     existing_message_id = db.get_panel_message(guild.id)
     if existing_message_id:
@@ -163,15 +154,6 @@ async def delete_panel(guild: discord.Guild, db) -> bool:
     if not panel_channel:
         return False
     
-    # Register the persistent view after every startup/redeploy.
-    # This is required because Discord keeps the components on the message,
-    # but the Python callback must be registered again after a restart.
-    if bot is not None:
-        try:
-            bot.add_view(view)
-        except Exception as e:
-            print(f'[Ticket Panel] Persistent view registration failed: {e}')
-
     # Get existing message
     existing_message_id = db.get_panel_message(guild.id)
     if existing_message_id:
