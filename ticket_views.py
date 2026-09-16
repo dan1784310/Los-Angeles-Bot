@@ -506,7 +506,8 @@ class TicketSelectMenu(ui.Select):
             custom_id='ticket_select_category',
             min_values=1,
             max_values=1,
-            options=options
+            options=options,
+            custom_id='ticket_dropdown'
         )
         self.on_select = on_select
     

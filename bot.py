@@ -71,6 +71,15 @@ FEEDBACK_CHANNEL_ID = 1527066281084321863
 RULES_CHANNEL_ID = 1526890579080773693
 
 
+async def setup_ticket_systems():
+    """Load both ticket setup and ticket interaction cogs exactly once."""
+    if bot.get_cog("TicketSetup") is None:
+        await bot.add_cog(TicketSetup(bot, has_role_or_higher))
+    if bot.get_cog("TicketCreation") is None:
+        await bot.add_cog(TicketCreation(bot))
+
+
+
 # ============================================================
 # PERMISSION HELPERS
 # ============================================================
@@ -763,6 +772,20 @@ async def on_ready():
                 print("[Startup] GeneralCommands already loaded.")
         except Exception as e:
             print(f"[Startup] GeneralCommands error: {e}")
+
+        # ----------------------------------------------------
+        # TICKET PANELS: rebuild persistent callbacks after restart
+        # ----------------------------------------------------
+        try:
+            from ticket_panel import update_panel
+            from ticket_database import db as ticket_db
+            for guild in bot.guilds:
+                try:
+                    await update_panel(guild, ticket_db)
+                except Exception as panel_error:
+                    print(f"[Startup] Ticket panel refresh failed for {guild.id}: {panel_error}")
+        except Exception as e:
+            print(f"[Startup] Ticket panel refresh setup failed: {e}")
 
         # ----------------------------------------------------
         # ER:LC STATS
