@@ -2377,9 +2377,9 @@ setup_session_commands(bot, has_role_or_higher)
 # TICKET INTERACTION LISTENER
 # ============================================================
 
-@bot.listen("on_interaction")
-async def ticket_interaction_listener(interaction: discord.Interaction):
-    """Handle ticket dropdown interactions without overwriting other handlers."""
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    """Handle component interactions like ticket selection dropdowns."""
     if interaction.type != discord.InteractionType.component:
         return
         
