@@ -32,7 +32,7 @@ from roleplay_log import setup as setup_roleplay_log
 # DATABASE COLLECTIONS
 # ============================================================
 
-# Initialize collections that are needed in event handlers
+# Initialize collections that are needed in event handlers.
 afk_collection = mod_db.db["afk_status"]
 
 
