@@ -71,6 +71,15 @@ FEEDBACK_CHANNEL_ID = 1527066281084321863
 RULES_CHANNEL_ID = 1526890579080773693
 
 
+async def setup_ticket_systems():
+    """Load both ticket setup and ticket interaction cogs exactly once."""
+    if bot.get_cog("TicketSetup") is None:
+        await bot.add_cog(TicketSetup(bot, has_role_or_higher))
+    if bot.get_cog("TicketCreation") is None:
+        await bot.add_cog(TicketCreation(bot))
+
+
+
 # ============================================================
 # PERMISSION HELPERS
 # ============================================================
@@ -769,7 +778,7 @@ async def on_ready():
         # ----------------------------------------------------
         try:
             if not getattr(bot, "_erlc_stats_started", False):
-                await start_erlc_stats_updater(bot)
+                start_erlc_stats_updater(bot)
                 bot._erlc_stats_started = True
                 print("[Startup] ER:LC stats updater started.")
         except Exception as e:
