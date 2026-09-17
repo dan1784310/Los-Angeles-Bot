@@ -16,8 +16,8 @@ from flask import Flask, request
 from config import TOKEN, ERLC_SERVER_KEY, MELONLY_API_TOKEN
 from erlc_api import ERLCClient, ERLCAPIError
 from ticket_database import db
-from ticket_setup import TicketSetup
-from ticket_creation import TicketCreation
+from ticket_setup import TicketSetup, setup as setup_ticket_setup
+from ticket_creation import TicketCreation, setup as setup_ticket_creation
 from session_panel import setup_session_commands, SessionPanelView
 from giveaway_main import setup as setup_giveaway
 from infraction_main import setup as setup_infraction
@@ -689,7 +689,8 @@ async def on_ready():
             # Load ticket systems
             # ------------------------------------------------
             print("[Startup] Loading ticket systems...")
-            await setup_ticket_systems()
+            await setup_ticket_setup(bot)
+            await setup_ticket_creation(bot)
 
         except NameError:
             # Your existing code may use separate ticket setup
@@ -702,43 +703,43 @@ async def on_ready():
         # Existing systems
         # ----------------------------------------------------
         try:
-            setup_giveaway(bot)
+            await setup_giveaway(bot)
             print("[Startup] Giveaway system loaded.")
         except Exception as e:
             print(f"[Startup] Giveaway system error: {e}")
 
         try:
-            setup_infraction(bot)
+            await setup_infraction(bot)
             print("[Startup] Infraction system loaded.")
         except Exception as e:
             print(f"[Startup] Infraction system error: {e}")
 
         try:
-            setup_promotion(bot)
+            await setup_promotion(bot)
             print("[Startup] Promotion system loaded.")
         except Exception as e:
             print(f"[Startup] Promotion system error: {e}")
 
         try:
-            setup_ping_protection(bot)
+            await setup_ping_protection(bot)
             print("[Startup] Ping protection loaded.")
         except Exception as e:
             print(f"[Startup] Ping protection error: {e}")
 
         try:
-            setup_moderation(bot)
+            await setup_moderation(bot)
             print("[Startup] Moderation system loaded.")
         except Exception as e:
             print(f"[Startup] Moderation system error: {e}")
 
         try:
-            setup_role_management(bot)
+            await setup_role_management(bot)
             print("[Startup] Role management loaded.")
         except Exception as e:
             print(f"[Startup] Role management error: {e}")
 
         try:
-            setup_roleplay_log(bot)
+            await setup_roleplay_log(bot)
             print("[Startup] Roleplay logging loaded.")
         except Exception as e:
             print(f"[Startup] Roleplay log error: {e}")
@@ -769,7 +770,7 @@ async def on_ready():
         # ----------------------------------------------------
         try:
             if not getattr(bot, "_erlc_stats_started", False):
-                await start_erlc_stats_updater(bot)
+                start_erlc_stats_updater(bot)
                 bot._erlc_stats_started = True
                 print("[Startup] ER:LC stats updater started.")
         except Exception as e:
