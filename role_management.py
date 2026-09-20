@@ -341,4 +341,10 @@ class RoleManagement(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(RoleManagement(bot))
+    cog = RoleManagement(bot)
+    await bot.add_cog(cog)
+    # Force add the command group to ensure it's registered
+    try:
+        bot.tree.add_command(cog.auto_role_group)
+    except Exception as e:
+        print(f"[ROLE MANAGEMENT] Error adding command group: {e}")

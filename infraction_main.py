@@ -646,4 +646,10 @@ class InfractionSystem(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(InfractionSystem(bot))
+    cog = InfractionSystem(bot)
+    await bot.add_cog(cog)
+    # Force add the command group to ensure it's registered
+    try:
+        bot.tree.add_command(cog.infraction)
+    except Exception as e:
+        print(f"[INFRACTION] Error adding command group: {e}")
