@@ -803,10 +803,4 @@ class GiveawaySystem(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    cog = GiveawaySystem(bot)
-    await bot.add_cog(cog)
-    # Force add the command group to ensure it's registered
-    try:
-        bot.tree.add_command(cog.giveaway)
-    except Exception as e:
-        print(f"[GIVEAWAY] Error adding command group: {e}")
+    await bot.add_cog(GiveawaySystem(bot))

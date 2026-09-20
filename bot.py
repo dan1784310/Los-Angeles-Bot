@@ -611,48 +611,6 @@ class GeneralCommands(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error testing Melonly connection: {e}", ephemeral=True)
 
-    @app_commands.command(name="sync-commands", description="Manually sync Discord commands (debug only)")
-    async def sync_commands(self, interaction: discord.Interaction):
-        """Manually sync commands to help debug sync issues."""
-        await interaction.response.defer(ephemeral=True)
-        
-        try:
-            print(f"[SYNC MANUAL] Starting manual sync requested by {interaction.user}")
-            synced = await bot.tree.sync()
-            await interaction.followup.send(f"✅ Synced {len(synced)} command(s): {', '.join(c.name for c in synced)}", ephemeral=True)
-            print(f"[SYNC MANUAL] Manual sync completed: {len(synced)} commands")
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error syncing commands: {e}", ephemeral=True)
-            print(f"[SYNC MANUAL] Error: {e}")
-            traceback.print_exc()
-
-    @app_commands.command(name="test-melonly", description="Test Melonly API connection.")
-    async def test_melonly(self, interaction: discord.Interaction):
-        # Defer immediately to avoid timeout
-        await interaction.response.defer(ephemeral=True)
-        
-        try:
-            from melonly_api import MelonlyClient, MelonlyAPIError
-
-            client = MelonlyClient()
-
-            if not client.configured:
-                await interaction.followup.send("❌ Melonly API token not configured. Check MELONLY_API_TOKEN.", ephemeral=True)
-                return
-
-            # Test connection
-            is_connected = await asyncio.to_thread(client.test_connection)
-
-            if is_connected:
-                await interaction.followup.send("✅ Melonly API connection successful!", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Melonly API connection failed.", ephemeral=True)
-
-        except MelonlyAPIError as e:
-            await interaction.followup.send(f"❌ Melonly API error: {e}", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error testing Melonly connection: {e}", ephemeral=True)
-
 
 # ===========================================================
 # STARTUP / RECONNECT PROTECTION

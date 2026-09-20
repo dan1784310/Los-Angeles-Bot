@@ -27,6 +27,7 @@ class InfractionPaginationView(discord.ui.View):
         self.current_page = current_page
         self.per_page = 10
         self.total_pages = max(1, (len(infractions_data) + self.per_page - 1) // self.per_page)
+        self.update_buttons()
         
     def get_page_data(self):
         start_idx = self.current_page * self.per_page
@@ -41,18 +42,13 @@ class InfractionPaginationView(discord.ui.View):
         page_data = self.get_page_data()
         start_idx = self.current_page * self.per_page
         for idx, infraction in enumerate(page_data):
-            button = discord.ui.Button(
-                label=f"#{start_idx + idx + 1}",
-                style=discord.ButtonStyle.secondary,
-                custom_id=f"infraction_detail_{self.user.id}_{start_idx + idx}"
+            button = InfractionDetailButton(
+                infraction, start_idx + idx, self.user
             )
-            button.callback = self.make_detail_callback(infraction, start_idx + idx)
             self.add_item(button)
         
         # Add navigation buttons
         if self.total_pages > 1:
-            nav_row = discord.ui.ActionRow()
-            
             prev_button = discord.ui.Button(
                 label="◀ Previous",
                 style=discord.ButtonStyle.primary,
@@ -60,7 +56,7 @@ class InfractionPaginationView(discord.ui.View):
                 disabled=self.current_page == 0
             )
             prev_button.callback = self.prev_page
-            nav_row.add_item(prev_button)
+            self.add_item(prev_button)
             
             page_indicator = discord.ui.Button(
                 label=f"Page {self.current_page + 1}/{self.total_pages}",
@@ -68,7 +64,7 @@ class InfractionPaginationView(discord.ui.View):
                 custom_id=f"infraction_page_{self.user.id}",
                 disabled=True
             )
-            nav_row.add_item(page_indicator)
+            self.add_item(page_indicator)
             
             next_button = discord.ui.Button(
                 label="Next ▶",
@@ -77,45 +73,7 @@ class InfractionPaginationView(discord.ui.View):
                 disabled=self.current_page == self.total_pages - 1
             )
             next_button.callback = self.next_page
-            nav_row.add_item(next_button)
-            
-            self.add_item(nav_row)
-    
-    def make_detail_callback(self, infraction: dict, index: int):
-        async def callback(interaction: discord.Interaction):
-            try:
-                # Create detailed infraction view
-                embed = discord.Embed(
-                    title=f"Infraction #{index + 1} Details",
-                    color=discord.Color.from_rgb(37, 37, 41)
-                )
-                
-                # Parse the stored infraction data
-                action = infraction.get("action", "Unknown")
-                reason = infraction.get("reason", "No reason provided")
-                notes = infraction.get("notes", "N/A")
-                moderator_id = infraction.get("moderator_id")
-                created_at = infraction.get("created_at")
-                
-                moderator = interaction.guild.get_member(moderator_id) if moderator_id else None
-                moderator_mention = moderator.mention if moderator else f"<@{moderator_id}>"
-                
-                embed.add_field(name="Action", value=action, inline=False)
-                embed.add_field(name="Reason", value=reason, inline=False)
-                embed.add_field(name="Notes", value=notes, inline=False)
-                embed.add_field(name="Issued By", value=moderator_mention, inline=True)
-                
-                if created_at:
-                    timestamp = int(created_at)
-                    embed.add_field(name="Issued At", value=f"<t:{timestamp}:F>", inline=True)
-                
-                embed.set_footer(text=f"Infraction for {self.user.display_name}")
-                
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-            except Exception as e:
-                await interaction.response.send_message(f"❌ Error loading infraction details: {e}", ephemeral=True)
-        
-        return callback
+            self.add_item(next_button)
     
     async def prev_page(self, interaction: discord.Interaction):
         if self.current_page > 0:
@@ -132,6 +90,53 @@ class InfractionPaginationView(discord.ui.View):
             await interaction.response.edit_message(view=self)
         else:
             await interaction.response.defer()
+
+
+class InfractionDetailButton(discord.ui.Button):
+    """Button to show detailed infraction information."""
+    
+    def __init__(self, infraction: dict, index: int, user: discord.Member):
+        super().__init__(
+            label=f"#{index + 1}",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"infraction_detail_{user.id}_{index}"
+        )
+        self.infraction = infraction
+        self.index = index
+        self.user = user
+    
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            # Create detailed infraction view
+            embed = discord.Embed(
+                title=f"Infraction #{self.index + 1} Details",
+                color=discord.Color.from_rgb(37, 37, 41)
+            )
+            
+            # Parse the stored infraction data
+            action = self.infraction.get("action", "Unknown")
+            reason = self.infraction.get("reason", "No reason provided")
+            notes = self.infraction.get("notes", "N/A")
+            moderator_id = self.infraction.get("moderator_id")
+            created_at = self.infraction.get("created_at")
+            
+            moderator = interaction.guild.get_member(moderator_id) if moderator_id else None
+            moderator_mention = moderator.mention if moderator else f"<@{moderator_id}>"
+            
+            embed.add_field(name="Action", value=action, inline=False)
+            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(name="Notes", value=notes, inline=False)
+            embed.add_field(name="Issued By", value=moderator_mention, inline=True)
+            
+            if created_at:
+                timestamp = int(created_at)
+                embed.add_field(name="Issued At", value=f"<t:{timestamp}:F>", inline=True)
+            
+            embed.set_footer(text=f"Infraction for {self.user.display_name}")
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error loading infraction details: {e}", ephemeral=True)
 
 
 # ==========================================
@@ -549,7 +554,6 @@ class InfractionSystem(commands.Cog):
             
             # Create pagination view
             view = InfractionPaginationView(infractions_data, target_user)
-            view.update_buttons()
             
             # Build initial message
             page_data = view.get_page_data()
@@ -646,10 +650,4 @@ class InfractionSystem(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    cog = InfractionSystem(bot)
-    await bot.add_cog(cog)
-    # Force add the command group to ensure it's registered
-    try:
-        bot.tree.add_command(cog.infraction)
-    except Exception as e:
-        print(f"[INFRACTION] Error adding command group: {e}")
+    await bot.add_cog(InfractionSystem(bot))
