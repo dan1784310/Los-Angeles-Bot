@@ -1513,6 +1513,29 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.defer(ephemeral=True)
         return
 
+    # ============================================================
+    # TICKET DROPDOWN HANDLERS
+    # ============================================================
+    
+    if custom_id.startswith("ticket_select_") or custom_id == "ticket_dropdown":
+        try:
+            from ticket_creation import on_category_select
+            from ticket_database import db as ticket_db
+            
+            selected_values = interaction.data.get("values", [])
+            if selected_values:
+                category_id = selected_values[0]
+                await on_category_select(interaction, category_id, interaction.guild.id, ticket_db)
+                return
+        except Exception as e:
+            print(f"[ERROR] Ticket routing failed: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ An error occurred processing your ticket selection.", 
+                    ephemeral=True
+                )
+            return
+
 
 # ============================================================
 # ANNOUNCE COMMAND
@@ -2328,35 +2351,7 @@ setup_session_commands(bot, has_role_or_higher)
 # TICKET INTERACTION LISTENER
 # ============================================================
 
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    """Handle component interactions like ticket selection dropdowns."""
-    if interaction.type != discord.InteractionType.component:
-        return
-        
-    custom_id = interaction.data.get("custom_id", "")
-    if not custom_id:
-        return
-        
-    # Route ticket dropdown interactions
-    if custom_id.startswith("ticket_select_") or custom_id == "ticket_dropdown":
-        try:
-            from ticket_creation import on_category_select
-            from ticket_database import db as ticket_db
-            
-            selected_values = interaction.data.get("values", [])
-            if selected_values:
-                category_id = selected_values[0]
-                await on_category_select(interaction, category_id, interaction.guild.id, ticket_db)
-                return
-        except Exception as e:
-            print(f"[ERROR] Ticket routing failed: {e}")
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "❌ An error occurred processing your ticket selection.", 
-                    ephemeral=True
-                )
-            return
+
 
 
 

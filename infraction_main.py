@@ -230,6 +230,11 @@ class InfractionSystem(commands.Cog):
         self.bot = bot
         # Maps user_id -> { "control_channel_id": int, "target_channel_id": int }
         self.active_proxies: Dict[int, dict] = {}
+    
+    async def cog_load(self):
+        """Ensure command group is properly registered when cog loads."""
+        if not self.bot.tree.get_command('infraction'):
+            self.bot.tree.add_command(self.infraction)
 
     # ==========================================
     # CONTROL CHANNEL LISTENER

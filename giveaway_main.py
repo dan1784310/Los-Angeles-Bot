@@ -49,6 +49,11 @@ class GiveawaySystem(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.active_timers = {}  # giveaway_id -> task
+    
+    async def cog_load(self):
+        """Ensure command group is properly registered when cog loads."""
+        if not self.bot.tree.get_command('giveaway'):
+            self.bot.tree.add_command(self.giveaway)
 
     async def _get_or_fetch_channel(self, channel_id: int) -> Optional[discord.TextChannel]:
         """Safely fetch channel from cache or API."""
