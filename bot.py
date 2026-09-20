@@ -734,6 +734,15 @@ async def on_ready():
         except Exception as e:
             print(f"[Startup] ER:LC stats error: {e}")
 
+        # Sync slash commands after all cogs and command groups are loaded.
+        # Without this, newly added commands may not appear in Discord.
+        try:
+            synced = await bot.tree.sync()
+            print(f"[Startup] Synced {len(synced)} application command(s).")
+        except Exception as e:
+            print(f"[Startup] Command sync error: {e}")
+            traceback.print_exc()
+
         _startup_complete = True
         print("[Startup] One-time initialization complete.")
 
@@ -1788,21 +1797,19 @@ async def feedback_give(
 
 bot.tree.add_command(feedback_group)
 
-# Register command groups from cogs
-from infraction_main import InfractionSystem
+# Register command groups that are not loaded as regular cogs.
+# InfractionSystem is loaded through setup_infraction() during startup,
+# so registering its group here would create duplicate command objects.
 from giveaway_main import GiveawaySystem
 from role_management import RoleManagement
 
-# Add the command groups directly
-infraction_temp = InfractionSystem(None)
 giveaway_temp = GiveawaySystem(None)
 role_temp = RoleManagement(None)
 
-bot.tree.add_command(infraction_temp.infraction)
 bot.tree.add_command(giveaway_temp.giveaway)
 bot.tree.add_command(role_temp.auto_role_group)
 
-print("[STARTUP] Command groups registered: infraction, giveaway, auto-role")
+print("[STARTUP] Command groups registered: giveaway, auto-role")
 
 
 # ============================================================

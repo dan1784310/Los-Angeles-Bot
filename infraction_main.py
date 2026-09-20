@@ -404,7 +404,7 @@ class InfractionSystem(commands.Cog):
     # INFRACTION COMMAND GROUP
     # ==========================================
     
-    infraction = app_commands.Group(name="infraction", description="Infraction commands")
+    infraction = app_commands.Group(name="infractions", description="Infraction commands")
     
     @infraction.command(name="issue", description="Issue an infraction to a staff member")
     @app_commands.describe(
