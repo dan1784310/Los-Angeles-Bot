@@ -2221,25 +2221,17 @@ async def send_llc_log(
         time_str = now.strftime("%I:%M %p").lower()
         roblox_profile_url = f"https://www.roblox.com/users/{roblox_id}/profile"
 
-        view = discord.ui.LayoutView(timeout=None)
-        container = discord.ui.Container(
-            accent_colour=discord.Color.from_rgb(0, 162, 232)
+        embed = discord.Embed(
+            title="Low Letter Command Executed",
+            description=f"[{roblox_username}:{roblox_id}]({roblox_profile_url}) used the command `{full_command}`",
+            color=discord.Color.from_rgb(0, 162, 232)
         )
-
-        content = (
-            "### Low Letter Command Executed\n\n"
-            f"[{roblox_username}:{roblox_id}]({roblox_profile_url}) "
-            f"used the command `{full_command}`\n\n"
-            f"-# AZRP Command Logs | {date_str}, {time_str}"
-        )
-
-        container.add_item(discord.ui.TextDisplay(content))
-        view.add_item(container)
+        embed.set_footer(text=f"AZRP Command Logs | {date_str}, {time_str}")
 
         # Send LLC log with Discord rate-limit handling
         for attempt in range(3):
             try:
-                await target_channel.send(view=view)
+                await target_channel.send(embed=embed)
                 break
 
             except discord.HTTPException as e:

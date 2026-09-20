@@ -14,6 +14,127 @@ from moderation_database import db as mod_db
 
 
 # ==========================================
+# INFRACTION VIEW SYSTEM
+# ==========================================
+
+class InfractionPaginationView(discord.ui.View):
+    """Pagination view for infractions list with detail buttons."""
+    
+    def __init__(self, infractions_data: list, user: discord.Member, current_page: int = 0):
+        super().__init__(timeout=None)
+        self.infractions_data = infractions_data
+        self.user = user
+        self.current_page = current_page
+        self.per_page = 10
+        self.total_pages = max(1, (len(infractions_data) + self.per_page - 1) // self.per_page)
+        
+    def get_page_data(self):
+        start_idx = self.current_page * self.per_page
+        end_idx = start_idx + self.per_page
+        return self.infractions_data[start_idx:end_idx]
+    
+    def update_buttons(self):
+        # Clear existing buttons
+        self.clear_items()
+        
+        # Add detail buttons for current page
+        page_data = self.get_page_data()
+        start_idx = self.current_page * self.per_page
+        for idx, infraction in enumerate(page_data):
+            button = discord.ui.Button(
+                label=f"#{start_idx + idx + 1}",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"infraction_detail_{self.user.id}_{start_idx + idx}"
+            )
+            button.callback = self.make_detail_callback(infraction, start_idx + idx)
+            self.add_item(button)
+        
+        # Add navigation buttons
+        if self.total_pages > 1:
+            nav_row = discord.ui.ActionRow()
+            
+            prev_button = discord.ui.Button(
+                label="◀ Previous",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"infraction_prev_{self.user.id}",
+                disabled=self.current_page == 0
+            )
+            prev_button.callback = self.prev_page
+            nav_row.add_item(prev_button)
+            
+            page_indicator = discord.ui.Button(
+                label=f"Page {self.current_page + 1}/{self.total_pages}",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"infraction_page_{self.user.id}",
+                disabled=True
+            )
+            nav_row.add_item(page_indicator)
+            
+            next_button = discord.ui.Button(
+                label="Next ▶",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"infraction_next_{self.user.id}",
+                disabled=self.current_page == self.total_pages - 1
+            )
+            next_button.callback = self.next_page
+            nav_row.add_item(next_button)
+            
+            self.add_item(nav_row)
+    
+    def make_detail_callback(self, infraction: dict, index: int):
+        async def callback(interaction: discord.Interaction):
+            try:
+                # Create detailed infraction view
+                embed = discord.Embed(
+                    title=f"Infraction #{index + 1} Details",
+                    color=discord.Color.from_rgb(37, 37, 41)
+                )
+                
+                # Parse the stored infraction data
+                action = infraction.get("action", "Unknown")
+                reason = infraction.get("reason", "No reason provided")
+                notes = infraction.get("notes", "N/A")
+                moderator_id = infraction.get("moderator_id")
+                created_at = infraction.get("created_at")
+                
+                moderator = interaction.guild.get_member(moderator_id) if moderator_id else None
+                moderator_mention = moderator.mention if moderator else f"<@{moderator_id}>"
+                
+                embed.add_field(name="Action", value=action, inline=False)
+                embed.add_field(name="Reason", value=reason, inline=False)
+                embed.add_field(name="Notes", value=notes, inline=False)
+                embed.add_field(name="Issued By", value=moderator_mention, inline=True)
+                
+                if created_at:
+                    timestamp = int(created_at)
+                    embed.add_field(name="Issued At", value=f"<t:{timestamp}:F>", inline=True)
+                
+                embed.set_footer(text=f"Infraction for {self.user.display_name}")
+                
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"❌ Error loading infraction details: {e}", ephemeral=True)
+        
+        return callback
+    
+    async def prev_page(self, interaction: discord.Interaction):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(view=self)
+        else:
+            await interaction.response.defer()
+    
+    async def next_page(self, interaction: discord.Interaction):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(view=self)
+        else:
+            await interaction.response.defer()
+
+
+# ==========================================
 # CONFIGURATION
 # ==========================================
 
@@ -33,6 +154,7 @@ INFRACTION_ROLE_ID = 1539201630161993728
 INFRACTION_CHANNEL_ID = 1526898975704350822
 VOID_ROLE_ID = 1527050504733986987
 MESSAGE_ROLE_ID = 1527055221098811433
+INFRACTIONS_VIEW_ROLE_ID = 1539201630161993728  # Role ID for viewing infractions
 
 
 def _can_issue_infraction(interaction: discord.Interaction) -> bool:
@@ -348,6 +470,115 @@ class InfractionSystem(commands.Cog):
         except Exception as e:
             print(f"Error creating infraction card: {e}")
             await interaction.followup.send(f"❌ Error creating infraction card: {e}", ephemeral=True)
+    
+    @infraction.command(name="view", description="View a user's infraction history")
+    @app_commands.describe(
+        user="The user to view infractions for (defaults to yourself)",
+        infractions_type="Filter by specific infraction type (optional)"
+    )
+    @app_commands.choices(infractions_type=[
+        app_commands.Choice(name="Activity Notice", value="Activity Notice"),
+        app_commands.Choice(name="Verbal Warning", value="Verbal Warning"),
+        app_commands.Choice(name="Warning", value="Warning"),
+        app_commands.Choice(name="Strike", value="Strike"),
+        app_commands.Choice(name="Demotion", value="Demotion"),
+        app_commands.Choice(name="Termination", value="Termination"),
+        app_commands.Choice(name="Staff Blacklist", value="Staff Blacklist"),
+        app_commands.Choice(name="Under Investigation", value="Under Investigation"),
+        app_commands.Choice(name="Suspension", value="Suspension")
+    ])
+    async def infractions_view(
+        self,
+        interaction: discord.Interaction,
+        user: Optional[discord.Member] = None,
+        infractions_type: Optional[str] = None
+    ):
+        # Check permissions
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("❌ This can only be used in a server.", ephemeral=True)
+            return
+        
+        required_role = interaction.guild.get_role(INFRACTIONS_VIEW_ROLE_ID)
+        if not required_role or interaction.user.top_role < required_role:
+            await interaction.response.send_message("❌ You don't have permission to view infractions.", ephemeral=True)
+            return
+        
+        # Default to self if no user specified
+        target_user = user if user else interaction.user
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Get modlogs from database
+            guild_id = interaction.guild.id
+            user_id = target_user.id
+            
+            # Fetch modlogs
+            modlogs = mod_db.get_modlogs(guild_id, user_id, limit=100)
+            
+            # Filter by action type if specified
+            if infractions_type:
+                modlogs = [log for log in modlogs if log.get("action_type") == infractions_type]
+            
+            # Only show INFRACTION type logs
+            infractions = [log for log in modlogs if log.get("action_type") == "INFRACTION"]
+            
+            if not infractions:
+                type_text = f" of type '{infractions_type}'" if infractions_type else ""
+                await interaction.followup.send(f"❌ No infractions found for {target_user.mention}{type_text}.", ephemeral=True)
+                return
+            
+            # Sort by created_at (newest first)
+            infractions.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+            
+            # Process infractions for display
+            infractions_data = []
+            for log in infractions:
+                details = log.get("details", "")
+                action = "Unknown"
+                if details.startswith("Action: "):
+                    action = details.replace("Action: ", "")
+                
+                infractions_data.append({
+                    "action": action,
+                    "reason": log.get("reason", "No reason"),
+                    "notes": log.get("details", "N/A"),
+                    "moderator_id": log.get("moderator_id"),
+                    "created_at": log.get("created_at")
+                })
+            
+            # Create pagination view
+            view = InfractionPaginationView(infractions_data, target_user)
+            view.update_buttons()
+            
+            # Build initial message
+            page_data = view.get_page_data()
+            embed = discord.Embed(
+                title=f"Infraction History for {target_user.display_name}",
+                description=f"Showing {len(infractions)} total infraction(s)",
+                color=discord.Color.from_rgb(37, 37, 41)
+            )
+            
+            # Add list items for current page
+            start_idx = view.current_page * view.per_page
+            for idx, infraction in enumerate(page_data):
+                moderator_id = infraction.get("moderator_id")
+                moderator = interaction.guild.get_member(moderator_id) if moderator_id else None
+                moderator_name = moderator.display_name if moderator else f"<@{moderator_id}>"
+                
+                embed.add_field(
+                    name=f"#{start_idx + idx + 1} - {infraction['action']}",
+                    value=f"By {moderator_name}",
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"Use the buttons below to view details or navigate pages")
+            
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error viewing infractions: {e}")
+            await interaction.followup.send(f"❌ Error retrieving infractions: {e}", ephemeral=True)
     
     def _parse_expiration(self, expiration_str: str) -> float:
         expiration_str = expiration_str.lower().strip()
