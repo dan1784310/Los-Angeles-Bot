@@ -17,125 +17,46 @@ from moderation_database import db as mod_db
 # INFRACTION VIEW SYSTEM
 # ==========================================
 
-class InfractionPaginationView(discord.ui.View):
-    """Pagination view for infractions list with detail buttons."""
-    
-    def __init__(self, infractions_data: list, user: discord.Member, current_page: int = 0):
-        super().__init__(timeout=None)
-        self.infractions_data = infractions_data
-        self.user = user
-        self.current_page = current_page
-        self.per_page = 10
-        self.total_pages = max(1, (len(infractions_data) + self.per_page - 1) // self.per_page)
-        self.update_buttons()
-        
-    def get_page_data(self):
-        start_idx = self.current_page * self.per_page
-        end_idx = start_idx + self.per_page
-        return self.infractions_data[start_idx:end_idx]
-    
-    def update_buttons(self):
-        # Clear existing buttons
-        self.clear_items()
-        
-        # Add detail buttons for current page
-        page_data = self.get_page_data()
-        start_idx = self.current_page * self.per_page
-        for idx, infraction in enumerate(page_data):
-            button = InfractionDetailButton(
-                infraction, start_idx + idx, self.user
-            )
-            self.add_item(button)
-        
-        # Add navigation buttons
-        if self.total_pages > 1:
-            prev_button = discord.ui.Button(
-                label="◀ Previous",
-                style=discord.ButtonStyle.primary,
-                custom_id=f"infraction_prev_{self.user.id}",
-                disabled=self.current_page == 0
-            )
-            prev_button.callback = self.prev_page
-            self.add_item(prev_button)
-            
-            page_indicator = discord.ui.Button(
-                label=f"Page {self.current_page + 1}/{self.total_pages}",
-                style=discord.ButtonStyle.secondary,
-                custom_id=f"infraction_page_{self.user.id}",
-                disabled=True
-            )
-            self.add_item(page_indicator)
-            
-            next_button = discord.ui.Button(
-                label="Next ▶",
-                style=discord.ButtonStyle.primary,
-                custom_id=f"infraction_next_{self.user.id}",
-                disabled=self.current_page == self.total_pages - 1
-            )
-            next_button.callback = self.next_page
-            self.add_item(next_button)
-    
-    async def prev_page(self, interaction: discord.Interaction):
-        if self.current_page > 0:
-            self.current_page -= 1
-            self.update_buttons()
-            await interaction.response.edit_message(view=self)
-        else:
-            await interaction.response.defer()
-    
-    async def next_page(self, interaction: discord.Interaction):
-        if self.current_page < self.total_pages - 1:
-            self.current_page += 1
-            self.update_buttons()
-            await interaction.response.edit_message(view=self)
-        else:
-            await interaction.response.defer()
+
 
 
 class InfractionDetailButton(discord.ui.Button):
     """Button to show detailed infraction information."""
     
-    def __init__(self, infraction: dict, index: int, user: discord.Member):
+    def __init__(self, message_id: int, channel_id: int, index: int, user: discord.Member):
         super().__init__(
-            label=f"#{index + 1}",
+            label=f"View",
             style=discord.ButtonStyle.secondary,
             custom_id=f"infraction_detail_{user.id}_{index}"
         )
-        self.infraction = infraction
+        self.message_id = message_id
+        self.channel_id = channel_id
         self.index = index
         self.user = user
     
     async def callback(self, interaction: discord.Interaction):
         try:
-            # Create detailed infraction view
-            embed = discord.Embed(
-                title=f"Infraction #{self.index + 1} Details",
-                color=discord.Color.from_rgb(37, 37, 41)
-            )
+            # Try to fetch the actual infraction message
+            target_channel = interaction.guild.get_channel(self.channel_id)
+            if not target_channel:
+                await interaction.response.send_message("❌ Could not find the infraction channel.", ephemeral=True)
+                return
             
-            # Parse the stored infraction data
-            action = self.infraction.get("action", "Unknown")
-            reason = self.infraction.get("reason", "No reason provided")
-            notes = self.infraction.get("notes", "N/A")
-            moderator_id = self.infraction.get("moderator_id")
-            created_at = self.infraction.get("created_at")
+            try:
+                target_message = await target_channel.fetch_message(self.message_id)
+                if target_message.embeds:
+                    # Send the actual embed that was posted
+                    actual_embed = target_message.embeds[0]
+                    await interaction.response.send_message(embed=actual_embed, ephemeral=True)
+                    return
+            except Exception as e:
+                print(f"[INFRACTION] Could not fetch original message: {e}")
             
-            moderator = interaction.guild.get_member(moderator_id) if moderator_id else None
-            moderator_mention = moderator.mention if moderator else f"<@{moderator_id}>"
-            
-            embed.add_field(name="Action", value=action, inline=False)
-            embed.add_field(name="Reason", value=reason, inline=False)
-            embed.add_field(name="Notes", value=notes, inline=False)
-            embed.add_field(name="Issued By", value=moderator_mention, inline=True)
-            
-            if created_at:
-                timestamp = int(created_at)
-                embed.add_field(name="Issued At", value=f"<t:{timestamp}:F>", inline=True)
-            
-            embed.set_footer(text=f"Infraction for {self.user.display_name}")
-            
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            # Fallback: Use Components V2 view
+            await interaction.response.send_message("❌ Original infraction message not found.", ephemeral=True)
+                
         except Exception as e:
+            print(f"[INFRACTION] Error loading infraction details: {e}")
             await interaction.response.send_message(f"❌ Error loading infraction details: {e}", ephemeral=True)
 
 
@@ -460,7 +381,7 @@ class InfractionSystem(commands.Cog):
             return
         
         try:
-            await self._create_infraction_card(
+            message = await self._create_infraction_card(
                 target_channel,
                 interaction.user,
                 staff,
@@ -469,8 +390,8 @@ class InfractionSystem(commands.Cog):
                 final_notes,
                 expiration_timestamp
             )
-            # Log to moderation database
-            mod_db.add_modlog(interaction.guild.id, staff.id, interaction.user.id, "INFRACTION", reason, f"Action: {action}")
+            # Log to moderation database with message_id
+            mod_db.add_modlog(interaction.guild.id, staff.id, interaction.user.id, "INFRACTION", reason, f"Action: {action}", message_id=message.id if message else None)
             await interaction.followup.send(f"✅ Infraction issued successfully to {staff.mention} in {target_channel.mention}!", ephemeral=True)
         except Exception as e:
             print(f"Error creating infraction card: {e}")
@@ -549,36 +470,52 @@ class InfractionSystem(commands.Cog):
                     "reason": log.get("reason", "No reason"),
                     "notes": log.get("details", "N/A"),
                     "moderator_id": log.get("moderator_id"),
-                    "created_at": log.get("created_at")
+                    "created_at": log.get("created_at"),
+                    "message_id": log.get("message_id", None),  # Store message ID if available
+                    "channel_id": INFRACTION_CHANNEL_ID  # Use the infraction channel
                 })
             
-            # Create pagination view
-            view = InfractionPaginationView(infractions_data, target_user)
-            
-            # Build initial message
-            page_data = view.get_page_data()
-            embed = discord.Embed(
-                title=f"Infraction History for {target_user.display_name}",
-                description=f"Showing {len(infractions)} total infraction(s)",
-                color=discord.Color.from_rgb(37, 37, 41)
+            # Build message using Components V2 for inline buttons (show first 10)
+            components_view = discord.ui.LayoutView(timeout=None)
+            container = discord.ui.Container(
+                accent_colour=discord.Color.from_rgb(37, 37, 41)
             )
             
-            # Add list items for current page
-            start_idx = view.current_page * view.per_page
-            for idx, infraction in enumerate(page_data):
+            # Add header
+            container.add_item(discord.ui.TextDisplay(f"### Infraction History for {target_user.display_name}"))
+            container.add_item(discord.ui.TextDisplay(f"Showing {len(infractions)} total infraction(s)"))
+            container.add_item(discord.ui.Separator())
+            
+            # Add list items with inline buttons (limit to 10)
+            display_count = min(10, len(infractions_data))
+            for idx in range(display_count):
+                infraction = infractions_data[idx]
                 moderator_id = infraction.get("moderator_id")
                 moderator = interaction.guild.get_member(moderator_id) if moderator_id else None
                 moderator_name = moderator.display_name if moderator else f"<@{moderator_id}>"
                 
-                embed.add_field(
-                    name=f"#{start_idx + idx + 1} - {infraction['action']}",
-                    value=f"By {moderator_name}",
-                    inline=False
+                # Create a section with text and button accessory
+                text_content = f"**#{idx + 1} - {infraction['action']}**\nBy {moderator_name}"
+                
+                button = InfractionDetailButton(
+                    infraction.get("message_id", 0),
+                    infraction.get("channel_id", INFRACTION_CHANNEL_ID),
+                    idx,
+                    target_user
                 )
+                
+                section = discord.ui.Section(
+                    discord.ui.TextDisplay(text_content),
+                    accessory=button
+                )
+                container.add_item(section)
             
-            embed.set_footer(text=f"Use the buttons below to view details or navigate pages")
+            if len(infractions_data) > 10:
+                container.add_item(discord.ui.TextDisplay(f"*Showing first 10 of {len(infractions_data)} infractions*"))
             
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            components_view.add_item(container)
+            
+            await interaction.followup.send(view=components_view, ephemeral=True)
             
         except Exception as e:
             print(f"Error viewing infractions: {e}")
@@ -645,6 +582,8 @@ class InfractionSystem(commands.Cog):
             )
         except Exception as e:
             print(f"Error creating thread for infraction: {e}")
+        
+        return message  # Return the message so we can get the message_id
 
 
 

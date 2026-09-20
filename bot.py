@@ -1548,6 +1548,10 @@ async def on_interaction(interaction: discord.Interaction):
             return
 
 
+
+
+
+
 # ============================================================
 # ANNOUNCE COMMAND
 # ============================================================
@@ -1808,6 +1812,12 @@ role_temp = RoleManagement(None)
 
 bot.tree.add_command(giveaway_temp.giveaway)
 bot.tree.add_command(role_temp.auto_role_group)
+
+# Add infractions command group (note: changed from "infraction" to "infractions")
+from infraction_main import InfractionSystem
+infraction_temp = InfractionSystem(None)
+bot.tree.add_command(infraction_temp.infraction)
+print("[STARTUP] Infractions command group registered")
 
 print("[STARTUP] Command groups registered: giveaway, auto-role")
 

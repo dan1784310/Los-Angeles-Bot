@@ -50,9 +50,9 @@ class ModerationDatabase:
             return 0
     
     def add_modlog(self, guild_id: int, user_id: int, moderator_id: int, action_type: str, 
-                   reason: Optional[str] = None, details: Optional[str] = None) -> bool:
+                   reason: Optional[str] = None, details: Optional[str] = None, message_id: Optional[int] = None) -> bool:
         try:
-            self.modlogs.insert_one({
+            log_data = {
                 "guild_id": guild_id,
                 "user_id": user_id,
                 "moderator_id": moderator_id,
@@ -60,7 +60,11 @@ class ModerationDatabase:
                 "reason": reason,
                 "details": details,
                 "created_at": datetime.now().timestamp()
-            })
+            }
+            if message_id:
+                log_data["message_id"] = message_id
+            
+            self.modlogs.insert_one(log_data)
             return True
         except Exception as e:
             print(f"[MOD DB] Error adding modlog: {e}")
