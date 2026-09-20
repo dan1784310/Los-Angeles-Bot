@@ -94,13 +94,18 @@ async def on_category_select(interaction: discord.Interaction, category_id: str,
         return
 
     # Ask the user to describe their issue before the ticket is created
-    await interaction.response.send_modal(
-        TicketIssueModal(
-            lambda modal_interaction, issue_text: create_ticket_from_issue(
-                modal_interaction, guild_id, db_instance, settings, category_id_int, category, issue_text
+    try:
+        await interaction.response.send_modal(
+            TicketIssueModal(
+                lambda modal_interaction, issue_text: create_ticket_from_issue(
+                    modal_interaction, guild_id, db_instance, settings, category_id_int, category, issue_text
+                )
             )
         )
-    )
+    except Exception as e:
+        print(f"[TICKET] Error sending modal: {e}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ Error opening ticket modal.", ephemeral=True)
 
 
 async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: int, db_instance,
@@ -119,7 +124,11 @@ async def create_ticket_from_issue(interaction: discord.Interaction, guild_id: i
         issue_text: What the user wrote in the modal
     """
 
-    await interaction.response.defer(ephemeral=True)
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+    except Exception as e:
+        print(f"[TICKET] Error deferring response: {e}")
 
     # Get ticket number
     ticket_number = settings.get('ticket_counter', 0) + 1

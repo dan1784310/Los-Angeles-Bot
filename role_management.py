@@ -123,11 +123,6 @@ class RoleManagement(commands.Cog):
         self.bot = bot
         # guild_id -> list of role IDs assigned automatically on join
         self.auto_roles: dict[int, List[int]] = {}
-    
-    async def cog_load(self):
-        """Ensure command group is properly registered when cog loads."""
-        if not self.bot.tree.get_command('auto-role'):
-            self.bot.tree.add_command(self.auto_role_group)
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):

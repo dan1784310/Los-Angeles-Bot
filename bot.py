@@ -1522,6 +1522,7 @@ async def on_interaction(interaction: discord.Interaction):
             from ticket_creation import on_category_select
             from ticket_database import db as ticket_db
             
+            # Don't defer for modals - let the modal handler do its job
             selected_values = interaction.data.get("values", [])
             if selected_values:
                 category_id = selected_values[0]
@@ -1529,6 +1530,7 @@ async def on_interaction(interaction: discord.Interaction):
                 return
         except Exception as e:
             print(f"[ERROR] Ticket routing failed: {e}")
+            traceback.print_exc()
             if not interaction.response.is_done():
                 await interaction.response.send_message(
                     "❌ An error occurred processing your ticket selection.", 
@@ -1785,6 +1787,22 @@ async def feedback_give(
 
 
 bot.tree.add_command(feedback_group)
+
+# Register command groups from cogs
+from infraction_main import InfractionSystem
+from giveaway_main import GiveawaySystem
+from role_management import RoleManagement
+
+# Add the command groups directly
+infraction_temp = InfractionSystem(None)
+giveaway_temp = GiveawaySystem(None)
+role_temp = RoleManagement(None)
+
+bot.tree.add_command(infraction_temp.infraction)
+bot.tree.add_command(giveaway_temp.giveaway)
+bot.tree.add_command(role_temp.auto_role_group)
+
+print("[STARTUP] Command groups registered: infraction, giveaway, auto-role")
 
 
 # ============================================================

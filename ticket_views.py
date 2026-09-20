@@ -804,4 +804,9 @@ class TicketIssueModal(ui.Modal, title='What seems to be the issue?'):
         self.on_submit_callback = on_submit
 
     async def on_submit(self, interaction: discord.Interaction):
-        await self.on_submit_callback(interaction, self.issue.value)
+        try:
+            await self.on_submit_callback(interaction, self.issue.value)
+        except Exception as e:
+            print(f"[TICKET MODAL] Error in on_submit: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ An error occurred processing your ticket.", ephemeral=True)
