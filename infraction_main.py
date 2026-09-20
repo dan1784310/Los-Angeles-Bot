@@ -37,21 +37,82 @@ class InfractionDetailButton(discord.ui.Button):
     
     async def callback(self, interaction: discord.Interaction):
         try:
-            # If we have a valid message_id, try to fetch the actual message
+            target_message = None
+            
+            # First try to fetch from the specific channel if we have a message_id
             if self.message_id and self.message_id != 0:
                 target_channel = interaction.guild.get_channel(self.channel_id)
                 if target_channel:
                     try:
                         target_message = await target_channel.fetch_message(self.message_id)
-                        if target_message.embeds:
-                            # Send the actual embed that was posted
+                        if target_message and target_message.embeds:
                             actual_embed = target_message.embeds[0]
                             await interaction.response.send_message(embed=actual_embed, ephemeral=True)
                             return
                     except Exception as e:
-                        print(f"[INFRACTION] Could not fetch original message: {e}")
+                        print(f"[INFRACTION] Could not fetch message from specific channel: {e}")
             
-            # Fallback: Create Components V2 view with stored data
+            # If not found, search through the server for the infraction message
+            print(f"[INFRACTION] Searching server for infraction message for user {self.user.id}")
+            
+            # Search through likely channels (infraction channel and moderation channels)
+            channels_to_search = []
+            
+            # Add the infraction channel
+            infraction_channel = interaction.guild.get_channel(INFRACTION_CHANNEL_ID)
+            if infraction_channel:
+                channels_to_search.append(infraction_channel)
+            
+            # Add channels with "infraction", "moderation", "deleted", "logs", "audit" in the name (limit to 8 to avoid rate limits)
+            for channel in interaction.guild.text_channels:
+                if len(channels_to_search) >= 8:  # Limit search to 8 channels max
+                    break
+                channel_lower = channel.name.lower()
+                if any(keyword in channel_lower for keyword in ["infraction", "moderation", "deleted", "logs", "audit", "message-log"]):
+                    if channel not in channels_to_search:
+                        channels_to_search.append(channel)
+            
+            # Search through these channels for messages mentioning the user
+            action = self.infraction_data.get("action", "")
+            created_at = self.infraction_data.get("created_at", 0)
+            
+            for channel in channels_to_search:
+                try:
+                    # Search recent messages in the channel (limit to 50 to avoid rate limits)
+                    async for message in channel.history(limit=50):
+                        # Check if message is an embed with staff mention
+                        if message.embeds:
+                            embed_desc = str(message.embeds[0].description) if message.embeds[0].description else ""
+                            if str(self.user.id) in embed_desc or str(self.user.id) in message.content:
+                                # Check if it matches the action type
+                                if action.lower() in embed_desc.lower() or action.lower() in message.content.lower():
+                                    actual_embed = message.embeds[0]
+                                    await interaction.response.send_message(embed=actual_embed, ephemeral=True)
+                                    print(f"[INFRACTION] Found infraction message in channel {channel.name}")
+                                    return
+                        
+                        # Also check if message mentions the user in content (for log channels)
+                        if str(self.user.id) in message.content and action.lower() in message.content.lower():
+                            # Try to reconstruct embed from message content if possible
+                            if message.embeds:
+                                actual_embed = message.embeds[0]
+                                await interaction.response.send_message(embed=actual_embed, ephemeral=True)
+                                print(f"[INFRACTION] Found infraction message (via content) in channel {channel.name}")
+                                return
+                            
+                except Exception as e:
+                    print(f"[INFRACTION] Error searching channel {channel.name}: {e}")
+                    continue
+            
+            # If still not found, use Components V2 fallback with stored data
+            print(f"[INFRACTION] Could not find original message in server search, using stored data")
+            
+            # Check if this might be a deleted message scenario
+            if not self.message_id or self.message_id == 0:
+                fallback_note = "*Original message not available (likely deleted)*"
+            else:
+                fallback_note = "*Original message not found in server search (may be deleted)*"
+            
             view = discord.ui.LayoutView(timeout=None)
             container = discord.ui.Container(
                 accent_colour=discord.Color.from_rgb(37, 37, 41)
@@ -76,8 +137,7 @@ class InfractionDetailButton(discord.ui.Button):
                 timestamp = int(created_at)
                 content += f"**Issued At:** <t:{timestamp}:F>\n"
             
-            if not self.message_id or self.message_id == 0:
-                content += f"\n*Original message not available*"
+            content += f"\n{fallback_note}"
             
             container.add_item(discord.ui.TextDisplay(content))
             view.add_item(container)
