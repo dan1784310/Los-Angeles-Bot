@@ -6,7 +6,7 @@ Contains the infraction slash command, card display functionality, and live bot 
 import discord
 from discord import app_commands
 from discord.ext import commands
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 import asyncio
 
@@ -23,7 +23,7 @@ from moderation_database import db as mod_db
 class InfractionDetailButton(discord.ui.Button):
     """Button to show detailed infraction information."""
     
-    def __init__(self, message_id: int, channel_id: int, index: int, user: discord.Member):
+    def __init__(self, message_id: Optional[int], channel_id: int, index: int, user: discord.Member, infraction_data: dict):
         super().__init__(
             label=f"View",
             style=discord.ButtonStyle.secondary,
@@ -33,27 +33,56 @@ class InfractionDetailButton(discord.ui.Button):
         self.channel_id = channel_id
         self.index = index
         self.user = user
+        self.infraction_data = infraction_data
     
     async def callback(self, interaction: discord.Interaction):
         try:
-            # Try to fetch the actual infraction message
-            target_channel = interaction.guild.get_channel(self.channel_id)
-            if not target_channel:
-                await interaction.response.send_message("❌ Could not find the infraction channel.", ephemeral=True)
-                return
+            # If we have a valid message_id, try to fetch the actual message
+            if self.message_id and self.message_id != 0:
+                target_channel = interaction.guild.get_channel(self.channel_id)
+                if target_channel:
+                    try:
+                        target_message = await target_channel.fetch_message(self.message_id)
+                        if target_message.embeds:
+                            # Send the actual embed that was posted
+                            actual_embed = target_message.embeds[0]
+                            await interaction.response.send_message(embed=actual_embed, ephemeral=True)
+                            return
+                    except Exception as e:
+                        print(f"[INFRACTION] Could not fetch original message: {e}")
             
-            try:
-                target_message = await target_channel.fetch_message(self.message_id)
-                if target_message.embeds:
-                    # Send the actual embed that was posted
-                    actual_embed = target_message.embeds[0]
-                    await interaction.response.send_message(embed=actual_embed, ephemeral=True)
-                    return
-            except Exception as e:
-                print(f"[INFRACTION] Could not fetch original message: {e}")
+            # Fallback: Create Components V2 view with stored data
+            view = discord.ui.LayoutView(timeout=None)
+            container = discord.ui.Container(
+                accent_colour=discord.Color.from_rgb(37, 37, 41)
+            )
             
-            # Fallback: Use Components V2 view
-            await interaction.response.send_message("❌ Original infraction message not found.", ephemeral=True)
+            action = self.infraction_data.get("action", "Unknown")
+            reason = self.infraction_data.get("reason", "No reason provided")
+            notes = self.infraction_data.get("notes", "N/A")
+            moderator_id = self.infraction_data.get("moderator_id")
+            created_at = self.infraction_data.get("created_at")
+            
+            moderator = interaction.guild.get_member(moderator_id) if moderator_id else None
+            moderator_mention = moderator.mention if moderator else f"<@{moderator_id}>"
+            
+            content = f"### Infraction #{self.index + 1}\n\n"
+            content += f"**Action:** {action}\n"
+            content += f"**Reason:** {reason}\n"
+            content += f"**Notes:** {notes}\n"
+            content += f"**Issued By:** {moderator_mention}\n"
+            
+            if created_at:
+                timestamp = int(created_at)
+                content += f"**Issued At:** <t:{timestamp}:F>\n"
+            
+            if not self.message_id or self.message_id == 0:
+                content += f"\n*Original message not available*"
+            
+            container.add_item(discord.ui.TextDisplay(content))
+            view.add_item(container)
+            
+            await interaction.response.send_message(view=view, ephemeral=True)
                 
         except Exception as e:
             print(f"[INFRACTION] Error loading infraction details: {e}")
@@ -442,12 +471,12 @@ class InfractionSystem(commands.Cog):
             # Fetch modlogs
             modlogs = mod_db.get_modlogs(guild_id, user_id, limit=100)
             
-            # Filter by action type if specified
-            if infractions_type:
-                modlogs = [log for log in modlogs if log.get("action_type") == infractions_type]
-            
             # Only show INFRACTION type logs
             infractions = [log for log in modlogs if log.get("action_type") == "INFRACTION"]
+            
+            # Filter by specific action type if specified
+            if infractions_type:
+                infractions = [log for log in infractions if f"Action: {infractions_type}" in log.get("details", "")]
             
             if not infractions:
                 type_text = f" of type '{infractions_type}'" if infractions_type else ""
@@ -498,10 +527,11 @@ class InfractionSystem(commands.Cog):
                 text_content = f"**#{idx + 1} - {infraction['action']}**\nBy {moderator_name}"
                 
                 button = InfractionDetailButton(
-                    infraction.get("message_id", 0),
+                    infraction.get("message_id", None),
                     infraction.get("channel_id", INFRACTION_CHANNEL_ID),
                     idx,
-                    target_user
+                    target_user,
+                    infraction
                 )
                 
                 section = discord.ui.Section(
