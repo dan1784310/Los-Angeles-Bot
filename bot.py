@@ -27,6 +27,7 @@ from moderation_main import setup as setup_moderation
 from moderation_database import db as mod_db
 from role_management import setup as setup_role_management
 from roleplay_log import setup as setup_roleplay_log
+from invite_main import setup as setup_invites
 
 # ============================================================
 # DATABASE COLLECTIONS
@@ -131,6 +132,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
+intents.invites = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -701,6 +703,12 @@ async def on_ready():
             print("[Startup] Roleplay logging loaded.")
         except Exception as e:
             print(f"[Startup] Roleplay log error: {e}")
+
+        try:
+            await setup_invites(bot)
+            print("[Startup] Invite tracking system loaded.")
+        except Exception as e:
+            print(f"[Startup] Invite tracking system error: {e}")
 
         # ----------------------------------------------------
         # COGS
