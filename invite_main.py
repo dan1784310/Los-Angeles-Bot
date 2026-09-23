@@ -1,10 +1,12 @@
 """
 Invite Tracking Module
-Tracks who invited whom into the server and exposes /invites and
+Tracks who invited whom into the server, recovers historical joins for
+current members on first startup, and exposes /invites and
 /invite-leaderboard commands.
 """
 
 import asyncio
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import discord
@@ -12,6 +14,9 @@ from discord import app_commands
 from discord.ext import commands
 
 from invite_database import db
+
+MEMBER_SEARCH_PAGE_SIZE = 100
+MEMBER_SEARCH_SORT_NEWEST = 1
 
 # ============================================================
 # PAGINATION VIEW
@@ -100,6 +105,11 @@ class InviteSystem(commands.Cog):
         self.invite_cache: Dict[int, Dict[str, int]] = {}
         # Prevent simultaneous joins from reading the same invite-use snapshot.
         self.guild_locks: Dict[int, asyncio.Lock] = {}
+        self.backfill_task: Optional[asyncio.Task] = None
+
+    def cog_unload(self):
+        if self.backfill_task and not self.backfill_task.done():
+            self.backfill_task.cancel()
 
     async def _cache_guild_invites(self, guild: discord.Guild) -> bool:
         try:
@@ -125,6 +135,15 @@ class InviteSystem(commands.Cog):
         for guild in self.bot.guilds:
             await self._cache_guild_invites(guild)
         print("[INVITE] Invite cache built for all guilds.")
+        self._schedule_historical_backfill()
+
+    def _schedule_historical_backfill(self) -> None:
+        if self.backfill_task and not self.backfill_task.done():
+            return
+        self.backfill_task = asyncio.create_task(
+            self.backfill_existing_history(),
+            name="discord-invite-history-backfill",
+        )
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -219,6 +238,7 @@ class InviteSystem(commands.Cog):
                 used_invite.inviter.id,
                 member.id,
                 used_invite.code,
+                member.joined_at.timestamp() if member.joined_at else None,
             )
             if recorded:
                 print(
@@ -237,6 +257,229 @@ class InviteSystem(commands.Cog):
             member.guild.id,
             member.id,
         )
+
+    @staticmethod
+    def _historical_invite_record(
+        entry: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        member_data = entry.get("member") or {}
+        user_data = member_data.get("user") or {}
+        inviter_id = entry.get("inviter_id")
+        invited_id = user_data.get("id")
+
+        if inviter_id is None or invited_id is None or user_data.get("bot"):
+            return None
+
+        joined_at = None
+        joined_at_ms = None
+        joined_at_value = member_data.get("joined_at")
+        if joined_at_value:
+            try:
+                parsed_joined_at = datetime.fromisoformat(
+                    joined_at_value.replace("Z", "+00:00")
+                )
+                joined_at = parsed_joined_at.timestamp()
+                joined_at_ms = int(joined_at * 1000)
+            except (TypeError, ValueError):
+                pass
+
+        join_source_type = entry.get("join_source_type")
+        if join_source_type is not None:
+            join_source_type = int(join_source_type)
+
+        return {
+            "inviter_id": int(inviter_id),
+            "invited_id": int(invited_id),
+            "invite_code": entry.get("source_invite_code"),
+            "join_source_type": join_source_type,
+            "join_source_application_id": entry.get(
+                "join_source_application_id"
+            ),
+            "join_source_channel_id": entry.get("join_source_channel_id"),
+            "joined_at": joined_at,
+            "joined_at_ms": joined_at_ms,
+        }
+
+    async def _fetch_member_search_page(
+        self,
+        guild_id: int,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        # This is the same bot-accessible member index used by Discord's
+        # Members page. It is not part of the public API documentation.
+        route = discord.http.Route(
+            "POST",
+            "/guilds/{guild_id}/members-search",
+            guild_id=guild_id,
+            metadata="invite-history-backfill",
+        )
+
+        for attempt in range(5):
+            # discord.py 2.7 returns the decoded response body directly.
+            data = await self.bot.http.request(route, json=payload)
+
+            if not isinstance(data, dict):
+                raise RuntimeError(
+                    "Discord returned an invalid member search response."
+                )
+
+            # A 202 indexing response contains retry_after but no members.
+            if "members" not in data and "retry_after" in data:
+                retry_after = min(
+                    max(float(data.get("retry_after", 1)), 0.1),
+                    15,
+                )
+                await asyncio.sleep(retry_after)
+                continue
+
+            return data
+
+        raise RuntimeError(
+            "Discord is still indexing member data after five retries."
+        )
+
+    async def _backfill_guild_history(self, guild: discord.Guild) -> bool:
+        if guild.me is None:
+            return False
+
+        permissions = guild.me.guild_permissions
+        can_search_members = any(
+            (
+                permissions.administrator,
+                permissions.manage_guild,
+                permissions.ban_members,
+                permissions.kick_members,
+                permissions.moderate_members,
+                permissions.manage_roles,
+                permissions.manage_nicknames,
+            )
+        )
+        if not can_search_members:
+            print(
+                f"[INVITE] Historical backfill skipped for guild "
+                f"{guild.id}: the bot lacks member-management permissions."
+            )
+            return False
+
+        payload: Dict[str, Any] = {
+            "or_query": {},
+            "and_query": {},
+            "limit": MEMBER_SEARCH_PAGE_SIZE,
+            "sort": MEMBER_SEARCH_SORT_NEWEST,
+        }
+        after = None
+        seen_cursors = set()
+        processed_members = 0
+        imported_records = 0
+
+        print(
+            f"[INVITE] Recovering historical joins for guild {guild.id}..."
+        )
+
+        while True:
+            if after is not None:
+                payload["after"] = after
+
+            data = await self._fetch_member_search_page(guild.id, payload)
+            members = data.get("members") or []
+            records = [
+                record
+                for entry in members
+                if (
+                    record := self._historical_invite_record(entry)
+                ) is not None
+            ]
+
+            if records:
+                saved_count = await asyncio.to_thread(
+                    db.backfill_invites,
+                    guild.id,
+                    records,
+                )
+                if saved_count == 0:
+                    print(
+                        f"[INVITE] Historical backfill could not save "
+                        f"a page for guild {guild.id}; it will retry later."
+                    )
+                    return False
+                imported_records += saved_count
+
+            processed_members += len(members)
+            total_result_count = data.get("total_result_count")
+            if (
+                not members
+                or len(members) < MEMBER_SEARCH_PAGE_SIZE
+                or (
+                    total_result_count is not None
+                    and processed_members >= int(total_result_count)
+                )
+            ):
+                break
+
+            cursor_member = None
+            cursor_user = None
+            for candidate in reversed(members):
+                candidate_member = candidate.get("member") or {}
+                candidate_user = candidate_member.get("user") or {}
+                if candidate_member.get("joined_at") and candidate_user.get(
+                    "id"
+                ) is not None:
+                    cursor_member = candidate_member
+                    cursor_user = candidate_user
+                    break
+            if cursor_member is None or cursor_user is None:
+                break
+
+            parsed_joined_at = datetime.fromisoformat(
+                cursor_member["joined_at"].replace("Z", "+00:00")
+            )
+            next_cursor = {
+                "guild_joined_at": int(parsed_joined_at.timestamp() * 1000),
+                "user_id": str(cursor_user["id"]),
+            }
+            cursor_key = (
+                next_cursor["guild_joined_at"],
+                next_cursor["user_id"],
+            )
+            if cursor_key in seen_cursors:
+                break
+            seen_cursors.add(cursor_key)
+            after = next_cursor
+
+            # Avoid bursts when recovering a large member list.
+            await asyncio.sleep(0.2)
+
+        marked_complete = await asyncio.to_thread(
+            db.mark_backfill_complete,
+            guild.id,
+            imported_records,
+        )
+        if marked_complete:
+            print(
+                f"[INVITE] Historical backfill complete for guild {guild.id}: "
+                f"checked {processed_members} current members and recovered "
+                f"{imported_records} attributed invite records."
+            )
+        return marked_complete
+
+    async def backfill_existing_history(self) -> None:
+        for guild in list(self.bot.guilds):
+            try:
+                already_complete = await asyncio.to_thread(
+                    db.is_backfill_complete,
+                    guild.id,
+                )
+                if already_complete:
+                    continue
+
+                await self._backfill_guild_history(guild)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(
+                    f"[INVITE] Historical backfill failed for guild "
+                    f"{guild.id}: {e}. Live invite tracking is still active."
+                )
 
     # ============================================================
     # COMMANDS
