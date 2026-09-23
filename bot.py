@@ -28,6 +28,7 @@ from moderation_database import db as mod_db
 from role_management import setup as setup_role_management
 from roleplay_log import setup as setup_roleplay_log
 from invite_main import setup as setup_invites
+from report_main import setup as setup_reports
 
 # ============================================================
 # DATABASE COLLECTIONS
@@ -453,6 +454,74 @@ class ZTPSystem(commands.Cog):
 class GeneralCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.started_at = discord.utils.utcnow()
+
+    @commands.command(
+        name="ping",
+        help="Shows the bot's current latency.",
+    )
+    async def ping(self, ctx: commands.Context):
+        latency_ms = round(self.bot.latency * 1000)
+        await ctx.reply(f"🏓 **Pong!** `{latency_ms} ms`")
+
+    @app_commands.command(
+        name="bot_info",
+        description="Shows information about the bot.",
+    )
+    async def show_bot_info(self, interaction: discord.Interaction):
+        uptime = discord.utils.utcnow() - self.started_at
+        total_seconds = max(0, int(uptime.total_seconds()))
+        days, remaining = divmod(total_seconds, 86400)
+        hours, remaining = divmod(remaining, 3600)
+        minutes, seconds = divmod(remaining, 60)
+        uptime_parts = []
+        if days:
+            uptime_parts.append(f"{days}d")
+        if hours or days:
+            uptime_parts.append(f"{hours}h")
+        if minutes or hours or days:
+            uptime_parts.append(f"{minutes}m")
+        uptime_parts.append(f"{seconds}s")
+        uptime_text = " ".join(uptime_parts)
+
+        bot_user = self.bot.user
+        embed = discord.Embed(
+            title="Bot Information",
+            color=discord.Color.from_rgb(37, 37, 41),
+        )
+        if bot_user:
+            embed.set_author(
+                name=bot_user.display_name,
+                icon_url=bot_user.display_avatar.url,
+            )
+            embed.set_thumbnail(url=bot_user.display_avatar.url)
+
+        embed.add_field(
+            name="Latency",
+            value=f"{round(self.bot.latency * 1000)} ms",
+            inline=True,
+        )
+        embed.add_field(name="Uptime", value=uptime_text, inline=True)
+        embed.add_field(
+            name="Servers",
+            value=str(len(self.bot.guilds)),
+            inline=True,
+        )
+        embed.add_field(
+            name="Cached Members",
+            value=str(sum(guild.member_count for guild in self.bot.guilds)),
+            inline=True,
+        )
+        embed.add_field(
+            name="Discord.py",
+            value=discord.__version__,
+            inline=True,
+        )
+        embed.add_field(name="Prefix", value="`!`", inline=True)
+        embed.set_footer(
+            text=f"Requested by {interaction.user.display_name}",
+        )
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="membercount", description="Shows the server member count.")
     async def membercount(self, interaction: discord.Interaction):
@@ -709,6 +778,12 @@ async def on_ready():
             print("[Startup] Invite tracking system loaded.")
         except Exception as e:
             print(f"[Startup] Invite tracking system error: {e}")
+
+        try:
+            await setup_reports(bot)
+            print("[Startup] Interactive report system loaded.")
+        except Exception as e:
+            print(f"[Startup] Interactive report system error: {e}")
 
         # ----------------------------------------------------
         # COGS
