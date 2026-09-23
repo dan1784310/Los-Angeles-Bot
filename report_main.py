@@ -6,14 +6,16 @@ configured staff report channel.
 """
 
 import asyncio
-import re
 from typing import Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from report_database import db
+
 REPORT_CHANNEL_ID = 1552408086126272542
+REPORT_TICKET_CATEGORY_ID = 1552431325422551111
 REPORT_STAFF_ROLE_ID = 1527050504733986987
 
 PENDING_COLOR = discord.Color.from_rgb(245, 158, 11)
@@ -40,10 +42,26 @@ def _truncate(value: str, limit: int = 1024) -> str:
     return f"{value[: limit - 3]}..."
 
 
-def _evidence_channel_name(reporter: discord.Member, report_id: int) -> str:
-    username = re.sub(r"[^a-z0-9_-]+", "-", reporter.name.lower()).strip("-")
-    username = username[:24] or "reporter"
-    return f"report-{username}-{str(report_id)[-6:]}"
+class FurtherReviewTicketView(discord.ui.View):
+    """Ticket controls displayed inside a private further-review channel."""
+
+    def __init__(self, report_view: "ReportView"):
+        super().__init__(timeout=None)
+        self.report_view = report_view
+
+        end_button = discord.ui.Button(
+            label="End",
+            style=discord.ButtonStyle.danger,
+            custom_id="report_further_end",
+        )
+        end_button.callback = self._handle_end
+        self.add_item(end_button)
+
+    async def _handle_end(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        await self.report_view._handle_end_ticket(interaction)
 
 
 class ReportView(discord.ui.View):
@@ -57,7 +75,6 @@ class ReportView(discord.ui.View):
         target: Optional[discord.User],
         reason: str,
         report_id: int,
-        category: Optional[discord.CategoryChannel] = None,
     ):
         super().__init__(timeout=None)
         self.client = client
@@ -66,7 +83,7 @@ class ReportView(discord.ui.View):
         self.target = target
         self.reason = reason
         self.report_id = report_id
-        self.category = category
+        self.report_number: Optional[int] = None
         self.created_at = discord.utils.utcnow()
         self.status = "pending"
         self.reviewer_id: Optional[int] = None
@@ -93,7 +110,7 @@ class ReportView(discord.ui.View):
             self.add_item(self.review_button)
             return
 
-        if self.status in {"under_review", "further_review"}:
+        if self.status == "under_review":
             self.leave_button = discord.ui.Button(
                 label="🟡 Leave",
                 style=discord.ButtonStyle.secondary,
@@ -387,12 +404,39 @@ class ReportView(discord.ui.View):
                 ephemeral=True,
             )
 
+    async def _get_target_member(self) -> Optional[discord.Member]:
+        if self.target is None:
+            return None
+
+        target_member = self.guild.get_member(self.target.id)
+        if target_member is not None:
+            return target_member
+
+        try:
+            return await self.guild.fetch_member(self.target.id)
+        except (discord.NotFound, discord.HTTPException):
+            return None
+
     async def _create_evidence_channel(
         self,
         reviewer: discord.Member,
     ) -> discord.TextChannel:
         if self.guild.me is None:
             raise RuntimeError("The bot is not available in this server.")
+
+        category = self.guild.get_channel(REPORT_TICKET_CATEGORY_ID)
+        if not isinstance(category, discord.CategoryChannel):
+            raise RuntimeError(
+                f"Report ticket category {REPORT_TICKET_CATEGORY_ID} "
+                "was not found."
+            )
+
+        report_number = await asyncio.to_thread(
+            db.next_report_number,
+            self.guild.id,
+        )
+        if report_number < 1:
+            raise RuntimeError("Could not allocate a report ticket number.")
 
         member_permissions = discord.PermissionOverwrite(
             view_channel=True,
@@ -419,23 +463,28 @@ class ReportView(discord.ui.View):
             ),
         }
 
+        target_member = await self._get_target_member()
+        if target_member is not None:
+            overwrites[target_member] = member_permissions
+
         channel = await self.guild.create_text_channel(
-            _evidence_channel_name(self.reporter, self.report_id),
+            f"Report-{report_number}",
             overwrites=overwrites,
-            category=self.category,
-            topic=f"Private evidence channel for report {self.report_id}",
+            category=category,
+            topic=f"Private further-review ticket for report {self.report_id}",
         )
+        self.report_number = report_number
 
         evidence_embed = discord.Embed(
-            title="Further Review Evidence",
+            title="Further Review",
             description=(
-                f"**Reporter:** {self.reporter.mention}\n"
-                f"**Target:** {self.target.mention if self.target else 'N/A'}\n"
-                f"**Reason:** {_truncate(self.reason)}"
+                "Hello, this is a further review of the report, the staff "
+                "member may ask for any additional proof, clarification, "
+                "description and more."
             ),
             color=UNDER_REVIEW_COLOR,
         )
-        evidence_embed.set_footer(text=f"Report ID: {self.report_id}")
+        evidence_embed.set_footer(text=f"Report ticket: Report-{report_number}")
 
         try:
             await channel.send(
@@ -444,6 +493,7 @@ class ReportView(discord.ui.View):
                     f"{self.reporter.mention}, you may submit evidence here."
                 ),
                 embed=evidence_embed,
+                view=FurtherReviewTicketView(self),
                 allowed_mentions=discord.AllowedMentions(
                     users=[reviewer, self.reporter]
                 ),
@@ -455,6 +505,106 @@ class ReportView(discord.ui.View):
             )
 
         return channel
+
+    async def _handle_end_ticket(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        if not interaction.guild or not isinstance(
+            interaction.user,
+            discord.Member,
+        ):
+            await interaction.response.send_message(
+                "This report workflow can only be used in a server.",
+                ephemeral=True,
+            )
+            return
+
+        if not can_review_reports(interaction.user):
+            await interaction.response.send_message(
+                "You do not have permission to review reports.",
+                ephemeral=True,
+            )
+            return
+
+        if self.reviewer_id != interaction.user.id:
+            await interaction.response.send_message(
+                "Only the staff member reviewing this report can end it.",
+                ephemeral=True,
+            )
+            return
+
+        if (
+            self.status not in {"further_review", "sorted"}
+            or self.evidence_channel_id is None
+            or interaction.channel_id != self.evidence_channel_id
+        ):
+            await interaction.response.send_message(
+                "This further-review ticket is no longer active.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        report_channel = self.guild.get_channel(REPORT_CHANNEL_ID)
+        if not isinstance(report_channel, discord.TextChannel):
+            await interaction.followup.send(
+                "The report card could not be found; the ticket was not deleted.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            report_message = await report_channel.fetch_message(self.message_id)
+        except (discord.NotFound, discord.HTTPException) as e:
+            print(f"[REPORT] Could not fetch report card for sorting: {e}")
+            await interaction.followup.send(
+                "The report card could not be updated; the ticket was not deleted.",
+                ephemeral=True,
+            )
+            return
+
+        previous_status = self.status
+        previous_sorted_by_id = self.sorted_by_id
+        self.status = "sorted"
+        self.sorted_by_id = interaction.user.id
+        self._refresh_buttons()
+        try:
+            await report_message.edit(
+                embed=self.build_embed(),
+                view=self,
+            )
+        except discord.HTTPException as e:
+            self.status = previous_status
+            self.sorted_by_id = previous_sorted_by_id
+            self._refresh_buttons()
+            print(
+                f"[REPORT] Could not mark report {self.report_id} "
+                f"as sorted: {e}"
+            )
+            await interaction.followup.send(
+                "The report card could not be updated; the ticket was not deleted.",
+                ephemeral=True,
+            )
+            return
+
+        await self._dm_reporter(interaction.user)
+
+        evidence_channel = self.guild.get_channel(self.evidence_channel_id)
+        if evidence_channel is not None:
+            try:
+                await evidence_channel.delete(
+                    reason=f"Report {self.report_id} sorted by {interaction.user}"
+                )
+                self.evidence_channel_id = None
+            except discord.HTTPException as e:
+                print(
+                    f"[REPORT] Report was sorted, but evidence channel "
+                    f"{evidence_channel.id} could not be deleted: {e}"
+                )
+        else:
+            self.evidence_channel_id = None
 
     async def _handle_further_review(
         self,
@@ -546,7 +696,6 @@ class ReportSystem(commands.Cog):
             target=target,
             reason=reason,
             report_id=interaction.id,
-            category=report_channel.category,
         )
         staff_role = interaction.guild.get_role(REPORT_STAFF_ROLE_ID)
         if staff_role is None:
