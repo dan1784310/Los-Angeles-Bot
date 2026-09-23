@@ -475,7 +475,7 @@ class ReportView(discord.ui.View):
         )
         self.report_number = report_number
 
-        evidence_embed = discord.Embed(
+        ticket_embed = discord.Embed(
             title="Further Review",
             description=(
                 "Hello, this is a further review of the report, the staff "
@@ -484,7 +484,45 @@ class ReportView(discord.ui.View):
             ),
             color=UNDER_REVIEW_COLOR,
         )
-        evidence_embed.set_footer(text=f"Report ticket: Report-{report_number}")
+        ticket_embed.set_author(
+            name=f"Report ticket: Report-{report_number}",
+            icon_url=self.reporter.display_avatar.url,
+        )
+        ticket_embed.set_thumbnail(
+            url=(self.target or self.reporter).display_avatar.url
+        )
+        ticket_embed.add_field(
+            name="Reporter",
+            value=self.reporter.mention,
+            inline=True,
+        )
+        ticket_embed.add_field(
+            name="Target",
+            value=self.target.mention if self.target else "N/A",
+            inline=True,
+        )
+        ticket_embed.add_field(
+            name="Reviewing Staff",
+            value=reviewer.mention,
+            inline=True,
+        )
+
+        thumbnail_user = self.target or self.reporter
+        report_embed = discord.Embed(
+            title="Original Report",
+            color=self._embed_color(),
+        )
+        report_embed.set_author(
+            name=f"Reported by {self.reporter.display_name}"[:256],
+            icon_url=self.reporter.display_avatar.url,
+        )
+        report_embed.set_thumbnail(url=thumbnail_user.display_avatar.url)
+        report_embed.description = (
+            f"• **Reporter:** {self.reporter.mention}\n"
+            f"• **Target:** {self.target.mention if self.target else 'N/A'}\n"
+            f"• **Reason:** {_truncate(self.reason)}\n"
+            f"• **Status:** {self._status_text()}"
+        )
 
         try:
             await channel.send(
@@ -492,17 +530,23 @@ class ReportView(discord.ui.View):
                     f"{reviewer.mention}, you are reviewing this report. "
                     f"{self.reporter.mention}, you may submit evidence here."
                 ),
-                embed=evidence_embed,
+                embeds=[ticket_embed, report_embed],
                 view=FurtherReviewTicketView(self),
                 allowed_mentions=discord.AllowedMentions(
                     users=[reviewer, self.reporter]
                 ),
             )
-        except discord.HTTPException as e:
-            print(
-                f"[REPORT] Evidence channel {channel.id} was created but "
-                f"its welcome message failed: {e}"
-            )
+        except discord.HTTPException:
+            try:
+                await channel.delete(
+                    reason="Could not send the further-review ticket message"
+                )
+            except discord.HTTPException as cleanup_error:
+                print(
+                    f"[REPORT] Could not clean up empty evidence channel "
+                    f"{channel.id}: {cleanup_error}"
+                )
+            raise
 
         return channel
 
@@ -697,6 +741,39 @@ class ReportSystem(commands.Cog):
             reason=reason,
             report_id=interaction.id,
         )
+        target_member = await view._get_target_member()
+        if target_member is not None and (
+            target_member.id == interaction.guild.owner_id
+            or target_member.guild_permissions.administrator
+        ):
+            await interaction.followup.send(
+                "This report cannot be posted because the selected target is "
+                "a server administrator. Discord administrators can view every "
+                "channel, so the report could not be hidden from them.",
+                ephemeral=True,
+            )
+            return
+
+        if target_member is not None:
+            try:
+                await report_channel.set_permissions(
+                    target_member,
+                    overwrite=discord.PermissionOverwrite(
+                        view_channel=False
+                    ),
+                )
+            except discord.HTTPException as e:
+                print(
+                    f"[REPORT] Could not hide report channel {report_channel.id} "
+                    f"from target {target_member.id}: {e}"
+                )
+                await interaction.followup.send(
+                    "The report was not submitted because the report channel "
+                    "could not be hidden from the selected target.",
+                    ephemeral=True,
+                )
+                return
+
         staff_role = interaction.guild.get_role(REPORT_STAFF_ROLE_ID)
         if staff_role is None:
             print(
