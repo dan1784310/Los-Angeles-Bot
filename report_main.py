@@ -21,9 +21,17 @@ UNDER_REVIEW_COLOR = discord.Color.from_rgb(249, 115, 22)
 SORTED_COLOR = discord.Color.from_rgb(34, 197, 94)
 
 
-def has_report_staff_role(member: discord.Member) -> bool:
-    """Return whether a member has the configured report staff role."""
-    return any(role.id == REPORT_STAFF_ROLE_ID for role in member.roles)
+def can_review_reports(member: discord.Member) -> bool:
+    """Allow the report role, higher-ranked roles, and administrators."""
+    required_role = member.guild.get_role(REPORT_STAFF_ROLE_ID)
+    if required_role is None:
+        return False
+
+    return (
+        member.id == member.guild.owner_id
+        or member.guild_permissions.administrator
+        or member.top_role >= required_role
+    )
 
 
 def _truncate(value: str, limit: int = 1024) -> str:
@@ -144,29 +152,15 @@ class ReportView(discord.ui.View):
             timestamp=self.created_at,
         )
         embed.set_author(
-            name=f"Reported by {self.reporter.name}"[:256],
+            name=f"Reported by {self.reporter.display_name}"[:256],
             icon_url=self.reporter.display_avatar.url,
         )
         embed.set_thumbnail(url=thumbnail_user.display_avatar.url)
-        embed.add_field(
-            name="Reporter",
-            value=self.reporter.mention,
-            inline=True,
-        )
-        embed.add_field(
-            name="Target",
-            value=self.target.mention if self.target else "N/A",
-            inline=True,
-        )
-        embed.add_field(
-            name="Reason",
-            value=_truncate(self.reason),
-            inline=False,
-        )
-        embed.add_field(
-            name="Status",
-            value=self._status_text(),
-            inline=True,
+        embed.description = (
+            f"• **Reporter:** {self.reporter.mention}\n"
+            f"• **Target:** {self.target.mention if self.target else 'N/A'}\n"
+            f"• **Reason:** {_truncate(self.reason)}\n"
+            f"• **Status:** {self._status_text()}"
         )
         embed.set_footer(text=f"Report ID: {self.report_id}")
         return embed
@@ -185,7 +179,7 @@ class ReportView(discord.ui.View):
             )
             return False
 
-        if not has_report_staff_role(interaction.user):
+        if not can_review_reports(interaction.user):
             await interaction.response.send_message(
                 "You do not have permission to review reports.",
                 ephemeral=True,
@@ -509,7 +503,7 @@ class ReportSystem(commands.Cog):
     )
     @app_commands.describe(
         reason="The details or reason for the report.",
-        target="The user being reported (optional).",
+        target="The @user being reported (optional).",
     )
     async def report(
         self,
