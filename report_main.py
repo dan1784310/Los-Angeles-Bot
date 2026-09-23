@@ -14,7 +14,7 @@ from discord import app_commands
 from discord.ext import commands
 
 REPORT_CHANNEL_ID = 1552408086126272542
-REPORT_STAFF_ROLE_ID = 1545907949535232062
+REPORT_STAFF_ROLE_ID = 1527050504733986987
 
 PENDING_COLOR = discord.Color.from_rgb(245, 158, 11)
 UNDER_REVIEW_COLOR = discord.Color.from_rgb(249, 115, 22)
@@ -23,15 +23,15 @@ SORTED_COLOR = discord.Color.from_rgb(34, 197, 94)
 
 def can_review_reports(member: discord.Member) -> bool:
     """Allow the report role, higher-ranked roles, and administrators."""
-    required_role = member.guild.get_role(REPORT_STAFF_ROLE_ID)
-    if required_role is None:
-        return False
-
-    return (
+    if (
         member.id == member.guild.owner_id
         or member.guild_permissions.administrator
-        or member.top_role >= required_role
-    )
+        or member.guild_permissions.manage_guild
+    ):
+        return True
+
+    required_role = member.guild.get_role(REPORT_STAFF_ROLE_ID)
+    return required_role is not None and member.top_role >= required_role
 
 
 def _truncate(value: str, limit: int = 1024) -> str:
@@ -557,7 +557,11 @@ class ReportSystem(commands.Cog):
 
         try:
             message = await report_channel.send(
-                content=f"<@&{REPORT_STAFF_ROLE_ID}>",
+                content=(
+                    staff_role.mention
+                    if staff_role is not None
+                    else None
+                ),
                 embed=view.build_embed(),
                 view=view,
                 allowed_mentions=discord.AllowedMentions(
