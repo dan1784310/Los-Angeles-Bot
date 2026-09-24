@@ -60,11 +60,25 @@ class FurtherReviewTicketView(discord.ui.View):
         end_button.callback = self._handle_end
         self.add_item(end_button)
 
+        leave_button = discord.ui.Button(
+            label="Leave",
+            style=discord.ButtonStyle.secondary,
+            custom_id="report_further_leave",
+        )
+        leave_button.callback = self._handle_leave
+        self.add_item(leave_button)
+
     async def _handle_end(
         self,
         interaction: discord.Interaction,
     ) -> None:
         await self.report_view._handle_end_ticket(interaction)
+
+    async def _handle_leave(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        await self.report_view._handle_leave_ticket(interaction)
 
 
 class ReportView(discord.ui.View):
@@ -195,6 +209,13 @@ class ReportView(discord.ui.View):
         ):
             await interaction.response.send_message(
                 "This report workflow can only be used in a server.",
+                ephemeral=True,
+            )
+            return False
+
+        if self.target is not None and self.target.id == interaction.user.id:
+            await interaction.response.send_message(
+                "You cannot review a report made about you.",
                 ephemeral=True,
             )
             return False
@@ -414,6 +435,7 @@ class ReportView(discord.ui.View):
     ) -> discord.ui.LayoutView:
         ticket_view = FurtherReviewTicketView(self)
         end_callback = ticket_view.children[0].callback
+        leave_callback = ticket_view.children[1].callback
 
         layout = discord.ui.LayoutView(timeout=None)
         container = discord.ui.Container(
@@ -444,6 +466,14 @@ class ReportView(discord.ui.View):
         )
         end_button.callback = end_callback
         action_row.add_item(end_button)
+
+        leave_button = discord.ui.Button(
+            label="Leave",
+            style=discord.ButtonStyle.secondary,
+            custom_id="report_further_leave",
+        )
+        leave_button.callback = leave_callback
+        action_row.add_item(leave_button)
         container.add_item(action_row)
         layout.add_item(container)
         return layout
@@ -586,67 +616,32 @@ class ReportView(discord.ui.View):
             inline=True,
         )
 
-        thumbnail_user = self.target or self.reporter
-        report_embed = discord.Embed(
-            title="Original Report",
-            color=self._embed_color(),
-        )
-        report_embed.set_author(
-            name=f"Reported by {self.reporter.display_name}"[:256],
-            icon_url=self.reporter.display_avatar.url,
-        )
-        report_embed.set_thumbnail(url=thumbnail_user.display_avatar.url)
-        report_embed.description = (
-            f"• **Reporter:** {self.reporter.mention}\n"
-            f"• **Target:** {self.target.mention if self.target else 'N/A'}\n"
-            f"• **Reason:** {_truncate(self.reason)}\n"
-            f"• **Status:** {self._status_text()}"
-        )
+        allowed_mention_users = [reviewer]
+        ping_content = reviewer.mention
+        if self.reporter.id != reviewer.id:
+            allowed_mention_users.append(self.reporter)
+            ping_content = f"{reviewer.mention} {self.reporter.mention}"
 
-        ping_content = (
-            f"{reviewer.mention}, you are reviewing this report. "
-            f"{self.reporter.mention}, you may submit evidence here."
-        )
         allowed_mentions = discord.AllowedMentions(
-            users=[reviewer, self.reporter]
+            users=allowed_mention_users
         )
 
         try:
             await channel.send(
-                content=(
-                    f"{ping_content}\n"
-                    "Hello, this is a further review of the report, the "
-                    "staff member may ask for any additional proof, "
-                    "clarification, description and more."
-                ),
+                content=ping_content,
+                embed=ticket_embed,
                 view=FurtherReviewTicketView(self),
                 allowed_mentions=allowed_mentions,
             )
-        except Exception as control_error:
-            try:
-                await channel.delete(
-                    reason="Could not send the further-review controls"
-                )
-            except discord.HTTPException as cleanup_error:
-                print(
-                    f"[REPORT] Could not clean up empty evidence "
-                    f"channel {channel.id}: {cleanup_error}"
-                )
-            raise RuntimeError(
-                f"Could not send the further-review ticket message: "
-                f"{control_error}"
-            ) from control_error
-
-        try:
-            await channel.send(
-                embeds=[ticket_embed, report_embed],
-            )
         except Exception as embed_error:
             print(
-                f"[REPORT] Classic ticket embeds failed for channel "
+                f"[REPORT] Classic ticket embed failed for channel "
                 f"{channel.id}; using Components V2 fallback: {embed_error}"
             )
             try:
+                # Components V2 messages cannot use the legacy content or
+                # embed fields. Keep the ticket card first, then send the
+                # required user pings as a mention-only message.
                 await channel.send(
                     view=self._build_ticket_fallback_view(
                         reviewer,
@@ -655,13 +650,55 @@ class ReportView(discord.ui.View):
                 )
             except Exception as fallback_error:
                 print(
-                    f"[REPORT] Further-review channel {channel.id} remains "
-                    f"open, but both embed formats failed: {fallback_error}"
+                    f"[REPORT] Components V2 ticket fallback failed for "
+                    f"channel {channel.id}: {fallback_error}"
                 )
+                try:
+                    # A plain legacy message with the controls is the final
+                    # fallback when the server rejects the card format.
+                    await channel.send(
+                        content=ping_content,
+                        view=FurtherReviewTicketView(self),
+                        allowed_mentions=allowed_mentions,
+                    )
+                except Exception as control_error:
+                    try:
+                        await channel.delete(
+                            reason="Could not send the further-review ticket"
+                        )
+                    except discord.HTTPException as cleanup_error:
+                        print(
+                            f"[REPORT] Could not clean up empty evidence "
+                            f"channel {channel.id}: {cleanup_error}"
+                        )
+                    raise RuntimeError(
+                        "Could not send the further-review ticket message: "
+                        f"{control_error}"
+                    ) from control_error
+            else:
+                try:
+                    await channel.send(
+                        content=ping_content,
+                        allowed_mentions=allowed_mentions,
+                    )
+                except Exception as ping_error:
+                    # The ticket is already usable; a failed mention should
+                    # not delete the evidence channel or discard its controls.
+                    print(
+                        f"[REPORT] Could not send further-review pings for "
+                        f"channel {channel.id}: {ping_error}"
+                    )
 
         return channel
 
     async def _handle_end_ticket(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        async with self._lock:
+            await self._handle_end_ticket_locked(interaction)
+
+    async def _handle_end_ticket_locked(
         self,
         interaction: discord.Interaction,
     ) -> None:
@@ -671,6 +708,13 @@ class ReportView(discord.ui.View):
         ):
             await interaction.response.send_message(
                 "This report workflow can only be used in a server.",
+                ephemeral=True,
+            )
+            return
+
+        if self.target is not None and self.target.id == interaction.user.id:
+            await interaction.response.send_message(
+                "You cannot review a report made about you.",
                 ephemeral=True,
             )
             return
@@ -760,6 +804,141 @@ class ReportView(discord.ui.View):
                 )
         else:
             self.evidence_channel_id = None
+
+    async def _handle_leave_ticket(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        async with self._lock:
+            await self._handle_leave_ticket_locked(interaction)
+
+    async def _handle_leave_ticket_locked(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        if not interaction.guild or not isinstance(
+            interaction.user,
+            discord.Member,
+        ):
+            await interaction.response.send_message(
+                "This report workflow can only be used in a server.",
+                ephemeral=True,
+            )
+            return
+
+        if self.target is not None and self.target.id == interaction.user.id:
+            await interaction.response.send_message(
+                "You cannot review a report made about you.",
+                ephemeral=True,
+            )
+            return
+
+        if not can_review_reports(interaction.user):
+            await interaction.response.send_message(
+                "You do not have permission to review reports.",
+                ephemeral=True,
+            )
+            return
+
+        if self.reviewer_id != interaction.user.id:
+            await interaction.response.send_message(
+                "Only the staff member reviewing this report can leave it.",
+                ephemeral=True,
+            )
+            return
+
+        if (
+            self.status != "further_review"
+            or self.evidence_channel_id is None
+            or interaction.channel_id != self.evidence_channel_id
+        ):
+            await interaction.response.send_message(
+                "This further-review ticket is no longer active.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        report_channel = self.guild.get_channel(REPORT_CHANNEL_ID)
+        if not isinstance(report_channel, discord.TextChannel):
+            await interaction.followup.send(
+                "The report card could not be found; the ticket was not closed.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            report_message = await report_channel.fetch_message(self.message_id)
+        except (discord.NotFound, discord.HTTPException) as e:
+            print(f"[REPORT] Could not fetch report card for release: {e}")
+            await interaction.followup.send(
+                "The report card could not be updated; the ticket was not closed.",
+                ephemeral=True,
+            )
+            return
+
+        previous_status = self.status
+        previous_reviewer_id = self.reviewer_id
+        previous_sorted_by_id = self.sorted_by_id
+        self.status = "pending"
+        self.reviewer_id = None
+        self.sorted_by_id = None
+        self._refresh_buttons()
+        try:
+            await report_message.edit(
+                embed=self.build_embed(),
+                view=self,
+            )
+        except discord.HTTPException as e:
+            self.status = previous_status
+            self.reviewer_id = previous_reviewer_id
+            self.sorted_by_id = previous_sorted_by_id
+            self._refresh_buttons()
+            print(
+                f"[REPORT] Could not return report {self.report_id} "
+                f"to pending: {e}"
+            )
+            await interaction.followup.send(
+                "The report card could not be updated; the ticket was not closed.",
+                ephemeral=True,
+            )
+            return
+
+        evidence_channel = self.guild.get_channel(self.evidence_channel_id)
+        if evidence_channel is None:
+            self.evidence_channel_id = None
+            self.report_number = None
+            return
+
+        try:
+            await evidence_channel.delete(
+                reason=f"Further review released by {interaction.user}"
+            )
+        except discord.HTTPException as e:
+            self.status = previous_status
+            self.reviewer_id = previous_reviewer_id
+            self.sorted_by_id = previous_sorted_by_id
+            self._refresh_buttons()
+            try:
+                await report_message.edit(
+                    embed=self.build_embed(),
+                    view=self,
+                )
+            except discord.HTTPException:
+                pass
+            print(
+                f"[REPORT] Could not close further-review channel "
+                f"{evidence_channel.id}: {e}"
+            )
+            await interaction.followup.send(
+                "The ticket could not be closed; the report remains under review.",
+                ephemeral=True,
+            )
+            return
+
+        self.evidence_channel_id = None
+        self.report_number = None
 
     async def _handle_further_review(
         self,
