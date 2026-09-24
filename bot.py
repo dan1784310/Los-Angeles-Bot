@@ -546,39 +546,35 @@ RPS_CHOICES = {
 }
 
 SHIP_TIERS = (
-    (0, 25, "No Ship", "broken"),
-    (26, 50, "Getting Together", "bandaged"),
-    (51, 75, "Shipped", "normal"),
-    (76, 100, "Perfect Ship!", "perfect"),
+    (0, 25, "No Ship", "broken", "💔", (244, 63, 94)),
+    (26, 50, "Getting Together", "bandaged", "❤️‍🩹", (249, 115, 22)),
+    (51, 75, "Shipped", "normal", "❤️", (236, 72, 153)),
+    (76, 100, "Perfect Ship!", "perfect", "✨💖✨", (245, 183, 66)),
 )
-SHIP_CARD_WIDTH = 1024
-SHIP_CARD_HEIGHT = 600
-SHIP_AVATAR_SIZE = 220
-SHIP_BACKGROUND = (250, 248, 246, 255)
-SHIP_RED = (211, 47, 47, 255)
-SHIP_DARK_RED = (157, 28, 32, 255)
-SHIP_HEART_RED = (226, 63, 82, 255)
-SHIP_HEART_PINK = (244, 139, 154, 255)
-SHIP_BANDAGE = (241, 218, 166, 255)
-SHIP_BANDAGE_EDGE = (194, 155, 91, 255)
-SHIP_GOLD = (247, 190, 61, 255)
+SHIP_CARD_WIDTH = 1400
+SHIP_CARD_HEIGHT = 800
+SHIP_AVATAR_SIZE = 250
+SHIP_CARD_BG = (17, 22, 48, 238)
+SHIP_CARD_BORDER = (255, 255, 255, 30)
+SHIP_TEXT = (245, 247, 255, 255)
+SHIP_MUTED = (166, 176, 211, 255)
+SHIP_DARK = (8, 11, 28, 255)
+SHIP_WHITE = (255, 255, 255, 255)
 
 
 def _ship_font(size: int, bold: bool = False):
-    """Load a handwritten-looking font when one is available."""
+    """Load a clean modern sans-serif font when one is available."""
     if bold:
         candidates = (
-            "C:/Windows/Fonts/comicbd.ttf",
-            "/usr/share/fonts/truetype/comic-sans-ms/ComicSansMS-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "C:/Windows/Fonts/segoeuib.ttf",
             "C:/Windows/Fonts/arialbd.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         )
     else:
         candidates = (
-            "C:/Windows/Fonts/comic.ttf",
-            "/usr/share/fonts/truetype/comic-sans-ms/ComicSansMS.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
             "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         )
 
     for path in candidates:
@@ -587,6 +583,10 @@ def _ship_font(size: int, bold: bool = False):
         except OSError:
             continue
     return ImageFont.load_default()
+
+
+def _rgba(color: tuple[int, int, int], alpha: int = 255):
+    return (*color, alpha)
 
 
 def _fit_text(
@@ -634,17 +634,68 @@ def _center_text(
     )
 
 
+def _draw_pill(
+    draw: ImageDraw.ImageDraw,
+    center: tuple[int, int],
+    text: str,
+    font,
+    accent: tuple[int, int, int],
+) -> None:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    width = bbox[2] - bbox[0] + 52
+    height = bbox[3] - bbox[1] + 24
+    left = center[0] - width / 2
+    top = center[1] - height / 2
+    draw.rounded_rectangle(
+        (left, top, left + width, top + height),
+        radius=height / 2,
+        fill=_rgba(accent, 48),
+        outline=_rgba(accent, 220),
+        width=2,
+    )
+    _center_text(draw, center, text, font, SHIP_TEXT)
+
+
+def _ship_name(user: discord.User) -> str:
+    name = (
+        getattr(user, "display_name", None)
+        or getattr(user, "name", None)
+        or "Unknown user"
+    )
+    clean_name = " ".join(str(name).split())[:80]
+    return clean_name or "Unknown user"
+
+
+def _ship_avatar_url(user: discord.User) -> str:
+    avatar = getattr(user, "display_avatar", None)
+    if avatar is not None and avatar.url:
+        return avatar.url
+    fallback_avatar = getattr(user, "avatar", None)
+    if fallback_avatar is not None and fallback_avatar.url:
+        return fallback_avatar.url
+    return "https://cdn.discordapp.com/embed/avatars/0.png"
+
+
+def _get_ship_tier(percentage: int):
+    percentage = max(0, min(100, int(percentage)))
+    return next(
+        tier
+        for tier in SHIP_TIERS
+        if tier[0] <= percentage <= tier[1]
+    )
+
+
 def _ship_fallback_avatar(display_name: str, user_id: int) -> Image.Image:
     colors = (
-        (211, 47, 47, 255),
-        (52, 120, 246, 255),
-        (32, 153, 99, 255),
-        (157, 78, 221, 255),
-        (236, 112, 45, 255),
-        (22, 160, 184, 255),
+        (244, 63, 94),
+        (79, 70, 229),
+        (16, 185, 129),
+        (139, 92, 246),
+        (249, 115, 22),
+        (14, 165, 233),
     )
     color = colors[sum(str(user_id).encode("utf-8")) % len(colors)]
-    image = Image.new("RGBA", (SHIP_AVATAR_SIZE, SHIP_AVATAR_SIZE), color)
+    image = Image.new("RGBA", (SHIP_AVATAR_SIZE, SHIP_AVATAR_SIZE), _rgba(color))
     draw = ImageDraw.Draw(image)
     words = [word for word in re.split(r"\s+", display_name) if word]
     initials = "".join(word[0] for word in words[:2]).upper() or "?"
@@ -652,8 +703,8 @@ def _ship_fallback_avatar(display_name: str, user_id: int) -> Image.Image:
         draw,
         (SHIP_AVATAR_SIZE // 2, SHIP_AVATAR_SIZE // 2),
         initials,
-        _ship_font(76, bold=True),
-        (255, 255, 255, 255),
+        _ship_font(82, bold=True),
+        SHIP_WHITE,
     )
     return image
 
@@ -663,8 +714,7 @@ async def _fetch_ship_avatar(
     session: aiohttp.ClientSession,
 ) -> Image.Image:
     try:
-        avatar_url = user.display_avatar.url
-        async with session.get(avatar_url) as response:
+        async with session.get(_ship_avatar_url(user)) as response:
             response.raise_for_status()
             avatar_bytes = await response.read()
         if len(avatar_bytes) > 8_000_000:
@@ -687,14 +737,14 @@ async def _fetch_ship_avatar(
 
 
 class ShipCardRenderer:
-    """Render a ship result as a centered image card."""
+    """Render a polished, modern ship card as an inline PNG."""
 
     WIDTH = SHIP_CARD_WIDTH
     HEIGHT = SHIP_CARD_HEIGHT
     AVATAR_RADIUS = SHIP_AVATAR_SIZE // 2
-    LEFT_AVATAR_CENTER = (225, 355)
-    RIGHT_AVATAR_CENTER = (799, 355)
-    HEART_CENTER = (512, 350)
+    LEFT_AVATAR_CENTER = (300, 430)
+    RIGHT_AVATAR_CENTER = (1100, 430)
+    HEART_CENTER = (700, 435)
 
     def __init__(
         self,
@@ -709,10 +759,8 @@ class ShipCardRenderer:
         self.avatar1 = avatar1
         self.avatar2 = avatar2
         self.percentage = max(0, min(100, int(percentage)))
-        self.tier = next(
-            tier for tier in SHIP_TIERS
-            if tier[0] <= self.percentage <= tier[1]
-        )
+        self.tier = _get_ship_tier(self.percentage)
+        self.status, self.style, self.emoji, self.accent = self.tier[2:]
 
     @classmethod
     def _heart_points(
@@ -722,8 +770,8 @@ class ShipCardRenderer:
         height: int,
     ) -> list[tuple[int, int]]:
         raw_points = []
-        for index in range(241):
-            angle = (math.pi * 2 * index) / 240
+        for index in range(361):
+            angle = (math.pi * 2 * index) / 360
             x = 16 * math.sin(angle) ** 3
             y = (
                 13 * math.cos(angle)
@@ -735,35 +783,77 @@ class ShipCardRenderer:
 
         min_y = min(point[1] for point in raw_points)
         max_y = max(point[1] for point in raw_points)
-        points = []
-        for x, y in raw_points:
-            normalized_x = (x + 16) / 32
-            normalized_y = (y - min_y) / (max_y - min_y)
-            points.append((
-                int(center[0] + (normalized_x - 0.5) * width),
-                int(center[1] + height / 2 - normalized_y * height),
-            ))
-        return points
+        return [
+            (
+                int(center[0] + ((x + 16) / 32 - 0.5) * width),
+                int(center[1] + height / 2 - ((y - min_y) / (max_y - min_y)) * height),
+            )
+            for x, y in raw_points
+        ]
 
     def _draw_background(self, canvas: Image.Image) -> None:
+        draw = ImageDraw.Draw(canvas)
+        top = (8, 12, 32)
+        bottom = (31, 18, 57)
+        for y in range(self.HEIGHT):
+            ratio = y / (self.HEIGHT - 1)
+            color = tuple(
+                int(top[index] * (1 - ratio) + bottom[index] * ratio)
+                for index in range(3)
+            )
+            draw.line((0, y, self.WIDTH, y), fill=_rgba(color))
+
+        for box, color, blur in (
+            ((-180, 40, 520, 650), (113, 62, 210), 80),
+            ((850, -100, 1550, 560), (236, 55, 137), 95),
+            ((420, 520, 1020, 980), (38, 93, 205), 90),
+        ):
+            glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+            glow_draw = ImageDraw.Draw(glow)
+            glow_draw.ellipse(box, fill=_rgba(color, 70))
+            canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(blur)))
+
+    def _draw_glass_card(self, canvas: Image.Image) -> None:
         shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
         shadow_draw = ImageDraw.Draw(shadow)
         shadow_draw.rounded_rectangle(
-            (38, 35, self.WIDTH - 30, self.HEIGHT - 25),
-            radius=25,
-            fill=(0, 0, 0, 75),
+            (74, 73, self.WIDTH - 54, self.HEIGHT - 48),
+            radius=38,
+            fill=(0, 0, 0, 150),
         )
-        shadow = shadow.filter(ImageFilter.GaussianBlur(13))
-        canvas.alpha_composite(shadow)
+        canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(28)))
 
-        draw = ImageDraw.Draw(canvas)
-        draw.rounded_rectangle(
-            (30, 25, self.WIDTH - 30, self.HEIGHT - 25),
-            radius=25,
-            fill=SHIP_BACKGROUND,
-            outline=SHIP_RED,
-            width=7,
+        card = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        card_draw = ImageDraw.Draw(card)
+        card_draw.rounded_rectangle(
+            (58, 52, self.WIDTH - 58, self.HEIGHT - 55),
+            radius=38,
+            fill=SHIP_CARD_BG,
+            outline=SHIP_CARD_BORDER,
+            width=2,
         )
+        card_draw.rounded_rectangle(
+            (88, 83, self.WIDTH - 88, 89),
+            radius=3,
+            fill=_rgba(self.accent, 210),
+        )
+        canvas.alpha_composite(card)
+
+    def _draw_connector(self, canvas: Image.Image) -> None:
+        draw = ImageDraw.Draw(canvas)
+        line_color = _rgba(self.accent, 90)
+        draw.line(
+            (self.LEFT_AVATAR_CENTER[0] + 145, 430, 520, 430),
+            fill=line_color,
+            width=2,
+        )
+        draw.line(
+            (880, 430, self.RIGHT_AVATAR_CENTER[0] - 145, 430),
+            fill=line_color,
+            width=2,
+        )
+        for x in (520, 880):
+            draw.ellipse((x - 4, 426, x + 4, 434), fill=_rgba(self.accent, 180))
 
     def _draw_user(
         self,
@@ -771,32 +861,36 @@ class ShipCardRenderer:
         user: discord.User,
         avatar: Image.Image,
         center: tuple[int, int],
+        label: str,
     ) -> None:
         draw = ImageDraw.Draw(canvas)
-        name = getattr(user, "display_name", None) or getattr(user, "name", "Unknown")
-        name = _fit_text(draw, name, _ship_font(38, bold=True), 220)
-        _center_text(
-            draw,
-            (center[0], 135),
-            name,
-            _ship_font(38, bold=True),
-            SHIP_RED,
+        name = _fit_text(draw, _ship_name(user), _ship_font(29, bold=True), 290)
+        _center_text(draw, (center[0], 222), name, _ship_font(29, bold=True), SHIP_TEXT)
+        _center_text(draw, (center[0], 190), label, _ship_font(15, bold=True), SHIP_MUTED)
+
+        glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        glow_draw = ImageDraw.Draw(glow)
+        glow_draw.ellipse(
+            (
+                center[0] - self.AVATAR_RADIUS - 12,
+                center[1] - self.AVATAR_RADIUS - 12,
+                center[0] + self.AVATAR_RADIUS + 12,
+                center[1] + self.AVATAR_RADIUS + 12,
+            ),
+            fill=_rgba(self.accent, 90),
         )
+        canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(22)))
 
         avatar = avatar.convert("RGBA").resize(
             (SHIP_AVATAR_SIZE, SHIP_AVATAR_SIZE),
             getattr(Image, "Resampling", Image).LANCZOS,
         )
         mask = Image.new("L", avatar.size, 0)
-        mask_draw = ImageDraw.Draw(mask)
-        mask_draw.ellipse((0, 0, SHIP_AVATAR_SIZE, SHIP_AVATAR_SIZE), fill=255)
+        ImageDraw.Draw(mask).ellipse((0, 0, SHIP_AVATAR_SIZE, SHIP_AVATAR_SIZE), fill=255)
         avatar.putalpha(mask)
         canvas.alpha_composite(
             avatar,
-            (
-                center[0] - self.AVATAR_RADIUS,
-                center[1] - self.AVATAR_RADIUS,
-            ),
+            (center[0] - self.AVATAR_RADIUS, center[1] - self.AVATAR_RADIUS),
         )
         draw.ellipse(
             (
@@ -805,123 +899,137 @@ class ShipCardRenderer:
                 center[0] + self.AVATAR_RADIUS,
                 center[1] + self.AVATAR_RADIUS,
             ),
-            outline=SHIP_RED,
-            width=7,
+            outline=_rgba(self.accent, 235),
+            width=5,
         )
 
     def _draw_sparkles(self, draw: ImageDraw.ImageDraw) -> None:
-        sparkles = (
-            (386, 238, 8),
-            (635, 232, 7),
-            (365, 405, 6),
-            (660, 420, 9),
-        )
-        for x, y, radius in sparkles:
-            draw.line((x - radius, y, x + radius, y), fill=SHIP_GOLD, width=3)
-            draw.line((x, y - radius, x, y + radius), fill=SHIP_GOLD, width=3)
+        sparkle_color = _rgba((255, 221, 126), 235)
+        for x, y, radius in ((505, 326, 8), (895, 325, 7), (492, 548, 6), (910, 556, 9)):
+            draw.line((x - radius, y, x + radius, y), fill=sparkle_color, width=3)
+            draw.line((x, y - radius, x, y + radius), fill=sparkle_color, width=3)
 
     def _draw_heart(self, canvas: Image.Image) -> None:
-        status, style = self.tier[2], self.tier[3]
-        points = self._heart_points(self.HEART_CENTER, 310, 285)
-
-        if style == "perfect":
+        points = self._heart_points(self.HEART_CENTER, 355, 295)
+        if self.style == "perfect":
             glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
             glow_draw = ImageDraw.Draw(glow)
-            glow_draw.polygon(points, fill=(255, 92, 153, 115))
-            glow_draw.line(points + [points[0]], fill=SHIP_GOLD, width=16)
-            glow = glow.filter(ImageFilter.GaussianBlur(18))
-            canvas.alpha_composite(glow)
+            glow_draw.polygon(points, fill=_rgba(self.accent, 100))
+            glow_draw.line(points + [points[0]], fill=_rgba((255, 220, 130), 210), width=20)
+            canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(25)))
 
         draw = ImageDraw.Draw(canvas)
-        if style == "broken":
-            fill = (247, 190, 193, 255)
-        elif style == "bandaged":
-            fill = SHIP_HEART_RED
-        elif style == "perfect":
-            fill = (237, 67, 137, 255)
+        if self.style == "broken":
+            fill = (116, 37, 73, 255)
+            outline = (255, 126, 163, 255)
+        elif self.style == "bandaged":
+            fill = (222, 65, 106, 255)
+            outline = (255, 137, 172, 255)
+        elif self.style == "perfect":
+            fill = (231, 57, 132, 255)
+            outline = (255, 224, 147, 255)
         else:
-            fill = SHIP_HEART_PINK
+            fill = (211, 52, 103, 255)
+            outline = (255, 133, 170, 255)
 
         draw.polygon(points, fill=fill)
-        draw.line(
-            points + [points[0]],
-            fill=SHIP_DARK_RED,
-            width=8,
-            joint="curve",
-        )
+        draw.line(points + [points[0]], fill=outline, width=7, joint="curve")
 
-        if style == "broken":
-            crack = [
-                (510, 220),
-                (495, 260),
-                (520, 292),
-                (500, 330),
-                (520, 378),
-                (505, 465),
-            ]
-            draw.line(crack, fill=SHIP_BACKGROUND, width=13, joint="curve")
-            draw.line((505, 315, 470, 345), fill=SHIP_BACKGROUND, width=8)
-            draw.line((512, 350, 548, 382), fill=SHIP_BACKGROUND, width=8)
-        elif style == "bandaged":
-            draw.line(
-                (430, 380, 595, 315),
-                fill=SHIP_BANDAGE,
-                width=30,
-            )
-            draw.line(
-                (430, 380, 595, 315),
-                fill=SHIP_BANDAGE_EDGE,
-                width=4,
-            )
-            draw.line((474, 342, 505, 375), fill=SHIP_BANDAGE_EDGE, width=4)
-            draw.line((525, 328, 558, 361), fill=SHIP_BANDAGE_EDGE, width=4)
-        elif style == "perfect":
+        if self.style == "broken":
+            crack = [(700, 300), (684, 350), (714, 390), (691, 438), (712, 505), (695, 585)]
+            draw.line(crack, fill=SHIP_DARK, width=14, joint="curve")
+            draw.line((698, 408, 657, 440), fill=SHIP_DARK, width=8)
+            draw.line((704, 445, 746, 478), fill=SHIP_DARK, width=8)
+        elif self.style == "bandaged":
+            draw.line((585, 492, 815, 380), fill=(245, 221, 173, 255), width=34)
+            draw.line((585, 492, 815, 380), fill=(196, 153, 91, 255), width=4)
+            for x, y in ((635, 461), (700, 430), (765, 399)):
+                draw.line((x - 15, y + 7, x + 15, y - 7), fill=(196, 153, 91, 255), width=4)
+        elif self.style == "perfect":
             self._draw_sparkles(draw)
+        else:
+            draw.arc(
+                (590, 335, 760, 500),
+                start=205,
+                end=285,
+                fill=(255, 190, 215, 150),
+                width=5,
+            )
 
-        status_color = SHIP_GOLD if style == "perfect" else SHIP_RED
-        _center_text(
+        _draw_pill(
             draw,
-            (self.HEART_CENTER[0], 174),
-            status,
-            _ship_font(36, bold=True),
-            status_color,
-        )
-        percentage_color = (
-            (255, 255, 255, 255)
-            if style == "perfect"
-            else SHIP_DARK_RED
+            (700, 278),
+            self.status.upper(),
+            _ship_font(19, bold=True),
+            self.accent,
         )
         _center_text(
             draw,
-            (self.HEART_CENTER[0], self.HEART_CENTER[1] + 5),
+            (700, 348),
+            "MATCH SCORE",
+            _ship_font(16, bold=True),
+            (255, 255, 255, 190),
+        )
+        _center_text(
+            draw,
+            (700, 437),
             f"{self.percentage}%",
             _ship_font(78, bold=True),
-            percentage_color,
-            stroke_width=1,
-            stroke_fill=SHIP_BACKGROUND,
+            SHIP_WHITE,
+            stroke_width=2,
+            stroke_fill=_rgba(self.accent, 180),
+        )
+
+    def _draw_header_footer(self, canvas: Image.Image) -> None:
+        draw = ImageDraw.Draw(canvas)
+        _center_text(
+            draw,
+            (700, 112),
+            "SHIP COMPATIBILITY",
+            _ship_font(22, bold=True),
+            SHIP_MUTED,
+        )
+        draw.line((575, 142, 825, 142), fill=_rgba(self.accent, 100), width=2)
+        _center_text(
+            draw,
+            (700, 724),
+            "RANDOM SHIP RESULT",
+            _ship_font(15, bold=True),
+            _rgba(self.accent, 190),
         )
 
     def render(self) -> io.BytesIO:
-        canvas = Image.new("RGBA", (self.WIDTH, self.HEIGHT), (0, 0, 0, 0))
+        canvas = Image.new("RGBA", (self.WIDTH, self.HEIGHT), (0, 0, 0, 255))
         self._draw_background(canvas)
-        self._draw_user(
-            canvas,
-            self.user1,
-            self.avatar1,
-            self.LEFT_AVATAR_CENTER,
-        )
-        self._draw_user(
-            canvas,
-            self.user2,
-            self.avatar2,
-            self.RIGHT_AVATAR_CENTER,
-        )
+        self._draw_glass_card(canvas)
+        self._draw_connector(canvas)
+        self._draw_user(canvas, self.user1, self.avatar1, self.LEFT_AVATAR_CENTER, "PLAYER ONE")
+        self._draw_user(canvas, self.user2, self.avatar2, self.RIGHT_AVATAR_CENTER, "PLAYER TWO")
         self._draw_heart(canvas)
+        self._draw_header_footer(canvas)
 
         buffer = io.BytesIO()
         canvas.save(buffer, format="PNG", optimize=True)
         buffer.seek(0)
         return buffer
+
+
+def build_ship_embed(
+    user1: discord.User,
+    user2: discord.User,
+    percentage: int,
+) -> discord.Embed:
+    """Build a classic embed fallback if image delivery fails."""
+    percentage = max(0, min(100, int(percentage)))
+    status, _, emoji, accent = _get_ship_tier(percentage)[2:]
+    embed = discord.Embed(
+        title=f"{_ship_name(user1)} + {_ship_name(user2)}",
+        description=f"{emoji}  **{percentage}%**\n**{status}**",
+        color=discord.Color.from_rgb(*accent),
+    )
+    embed.set_author(name=_ship_name(user1), icon_url=_ship_avatar_url(user1))
+    embed.set_thumbnail(url=_ship_avatar_url(user2))
+    return embed
 
 
 class RPSView(discord.ui.View):
@@ -1400,6 +1508,7 @@ class GeneralCommands(commands.Cog):
 
         await interaction.response.defer()
 
+        percentage = secrets.randbelow(101)
         try:
             timeout = aiohttp.ClientTimeout(total=12)
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -1408,7 +1517,6 @@ class GeneralCommands(commands.Cog):
                     _fetch_ship_avatar(user2, session),
                 )
 
-            percentage = secrets.randbelow(101)
             card = ShipCardRenderer(
                 user1=user1,
                 user2=user2,
@@ -1425,10 +1533,15 @@ class GeneralCommands(commands.Cog):
             )
         except Exception as e:
             print(f"[SHIP] Could not create ship card: {e}")
-            await interaction.followup.send(
-                "I could not create the ship card right now. Please try again.",
-                ephemeral=True,
-            )
+            try:
+                await interaction.followup.send(
+                    embed=build_ship_embed(user1, user2, percentage)
+                )
+            except Exception:
+                await interaction.followup.send(
+                    "I could not create the ship card right now. Please try again.",
+                    ephemeral=True,
+                )
 
     @app_commands.command(name="rules", description="Displays server rules location.")
     async def rules(self, interaction: discord.Interaction):
