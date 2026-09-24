@@ -141,15 +141,15 @@ class ReportView(discord.ui.View):
 
     def _status_text(self) -> str:
         if self.status == "pending":
-            return "Pending Review"
+            return "`Pending request`"
         if self.status == "sorted":
-            return f"Sorted by {self._member_mention(self.sorted_by_id)}"
+            return f"`Sorted` by {self._member_mention(self.sorted_by_id)}"
         if self.status == "further_review":
             return (
-                "Under Further Review with "
+                "`Under further review` with "
                 f"{self._member_mention(self.reviewer_id)}"
             )
-        return f"Under Review by {self._member_mention(self.reviewer_id)}"
+        return f"`Under review` by {self._member_mention(self.reviewer_id)}"
 
     def _member_mention(self, user_id: Optional[int]) -> str:
         if user_id is None:
@@ -613,10 +613,33 @@ class ReportView(discord.ui.View):
 
         try:
             await channel.send(
-                content=ping_content,
-                embeds=[ticket_embed, report_embed],
+                content=(
+                    f"{ping_content}\n"
+                    "Hello, this is a further review of the report, the "
+                    "staff member may ask for any additional proof, "
+                    "clarification, description and more."
+                ),
                 view=FurtherReviewTicketView(self),
                 allowed_mentions=allowed_mentions,
+            )
+        except Exception as control_error:
+            try:
+                await channel.delete(
+                    reason="Could not send the further-review controls"
+                )
+            except discord.HTTPException as cleanup_error:
+                print(
+                    f"[REPORT] Could not clean up empty evidence "
+                    f"channel {channel.id}: {cleanup_error}"
+                )
+            raise RuntimeError(
+                f"Could not send the further-review ticket message: "
+                f"{control_error}"
+            ) from control_error
+
+        try:
+            await channel.send(
+                embeds=[ticket_embed, report_embed],
             )
         except Exception as embed_error:
             print(
@@ -625,28 +648,16 @@ class ReportView(discord.ui.View):
             )
             try:
                 await channel.send(
-                    content=ping_content,
-                    allowed_mentions=allowed_mentions,
-                )
-                await channel.send(
                     view=self._build_ticket_fallback_view(
                         reviewer,
                         report_number,
                     )
                 )
             except Exception as fallback_error:
-                try:
-                    await channel.delete(
-                        reason="Could not send the further-review ticket"
-                    )
-                except discord.HTTPException as cleanup_error:
-                    print(
-                        f"[REPORT] Could not clean up empty evidence "
-                        f"channel {channel.id}: {cleanup_error}"
-                    )
-                raise RuntimeError(
-                    "Could not send the further-review ticket message."
-                ) from fallback_error
+                print(
+                    f"[REPORT] Further-review channel {channel.id} remains "
+                    f"open, but both embed formats failed: {fallback_error}"
+                )
 
         return channel
 
