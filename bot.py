@@ -3,6 +3,7 @@ import datetime
 import os
 import random
 import re
+import secrets
 import threading
 import time
 import traceback
@@ -534,6 +535,7 @@ COMPLIMENTS = (
     "{name}, your smile is a genuinely good thing to see.",
 )
 
+RPS_CHOICE_KEYS = ("rock", "paper", "scissors")
 RPS_CHOICES = {
     "rock": ("🪨", "Rock"),
     "paper": ("✋", "Paper"),
@@ -625,14 +627,13 @@ class RPSView(discord.ui.View):
 
         self.played = True
         self.user_choice = user_choice
-        self.bot_choice = random.choice(tuple(RPS_CHOICES))
+        # SystemRandom-backed selection keeps each choice equally likely.
+        self.bot_choice = secrets.choice(RPS_CHOICE_KEYS)
 
         if self.user_choice == self.bot_choice:
             self.result = "It's a tie!"
             self.result_color = discord.Color.from_rgb(245, 158, 11)
-        elif {
-            (self.user_choice, self.bot_choice),
-        } in {
+        elif (self.user_choice, self.bot_choice) in {
             ("rock", "scissors"),
             ("paper", "rock"),
             ("scissors", "paper"),
@@ -950,18 +951,14 @@ class GeneralCommands(commands.Cog):
     ):
         target = member or interaction.user
         roast_text = random.choice(ROASTS).format(
-            name=target.display_name,
+            name=target.mention,
         )
         embed = discord.Embed(
             title="Roast",
-            description=f"{target.mention}\n{roast_text}",
+            description=roast_text,
             color=discord.Color.from_rgb(239, 68, 68),
         )
-        await interaction.response.send_message(
-            content=target.mention,
-            embed=embed,
-            allowed_mentions=discord.AllowedMentions(users=[target]),
-        )
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(
         name="compliment",
@@ -975,18 +972,14 @@ class GeneralCommands(commands.Cog):
     ):
         target = member or interaction.user
         compliment_text = random.choice(COMPLIMENTS).format(
-            name=target.display_name,
+            name=target.mention,
         )
         embed = discord.Embed(
             title="A Compliment",
-            description=f"{target.mention}\n{compliment_text}",
+            description=compliment_text,
             color=discord.Color.from_rgb(236, 72, 153),
         )
-        await interaction.response.send_message(
-            content=target.mention,
-            embed=embed,
-            allowed_mentions=discord.AllowedMentions(users=[target]),
-        )
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(
         name="rps",
