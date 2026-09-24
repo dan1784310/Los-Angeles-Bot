@@ -8,6 +8,7 @@ import time
 import traceback
 from typing import Optional
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -451,6 +452,214 @@ class ZTPSystem(commands.Cog):
 # GENERAL UTILITY COMMANDS (Components V2 / Everyone)
 # ============================================================
 
+# These small content commands intentionally live in bot.py so the bot does
+# not need a separate module for every lightweight slash command.
+MEME_FALLBACKS = (
+    ("Distracted Boyfriend", "https://i.imgflip.com/1ur9b0.jpg"),
+    ("Drake Hotline Bling", "https://i.imgflip.com/30b1gx.jpg"),
+    ("This Is Fine", "https://i.imgflip.com/wxica.jpg"),
+    ("Change My Mind", "https://i.imgflip.com/24y43o.jpg"),
+    ("Left Exit 12 Off Ramp", "https://i.imgflip.com/3lmzyx.jpg"),
+    ("Two Buttons", "https://i.imgflip.com/1g8my4.jpg"),
+)
+
+JOKES = (
+    "Why do programmers prefer dark mode? Because light attracts bugs.",
+    "I would tell you a UDP joke, but you might not get it.",
+    "There are 10 kinds of people in the world: those who understand binary and those who do not.",
+    "Why did the scarecrow win an award? Because he was outstanding in his field.",
+    "I only know 25 letters of the alphabet. I don't know y.",
+    "What do you call a fish with no eyes? A fsh.",
+    "Why can't you trust an atom? Because they make up everything.",
+    "I used to hate facial hair, but then it grew on me.",
+    "What did the bottle say to the other bottle? You look capa.",
+    "Why did the math book look sad? It had too many problems.",
+    "I told my wife she was drawing her eyebrows too high. She looked surprised.",
+    "What do you call a fake noodle? An impasta.",
+)
+
+FACTS = (
+    "Octopuses have three hearts and blue blood.",
+    "A group of flamingos is called a flamboyance.",
+    "Honey found in ancient Egyptian tombs is still edible after thousands of years.",
+    "Bananas are berries, but strawberries are not true berries.",
+    "The shortest war in recorded history lasted only 38 minutes.",
+    "A day on Venus is longer than a year on Venus.",
+    "There are more possible iterations of a shuffled deck than there are atoms on Earth.",
+    "The first computer programmer was Ada Lovelace.",
+    "A bolt of lightning can be hotter than the surface of the Sun.",
+    "Wombat droppings are cube-shaped.",
+    "The Eiffel Tower grows several centimeters taller in hot weather.",
+    "Oxford University is older than the Aztec Empire.",
+)
+
+QUOTES = (
+    ("The best way out is always through.", "Thomas Edison"),
+    ("It always seems impossible until it is done.", "Nelson Mandela"),
+    ("The future belongs to those who believe in the beauty of their dreams.", "Eleanor Roosevelt"),
+    ("Success is not final, failure is not fatal: it is the courage to continue that counts.", "Winston Churchill"),
+    ("The only way to do great work is to love what you do.", "Steve Jobs"),
+    ("Simplicity is the ultimate sophistication.", "Leonardo da Vinci"),
+    ("What we think, we become.", "Buddha"),
+    ("The journey of a thousand miles begins with one step.", "Lao Tzu"),
+)
+
+ROASTS = (
+    "{name}, your comeback has entered its loading screen.",
+    "{name}, you are proof that Wi-Fi and common sense are both optional.",
+    "{name}, if effort had a resume, you would be asking for an update.",
+    "{name}, your poker face would be impressive if your poker game was not.",
+    "{name}, you bring a unique energy... mostly empty.",
+    "{name}, even the skipped lines in a script have more plot than your plans.",
+    "{name}, your ideas are like your browser tabs: too many and none finished.",
+    "{name}, you are the human version of 'loading... forever.'",
+    "{name}, you have two speeds: confused and buffering.",
+    "{name}, your secret weapon is somehow being unavailable when help is needed.",
+    "{name}, you make \"quick question\" sound like a multi-hour project.",
+    "{name}, confidence is nice, but evidence would make it a whole package.",
+)
+
+COMPLIMENTS = (
+    "{name}, you have excellent taste and even better vibes.",
+    "{name}, you make every conversation feel easier.",
+    "{name}, your kindness is something people genuinely notice.",
+    "{name}, you bring a calm, confident energy to the room.",
+    "{name}, you are thoughtful, capable, and a joy to be around.",
+    "{name}, your ideas are always worth hearing.",
+    "{name}, you have a great balance of warmth and wisdom.",
+    "{name}, you make hard days feel a little lighter.",
+    "{name}, your attention to detail is genuinely impressive.",
+    "{name}, you have a natural gift for making people feel included.",
+    "{name}, you are doing better than you give yourself credit for.",
+    "{name}, your smile is a genuinely good thing to see.",
+)
+
+RPS_CHOICES = {
+    "rock": ("🪨", "Rock"),
+    "paper": ("✋", "Paper"),
+    "scissors": ("✌️", "Scissors"),
+}
+
+
+class RPSView(discord.ui.View):
+    """A small single-player rock-paper-scissors game against the bot."""
+
+    def __init__(self, player_id: int, player_name: str):
+        super().__init__(timeout=300)
+        self.player_id = player_id
+        self.player_name = player_name[:80]
+        self.played = False
+        self.user_choice: Optional[str] = None
+        self.bot_choice: Optional[str] = None
+        self.result: Optional[str] = None
+        self.result_color = discord.Color.from_rgb(88, 101, 242)
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="Rock, Paper, Scissors",
+            color=self.result_color,
+        )
+        if not self.played:
+            embed.description = (
+                "Choose **Rock**, **Paper**, or **Scissors** to play a round."
+            )
+            embed.set_footer(text=f"Only {self.player_name} can play this round.")
+            return embed
+
+        user_emoji, user_label = RPS_CHOICES[self.user_choice]
+        bot_emoji, bot_label = RPS_CHOICES[self.bot_choice]
+        embed.description = (
+            f"You chose {user_emoji} **{user_label}**\n"
+            f"I chose {bot_emoji} **{bot_label}**\n\n"
+            f"**{self.result}**"
+        )
+        embed.set_footer(text="This round is complete.")
+        return embed
+
+    async def _play(
+        self,
+        interaction: discord.Interaction,
+        user_choice: str,
+    ) -> None:
+        if interaction.user.id != self.player_id:
+            await interaction.response.send_message(
+                "This rock-paper-scissors game belongs to someone else.",
+                ephemeral=True,
+            )
+            return
+
+        if self.played:
+            await interaction.response.send_message(
+                "This round has already been played.",
+                ephemeral=True,
+            )
+            return
+
+        self.played = True
+        self.user_choice = user_choice
+        self.bot_choice = random.choice(tuple(RPS_CHOICES))
+
+        if self.user_choice == self.bot_choice:
+            self.result = "It's a tie!"
+            self.result_color = discord.Color.from_rgb(245, 158, 11)
+        elif {
+            (self.user_choice, self.bot_choice),
+        } in {
+            ("rock", "scissors"),
+            ("paper", "rock"),
+            ("scissors", "paper"),
+        }:
+            self.result = "You win!"
+            self.result_color = discord.Color.from_rgb(34, 197, 94)
+        else:
+            self.result = "I win!"
+            self.result_color = discord.Color.from_rgb(239, 68, 68)
+
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.response.edit_message(
+            embed=self.build_embed(),
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="🪨 Rock",
+        style=discord.ButtonStyle.primary,
+        custom_id="rps_rock",
+    )
+    async def rock(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self._play(interaction, "rock")
+
+    @discord.ui.button(
+        label="✋ Paper",
+        style=discord.ButtonStyle.secondary,
+        custom_id="rps_paper",
+    )
+    async def paper(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self._play(interaction, "paper")
+
+    @discord.ui.button(
+        label="✌️ Scissors",
+        style=discord.ButtonStyle.secondary,
+        custom_id="rps_scissors",
+    )
+    async def scissors(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self._play(interaction, "scissors")
+
+
 class GeneralCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -626,6 +835,152 @@ class GeneralCommands(commands.Cog):
         view.add_item(container)
 
         await interaction.response.send_message(view=view)
+
+    @app_commands.command(
+        name="meme",
+        description="Sends a random meme.",
+    )
+    async def meme(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        meme_name, meme_url = random.choice(MEME_FALLBACKS)
+        try:
+            timeout = aiohttp.ClientTimeout(total=8)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    "https://api.imgflip.com/get_memes",
+                    headers={"User-Agent": "Arizona-State-Management-Bot/1.0"},
+                ) as response:
+                    response.raise_for_status()
+                    payload = await response.json(content_type=None)
+
+            memes = []
+            if isinstance(payload, dict):
+                data = payload.get("data", {})
+                if isinstance(data, dict):
+                    raw_memes = data.get("memes", [])
+                    if isinstance(raw_memes, list):
+                        memes = raw_memes
+
+            candidates = []
+            for item in memes:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name") or "Random Meme"
+                url = item.get("url")
+                if not url and item.get("id"):
+                    url = f"https://i.imgflip.com/{item['id']}.jpg"
+                if isinstance(url, str) and url.startswith(("http://", "https://")):
+                    candidates.append((str(name)[:256], url))
+
+            if candidates:
+                meme_name, meme_url = random.choice(candidates)
+        except Exception as e:
+            # A local meme keeps the command useful during a temporary API
+            # outage instead of making the slash command fail.
+            print(f"[MEME] Imgflip request failed; using fallback meme: {e}")
+
+        embed = discord.Embed(
+            title=f"Random Meme: {meme_name}"[:256],
+            color=discord.Color.from_rgb(88, 101, 242),
+        )
+        embed.set_image(url=meme_url)
+        embed.set_footer(text="Random meme")
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
+        name="joke",
+        description="Sends a random joke.",
+    )
+    async def joke(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="Random Joke",
+            description=random.choice(JOKES),
+            color=discord.Color.from_rgb(245, 158, 11),
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="fact",
+        description="Sends an interesting fact.",
+    )
+    async def fact(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="Did You Know?",
+            description=random.choice(FACTS),
+            color=discord.Color.from_rgb(14, 165, 233),
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="quote",
+        description="Sends a random quote.",
+    )
+    async def quote(self, interaction: discord.Interaction):
+        quote_text, author = random.choice(QUOTES)
+        embed = discord.Embed(
+            title="Random Quote",
+            description=f"> {quote_text}\n>\n> — **{author}**",
+            color=discord.Color.from_rgb(168, 85, 247),
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="roast",
+        description="Generates a playful roast for a member.",
+    )
+    @app_commands.describe(member="The member to roast (optional).")
+    async def roast(
+        self,
+        interaction: discord.Interaction,
+        member: Optional[discord.Member] = None,
+    ):
+        target = member or interaction.user
+        roast_text = random.choice(ROASTS).format(
+            name=target.display_name,
+        )
+        embed = discord.Embed(
+            title="Playful Roast",
+            description=roast_text,
+            color=discord.Color.from_rgb(239, 68, 68),
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="compliment",
+        description="Generates a compliment for a member.",
+    )
+    @app_commands.describe(member="The member to compliment (optional).")
+    async def compliment(
+        self,
+        interaction: discord.Interaction,
+        member: Optional[discord.Member] = None,
+    ):
+        target = member or interaction.user
+        compliment_text = random.choice(COMPLIMENTS).format(
+            name=target.display_name,
+        )
+        embed = discord.Embed(
+            title="A Compliment",
+            description=compliment_text,
+            color=discord.Color.from_rgb(236, 72, 153),
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="rps",
+        description="Play rock-paper-scissors against the bot.",
+    )
+    async def rps(self, interaction: discord.Interaction):
+        view = RPSView(
+            player_id=interaction.user.id,
+            player_name=interaction.user.display_name,
+        )
+        await interaction.response.send_message(
+            embed=view.build_embed(),
+            view=view,
+            ephemeral=True,
+        )
 
     @app_commands.command(name="rules", description="Displays server rules location.")
     async def rules(self, interaction: discord.Interaction):
