@@ -505,18 +505,18 @@ QUOTES = (
 )
 
 ROASTS = (
-    "{name}, your comeback has entered its loading screen.",
-    "{name}, you are proof that Wi-Fi and common sense are both optional.",
-    "{name}, if effort had a resume, you would be asking for an update.",
-    "{name}, your poker face would be impressive if your poker game was not.",
-    "{name}, you bring a unique energy... mostly empty.",
-    "{name}, even the skipped lines in a script have more plot than your plans.",
-    "{name}, your ideas are like your browser tabs: too many and none finished.",
-    "{name}, you are the human version of 'loading... forever.'",
-    "{name}, you have two speeds: confused and buffering.",
-    "{name}, your secret weapon is somehow being unavailable when help is needed.",
-    "{name}, you make \"quick question\" sound like a multi-hour project.",
-    "{name}, confidence is nice, but evidence would make it a whole package.",
+    "{name}, your comeback is still in beta and the beta is closed.",
+    "{name}, you are proof that confidence and competence are separate subscriptions.",
+    "{name}, your ideas arrived after the meeting and left before the meeting.",
+    "{name}, if effort had a hit rate, you would be a rounding error.",
+    "{name}, your personality is what happens when a Wi-Fi signal searches for a personality.",
+    "{name}, you are a masterclass in being confidently wrong.",
+    "{name}, your thought process has a paywall and a 404 error.",
+    "{name}, you bring a resume full of participation trophies and a cover letter written by someone else.",
+    "{name}, you have achieved a rare feat: being the loudest silent person in every conversation.",
+    "{name}, your brain has a loading screen with no progress bar.",
+    "{name}, you are the human version of a terms-of-service agreement nobody reads.",
+    "{name}, even your mistakes have a better excuse than your plans have a plan.",
 )
 
 COMPLIMENTS = (
@@ -553,6 +553,34 @@ class RPSView(discord.ui.View):
         self.bot_choice: Optional[str] = None
         self.result: Optional[str] = None
         self.result_color = discord.Color.from_rgb(88, 101, 242)
+        self._show_choice_buttons()
+
+    def _show_choice_buttons(self) -> None:
+        self.clear_items()
+        for choice, (emoji, label) in RPS_CHOICES.items():
+            button = discord.ui.Button(
+                label=f"{emoji} {label}",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"rps_{choice}",
+            )
+            button.callback = self._choice_callback(choice)
+            self.add_item(button)
+
+    def _show_play_again(self) -> None:
+        self.clear_items()
+        button = discord.ui.Button(
+            label="Play Again",
+            style=discord.ButtonStyle.success,
+            custom_id="rps_play_again",
+        )
+        button.callback = self._handle_play_again
+        self.add_item(button)
+
+    def _choice_callback(self, choice: str):
+        async def callback(interaction: discord.Interaction) -> None:
+            await self._play(interaction, choice)
+
+        return callback
 
     def build_embed(self) -> discord.Embed:
         embed = discord.Embed(
@@ -612,52 +640,37 @@ class RPSView(discord.ui.View):
             self.result = "You win!"
             self.result_color = discord.Color.from_rgb(34, 197, 94)
         else:
-            self.result = "I win!"
+            self.result = "You lose!"
             self.result_color = discord.Color.from_rgb(239, 68, 68)
 
-        for child in self.children:
-            child.disabled = True
+        self._show_play_again()
 
         await interaction.response.edit_message(
             embed=self.build_embed(),
             view=self,
         )
 
-    @discord.ui.button(
-        label="🪨 Rock",
-        style=discord.ButtonStyle.primary,
-        custom_id="rps_rock",
-    )
-    async def rock(
+    async def _handle_play_again(
         self,
         interaction: discord.Interaction,
-        button: discord.ui.Button,
     ) -> None:
-        await self._play(interaction, "rock")
+        if interaction.user.id != self.player_id:
+            await interaction.response.send_message(
+                "This rock-paper-scissors game belongs to someone else.",
+                ephemeral=True,
+            )
+            return
 
-    @discord.ui.button(
-        label="✋ Paper",
-        style=discord.ButtonStyle.secondary,
-        custom_id="rps_paper",
-    )
-    async def paper(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-        await self._play(interaction, "paper")
-
-    @discord.ui.button(
-        label="✌️ Scissors",
-        style=discord.ButtonStyle.secondary,
-        custom_id="rps_scissors",
-    )
-    async def scissors(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button,
-    ) -> None:
-        await self._play(interaction, "scissors")
+        self.played = False
+        self.user_choice = None
+        self.bot_choice = None
+        self.result = None
+        self.result_color = discord.Color.from_rgb(88, 101, 242)
+        self._show_choice_buttons()
+        await interaction.response.edit_message(
+            embed=self.build_embed(),
+            view=self,
+        )
 
 
 class GeneralCommands(commands.Cog):
@@ -927,7 +940,7 @@ class GeneralCommands(commands.Cog):
 
     @app_commands.command(
         name="roast",
-        description="Generates a playful roast for a member.",
+        description="Generates a savage roast for a member.",
     )
     @app_commands.describe(member="The member to roast (optional).")
     async def roast(
@@ -940,11 +953,15 @@ class GeneralCommands(commands.Cog):
             name=target.display_name,
         )
         embed = discord.Embed(
-            title="Playful Roast",
-            description=roast_text,
+            title="Roast",
+            description=f"{target.mention}\n{roast_text}",
             color=discord.Color.from_rgb(239, 68, 68),
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(
+            content=target.mention,
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(users=[target]),
+        )
 
     @app_commands.command(
         name="compliment",
@@ -962,10 +979,14 @@ class GeneralCommands(commands.Cog):
         )
         embed = discord.Embed(
             title="A Compliment",
-            description=compliment_text,
+            description=f"{target.mention}\n{compliment_text}",
             color=discord.Color.from_rgb(236, 72, 153),
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(
+            content=target.mention,
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(users=[target]),
+        )
 
     @app_commands.command(
         name="rps",
