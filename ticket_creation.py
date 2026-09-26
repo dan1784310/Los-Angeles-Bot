@@ -607,14 +607,11 @@ async def post_ticket_transcript(channel: discord.TextChannel, closed_by: discor
         print(f"Transcript log channel {TRANSCRIPT_LOG_CHANNEL_ID} not found.")
         return
 
-    from ticket_transcripts import create_transcript
+    from ticket_transcripts import create_transcript, send_transcript
 
     try:
-        transcript_file = await create_transcript(channel, closed_by=closed_by)
-        content = f"📄 Transcript generated for {channel.mention}"
-        if closed_by:
-            content += f" — closed by {closed_by.mention}"
-        await log_channel.send(content, file=transcript_file)
+        transcript = await create_transcript(channel, closed_by=closed_by)
+        await send_transcript(log_channel, transcript)
     except Exception as e:
         print(f"Error posting transcript for channel {channel.id}: {e}")
 
@@ -636,17 +633,16 @@ async def generate_transcript(interaction: discord.Interaction, channel_id: int)
         return
     
     # Import transcript generator
-    from ticket_transcripts import create_transcript
-    
+    from ticket_transcripts import create_transcript, send_transcript
+
     try:
-        transcript_file = await create_transcript(channel)
-        
-        await interaction.followup.send(
-            f"📄 Transcript generated for {channel.mention}",
-            file=transcript_file,
-            ephemeral=True
+        transcript = await create_transcript(channel)
+        await send_transcript(
+            interaction.followup,
+            transcript,
+            ephemeral=True,
         )
-        
+
     except Exception as e:
         await interaction.followup.send(
             f"❌ Error generating transcript: {str(e)}",
