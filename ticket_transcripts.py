@@ -1,8 +1,9 @@
 """
 Ticket transcript generation and Components V2 delivery helpers.
 
-Transcript metadata is rendered in a Discord component card. The attached
-transcript file contains only the channel's message history.
+Transcript metadata is rendered in a Discord component card. Cookie API
+hosts the transcript when available; the local file fallback contains only
+the channel's message history.
 """
 
 import html
@@ -16,7 +17,7 @@ import discord
 
 @dataclass
 class TranscriptBundle:
-    """A message-only transcript file plus the metadata shown in its card."""
+    """Hosted transcript metadata plus an optional local-file fallback."""
 
     file_bytes: bytes
     filename: str
@@ -26,13 +27,18 @@ class TranscriptBundle:
     channel_mention: str
     channel_id: int
     generated_at: datetime
-    message_count: int
+    message_count: Optional[int]
     creator_id: Optional[int] = None
     closed_by: Optional[discord.abc.User] = None
+    url: Optional[str] = None
 
     @property
     def ticket_name(self) -> str:
         return f"ticket-{self.ticket_number:04d}"
+
+    @property
+    def transcript_label(self) -> str:
+        return f"Ticket-Transcript-{self.ticket_number:04d}"
 
     def create_file(self) -> discord.File:
         """Create a fresh attachment for delivery or fallback sending."""
@@ -88,38 +94,60 @@ async def create_transcript(
     channel: discord.TextChannel,
     closed_by: Optional[discord.abc.User] = None,
 ) -> TranscriptBundle:
-    """Create a message-only transcript and the metadata needed for its card."""
-    messages = await _fetch_messages(channel)
-
+    """Create a hosted Cookie API transcript, with a local-file fallback."""
     ticket = _get_ticket_record(channel)
     ticket_number = int(ticket.get("ticket_number", 0)) if ticket else 0
-    ticket_name = f"ticket-{ticket_number:04d}"
     generated_at = datetime.now(timezone.utc)
+    common_fields = {
+        "ticket_number": ticket_number,
+        "guild_name": getattr(channel.guild, "name", "Unknown server"),
+        "channel_name": channel.name,
+        "channel_mention": channel.mention,
+        "channel_id": channel.id,
+        "generated_at": generated_at,
+        "creator_id": int(ticket["user_id"]) if ticket and ticket.get("user_id") else None,
+        "closed_by": closed_by,
+    }
+
+    try:
+        from cookie_api import create_transcript_url
+
+        url = await create_transcript_url(
+            channel_id=channel.id,
+            name=f"Ticket-Transcript-{ticket_number:04d}",
+        )
+        return TranscriptBundle(
+            file_bytes=b"",
+            filename="",
+            message_count=None,
+            url=url,
+            **common_fields,
+        )
+    except Exception as e:
+        print(
+            f"[TRANSCRIPT] Cookie API unavailable; using local transcript "
+            f"fallback for channel {channel.id}: {e}"
+        )
+
+    messages = await _fetch_messages(channel)
     file_lines = _format_message_lines(messages)
     file_bytes = "\n".join(file_lines).encode("utf-8")
     timestamp = generated_at.strftime("%Y%m%d_%H%M%S")
-    filename = f"transcript_{ticket_name}_messages_{timestamp}.txt"
-
+    ticket_name = f"ticket-{ticket_number:04d}"
     return TranscriptBundle(
         file_bytes=file_bytes,
-        filename=filename,
-        ticket_number=ticket_number,
-        guild_name=getattr(channel.guild, "name", "Unknown server"),
-        channel_name=channel.name,
-        channel_mention=channel.mention,
-        channel_id=channel.id,
-        generated_at=generated_at,
+        filename=f"transcript_{ticket_name}_messages_{timestamp}.txt",
         message_count=len(messages),
-        creator_id=int(ticket["user_id"]) if ticket and ticket.get("user_id") else None,
-        closed_by=closed_by,
+        url=None,
+        **common_fields,
     )
 
 
 def build_transcript_card(
     bundle: TranscriptBundle,
-) -> tuple[discord.ui.LayoutView, discord.File]:
-    """Build a Components V2 card with metadata above the file component."""
-    attachment = bundle.create_file()
+) -> tuple[discord.ui.LayoutView, Optional[discord.File]]:
+    """Build a Components V2 card with a hosted link or local-file fallback."""
+    attachment = None if bundle.url else bundle.create_file()
     generated_timestamp = int(bundle.generated_at.timestamp())
 
     info_lines = [
@@ -127,10 +155,12 @@ def build_transcript_card(
     ]
     if bundle.creator_id is not None:
         info_lines.append(f"**Created By:** <@{bundle.creator_id}>")
-    info_lines.extend([
-        f"**Generated:** <t:{generated_timestamp}:F>",
-        f"**Messages:** {bundle.message_count}",
-    ])
+    info_lines.append(f"**Generated:** <t:{generated_timestamp}:F>")
+    info_lines.append(
+        f"**Messages:** {bundle.message_count}"
+        if bundle.message_count is not None
+        else "**Messages:** Included in hosted transcript"
+    )
     if bundle.closed_by is not None:
         info_lines.append(f"**Closed By:** {bundle.closed_by.mention}")
 
@@ -147,15 +177,33 @@ def build_transcript_card(
     container.add_item(discord.ui.Separator())
     container.add_item(discord.ui.TextDisplay("\n".join(info_lines)))
     container.add_item(discord.ui.Separator())
-    container.add_item(
-        discord.ui.TextDisplay(
-            "**Message File**\n"
-            "The attachment below contains only the ticket messages."
-        )
-    )
-    container.add_item(discord.ui.File(attachment))
-    view.add_item(container)
 
+    if bundle.url:
+        container.add_item(
+            discord.ui.TextDisplay(
+                "**Transcript Link**\n"
+                "Use the button below to open the hosted transcript."
+            )
+        )
+        button_row = discord.ui.ActionRow()
+        button_row.add_item(
+            discord.ui.Button(
+                label=bundle.transcript_label,
+                url=bundle.url,
+                style=discord.ButtonStyle.link,
+            )
+        )
+        container.add_item(button_row)
+    else:
+        container.add_item(
+            discord.ui.TextDisplay(
+                "**Message File**\n"
+                "The attachment below contains only the ticket messages."
+            )
+        )
+        container.add_item(discord.ui.File(attachment))
+
+    view.add_item(container)
     return view, attachment
 
 
@@ -167,7 +215,15 @@ def build_transcript_embed(bundle: TranscriptBundle) -> discord.Embed:
         color=discord.Color.from_rgb(37, 37, 41),
     )
     embed.add_field(name="Server", value=bundle.guild_name, inline=True)
-    embed.add_field(name="Messages", value=str(bundle.message_count), inline=True)
+    embed.add_field(
+        name="Messages",
+        value=(
+            str(bundle.message_count)
+            if bundle.message_count is not None
+            else "Included in hosted transcript"
+        ),
+        inline=True,
+    )
     if bundle.creator_id is not None:
         embed.add_field(name="Created By", value=f"<@{bundle.creator_id}>")
     if bundle.closed_by is not None:
@@ -176,7 +232,13 @@ def build_transcript_embed(bundle: TranscriptBundle) -> discord.Embed:
         name="Generated",
         value=f"<t:{generated_timestamp}:F>",
     )
-    embed.set_footer(text="The attached file contains only the ticket messages.")
+    if bundle.url:
+        embed.add_field(
+            name="Transcript",
+            value=f"[{bundle.transcript_label}]({bundle.url})",
+        )
+    else:
+        embed.set_footer(text="The attached file contains only the ticket messages.")
     return embed
 
 
@@ -187,7 +249,9 @@ async def send_transcript(
 ):
     """Send a transcript card, falling back to a classic embed if needed."""
     view, attachment = build_transcript_card(bundle)
-    kwargs = {"view": view, "file": attachment}
+    kwargs = {"view": view}
+    if attachment is not None:
+        kwargs["file"] = attachment
     if ephemeral:
         kwargs["ephemeral"] = True
 
@@ -199,11 +263,10 @@ async def send_transcript(
             f"{component_error}"
         )
 
-    fallback_attachment = bundle.create_file()
-    kwargs = {
-        "embed": build_transcript_embed(bundle),
-        "file": fallback_attachment,
-    }
+    fallback_attachment = None if bundle.url else bundle.create_file()
+    kwargs = {"embed": build_transcript_embed(bundle)}
+    if fallback_attachment is not None:
+        kwargs["file"] = fallback_attachment
     if ephemeral:
         kwargs["ephemeral"] = True
     return await destination.send(**kwargs)
