@@ -123,26 +123,24 @@ def build_transcript_card(
     generated_timestamp = int(bundle.generated_at.timestamp())
 
     info_lines = [
-        f"**Ticket:** `{bundle.ticket_name}`",
-        f"**Channel:** {bundle.channel_mention}",
-        f"**Channel Name:** {bundle.channel_name}",
-        f"**Channel ID:** `{bundle.channel_id}`",
         f"**Server:** {bundle.guild_name}",
-        f"**Generated:** <t:{generated_timestamp}:F>",
-        f"**Messages:** {bundle.message_count}",
     ]
     if bundle.creator_id is not None:
-        info_lines.insert(5, f"**Created By:** <@{bundle.creator_id}>")
+        info_lines.append(f"**Created By:** <@{bundle.creator_id}>")
+    info_lines.extend([
+        f"**Generated:** <t:{generated_timestamp}:F>",
+        f"**Messages:** {bundle.message_count}",
+    ])
     if bundle.closed_by is not None:
         info_lines.append(f"**Closed By:** {bundle.closed_by.mention}")
 
     view = discord.ui.LayoutView(timeout=None)
     container = discord.ui.Container(
-        accent_colour=discord.Color.from_rgb(88, 101, 242)
+        accent_colour=discord.Color.from_rgb(37, 37, 41)
     )
     container.add_item(
         discord.ui.TextDisplay(
-            f"# 📄 Ticket Transcript\n"
+            f"# Ticket Transcript\n"
             f"Complete message history for `{bundle.ticket_name}`."
         )
     )
@@ -166,12 +164,7 @@ def build_transcript_embed(bundle: TranscriptBundle) -> discord.Embed:
     generated_timestamp = int(bundle.generated_at.timestamp())
     embed = discord.Embed(
         title=f"Ticket Transcript • {bundle.ticket_name}",
-        color=discord.Color.from_rgb(88, 101, 242),
-    )
-    embed.add_field(
-        name="Channel",
-        value=f"{bundle.channel_mention}\n`{bundle.channel_id}`",
-        inline=True,
+        color=discord.Color.from_rgb(37, 37, 41),
     )
     embed.add_field(name="Server", value=bundle.guild_name, inline=True)
     embed.add_field(name="Messages", value=str(bundle.message_count), inline=True)

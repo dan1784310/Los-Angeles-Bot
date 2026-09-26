@@ -462,7 +462,7 @@ class TranscriptButton(ui.Button):
     """Generate transcript button. See CloseTicketButton for why callback() is a no-op."""
     
     def __init__(self, callback: Callable):
-        super().__init__(label='📄 Transcript', style=discord.ButtonStyle.secondary, custom_id='transcript')
+        super().__init__(label='Transcript', style=discord.ButtonStyle.secondary, custom_id='transcript')
         self.callback_func = callback
     
     async def callback(self, interaction: discord.Interaction):
