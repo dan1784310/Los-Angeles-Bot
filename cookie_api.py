@@ -8,6 +8,7 @@ Secrets are never logged.
 """
 
 import asyncio
+import hashlib
 import json
 import os
 from typing import Any, Optional
@@ -67,12 +68,39 @@ def _response_message(payload: Any, fallback: str) -> str:
 
 COOKIE_ENDPOINT_NOT_FOUND_CODE = 101307
 
-ENDPOINT_NOT_FOUND_HINT = (
-    'Cookie API replied "Endpoint not found" (code 101307). The Roblox Group '
-    "Manager routes are live, but this API key is not allowed to use them. "
-    "Open the Cookie API dashboard, edit the API key used by this bot, and "
-    "enable the Roblox Group Manager endpoints in its endpoint permissions."
-)
+
+def _key_fingerprint() -> str:
+    """A short, non-reversible hint so a mismatched key can be spotted.
+
+    The key itself is never included. Run the same helper on the key you
+    believe is deployed and compare the fingerprints.
+    """
+    api_key = (os.getenv("COOKIE_API_KEY") or "").strip()
+    if not api_key:
+        return "COOKIE_API_KEY is not set"
+    digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
+    return (
+        f"key fingerprint {digest}, {len(api_key)} chars, "
+        f"ending ...{api_key[-4:]}"
+    )
+
+
+def _workspace_fingerprint() -> str:
+    workspace = (os.getenv("COOKIE_WORKSPACE_ID") or "").strip()
+    return workspace or "COOKIE_WORKSPACE_ID is not set"
+
+
+def _endpoint_not_found_hint() -> str:
+    return (
+        'Cookie API replied "Endpoint not found" (code 101307) using '
+        f"{_key_fingerprint()} on workspace {_workspace_fingerprint()}. "
+        "The Roblox Group Manager routes exist, so this normally means the "
+        "key the bot is running with is NOT the key that has those "
+        "endpoints enabled, or that key still has them switched off. "
+        "Compare the fingerprint above against the key you tested "
+        "locally, then update COOKIE_API_KEY in your host's environment "
+        "and restart."
+    )
 
 
 def _is_endpoint_not_found(payload: Any) -> bool:
@@ -235,7 +263,7 @@ async def _group_request(
 
                 if response.status >= 400:
                     if _is_endpoint_not_found(payload):
-                        raise CookieAPIError(ENDPOINT_NOT_FOUND_HINT)
+                        raise CookieAPIError(_endpoint_not_found_hint())
                     detail = _response_message(
                         payload,
                         f"HTTP {response.status} from Cookie API.",
