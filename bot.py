@@ -59,6 +59,8 @@ COMMAND_ROLE_PERMISSIONS = {
     "moderation": 1527053931304321130,
 }
 
+GROUP_REQUESTS_ROLE_ID = 1551264273232302130
+
 
 # ============================================================
 # MARKETPLACE CONFIGURATION
@@ -128,6 +130,19 @@ def has_role_or_higher_prefix(command_name: str):
         return ctx.author.top_role.position >= target_role.position
 
     return commands.check(predicate)
+
+
+def has_exact_role_id(role_id: int):
+    """Allow only members who have the exact configured role."""
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if not interaction.guild or not isinstance(
+            interaction.user,
+            discord.Member,
+        ):
+            return False
+        return any(role.id == role_id for role in interaction.user.roles)
+
+    return app_commands.check(predicate)
 
 
 # ============================================================
@@ -1163,6 +1178,220 @@ class RPSView(discord.ui.View):
         )
 
 
+class GroupRequestsView(discord.ui.LayoutView):
+    """Ephemeral paginated controls for Cookie API group join requests."""
+
+    PAGE_SIZE = 5
+
+    def __init__(self, requests: list[dict], owner_id: int):
+        super().__init__(timeout=None)
+        self.requests = list(requests)
+        self.owner_id = owner_id
+        self.page = 0
+        self.processing: set[int] = set()
+        self._render()
+
+    @staticmethod
+    def _requested_text(value: Optional[str]) -> str:
+        if not value:
+            return "Requested time unavailable"
+        try:
+            parsed = datetime.datetime.fromisoformat(
+                value.replace("Z", "+00:00")
+            )
+            return f"Requested <t:{int(parsed.timestamp())}:R>"
+        except (TypeError, ValueError):
+            return f"Requested {value}"
+
+    def _render(self) -> None:
+        self.clear_items()
+        container = discord.ui.Container(
+            accent_colour=discord.Color.from_rgb(37, 37, 41)
+        )
+
+        if not self.requests:
+            container.add_item(
+                discord.ui.TextDisplay("There are no pending group requests.")
+            )
+            self.add_item(container)
+            return
+
+        max_page = max(0, (len(self.requests) - 1) // self.PAGE_SIZE)
+        self.page = max(0, min(self.page, max_page))
+        start = self.page * self.PAGE_SIZE
+        page_requests = self.requests[start:start + self.PAGE_SIZE]
+        page_count = max_page + 1
+
+        container.add_item(
+            discord.ui.TextDisplay(
+                f"# Group Join Requests\n"
+                f"Pending requests: **{len(self.requests)}**\n"
+                "Use the buttons below to accept or deny each request."
+            )
+        )
+        container.add_item(discord.ui.Separator())
+
+        for request in page_requests:
+            user_id = int(request["user_id"])
+            username = str(request.get("username") or f"User-{user_id}")
+            display_name = str(request.get("display_name") or username)
+            verified = " • Verified badge" if request.get("has_verified_badge") else ""
+            container.add_item(
+                discord.ui.TextDisplay(
+                    f"**{display_name}** (`{username}`)\n"
+                    f"Roblox ID: `{user_id}`{verified}\n"
+                    f"{self._requested_text(request.get('created_at'))}"
+                )
+            )
+
+            row = discord.ui.ActionRow()
+            accept_button = discord.ui.Button(
+                label="Accept",
+                style=discord.ButtonStyle.success,
+                custom_id=f"group_request_accept_{user_id}",
+            )
+            accept_button.callback = self._action_callback(user_id, True)
+            deny_button = discord.ui.Button(
+                label="Deny",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"group_request_deny_{user_id}",
+            )
+            deny_button.callback = self._action_callback(user_id, False)
+            row.add_item(accept_button)
+            row.add_item(deny_button)
+            container.add_item(row)
+
+        if page_count > 1:
+            navigation = discord.ui.ActionRow()
+            previous_button = discord.ui.Button(
+                label="Previous",
+                style=discord.ButtonStyle.secondary,
+                custom_id="group_requests_previous",
+                disabled=self.page == 0,
+            )
+            previous_button.callback = self._previous_page
+            next_button = discord.ui.Button(
+                label="Next",
+                style=discord.ButtonStyle.secondary,
+                custom_id="group_requests_next",
+                disabled=self.page >= page_count - 1,
+            )
+            next_button.callback = self._next_page
+            navigation.add_item(previous_button)
+            navigation.add_item(next_button)
+            container.add_item(navigation)
+
+        container.add_item(
+            discord.ui.TextDisplay(f"Page {self.page + 1}/{page_count}")
+        )
+        self.add_item(container)
+
+    def _action_callback(self, user_id: int, accept: bool):
+        async def callback(interaction: discord.Interaction) -> None:
+            await self._handle_action(interaction, user_id, accept)
+
+        return callback
+
+    async def _previous_page(self, interaction: discord.Interaction) -> None:
+        await self._change_page(interaction, -1)
+
+    async def _next_page(self, interaction: discord.Interaction) -> None:
+        await self._change_page(interaction, 1)
+
+    async def _change_page(
+        self,
+        interaction: discord.Interaction,
+        change: int,
+    ) -> None:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the person who opened this request list can use it.",
+                ephemeral=True,
+            )
+            return
+        self.page += change
+        self._render()
+        await interaction.response.edit_message(view=self)
+
+    async def _handle_action(
+        self,
+        interaction: discord.Interaction,
+        user_id: int,
+        accept: bool,
+    ) -> None:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the person who opened this request list can use it.",
+                ephemeral=True,
+            )
+            return
+
+        if user_id in self.processing:
+            await interaction.response.send_message(
+                "That request is already being processed.",
+                ephemeral=True,
+            )
+            return
+
+        request = next(
+            (item for item in self.requests if int(item["user_id"]) == user_id),
+            None,
+        )
+        if request is None:
+            await interaction.response.send_message(
+                "That request has already been handled.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        self.processing.add(user_id)
+        try:
+            from cookie_api import (
+                CookieAPIError,
+                accept_group_join_request,
+                deny_group_join_request,
+            )
+
+            if accept:
+                await accept_group_join_request(user_id)
+                action_text = "accepted"
+            else:
+                await deny_group_join_request(user_id)
+                action_text = "denied"
+
+            self.requests = [
+                item
+                for item in self.requests
+                if int(item["user_id"]) != user_id
+            ]
+            self._render()
+            if interaction.message is not None:
+                try:
+                    await interaction.message.edit(view=self)
+                except discord.HTTPException as e:
+                    print(f"[GROUP REQUESTS] Could not refresh request card: {e}")
+
+            username = request.get("username") or f"User-{user_id}"
+            await interaction.followup.send(
+                f"`{username}` was {action_text}.",
+                ephemeral=True,
+            )
+        except CookieAPIError as e:
+            await interaction.followup.send(
+                f"Could not update that group request: {e}",
+                ephemeral=True,
+            )
+        except Exception as e:
+            print(f"[GROUP REQUESTS] Request action failed: {e}")
+            await interaction.followup.send(
+                "Could not update that group request right now.",
+                ephemeral=True,
+            )
+        finally:
+            self.processing.discard(user_id)
+
+
 class GeneralCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -1570,6 +1799,57 @@ class GeneralCommands(commands.Cog):
             await interaction.followup.send(f"❌ Error syncing commands: {e}", ephemeral=True)
             print(f"[SYNC MANUAL] Error: {e}")
             traceback.print_exc()
+
+    @app_commands.command(
+        name="group_requests",
+        description="Shows pending Roblox group join requests.",
+    )
+    @has_exact_role_id(GROUP_REQUESTS_ROLE_ID)
+    async def group_requests(self, interaction: discord.Interaction):
+        if not interaction.guild or not isinstance(
+            interaction.user,
+            discord.Member,
+        ):
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            from cookie_api import (
+                CookieAPIError,
+                list_group_join_requests,
+            )
+
+            requests = await list_group_join_requests()
+            if not requests:
+                await interaction.followup.send(
+                    "There are no pending Roblox group join requests.",
+                    ephemeral=True,
+                )
+                return
+
+            view = GroupRequestsView(
+                requests=requests,
+                owner_id=interaction.user.id,
+            )
+            await interaction.followup.send(
+                view=view,
+                ephemeral=True,
+            )
+        except CookieAPIError as e:
+            await interaction.followup.send(
+                f"Could not load group join requests: {e}",
+                ephemeral=True,
+            )
+        except Exception as e:
+            print(f"[GROUP REQUESTS] Could not load requests: {e}")
+            await interaction.followup.send(
+                "Could not load group join requests right now.",
+                ephemeral=True,
+            )
 
     @app_commands.command(name="test-melonly", description="Test Melonly API connection.")
     async def test_melonly(self, interaction: discord.Interaction):

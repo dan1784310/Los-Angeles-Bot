@@ -1,5 +1,6 @@
 """
-Cookie API integration for hosted Discord transcripts.
+Cookie API integration for hosted Discord transcripts and Roblox group
+management.
 
 The API key is read from the COOKIE_API_KEY environment variable. The bot
 token is read from the normal TOKEN config, or COOKIE_BOT_TOKEN when provided.
@@ -21,7 +22,7 @@ COOKIE_TRANSCRIPT_PATH = "/api/transcript"
 
 
 class CookieAPIError(RuntimeError):
-    """Raised when Cookie API cannot create a hosted transcript."""
+    """Raised when a Cookie API request fails."""
 
 
 def _get_api_key() -> str:
@@ -148,3 +149,171 @@ async def create_transcript_url(
         raise CookieAPIError(
             f"Could not reach Cookie API: {type(e).__name__}."
         ) from e
+
+
+COOKIE_GROUP_REQUESTS_PATH = "/api/roblox/group/join-requests"
+
+
+def _get_workspace_id(workspace_id: Optional[int] = None) -> str:
+    value = workspace_id or os.getenv("COOKIE_WORKSPACE_ID")
+    value = str(value or "").strip()
+    if not value:
+        raise CookieAPIError(
+            "COOKIE_WORKSPACE_ID is not configured. Add the Cookie API "
+            "Group Manager workspace ID to the bot environment."
+        )
+    return value
+
+
+async def _group_request(
+    method: str,
+    workspace_id: Optional[int],
+    json_payload: Optional[dict] = None,
+) -> Any:
+    api_key = _get_api_key()
+    workspace = _get_workspace_id(workspace_id)
+    url = f"{COOKIE_API_BASE_URL}{COOKIE_GROUP_REQUESTS_PATH}"
+    headers = {
+        "Authorization": api_key,
+        "Accept": "application/json",
+    }
+    request_kwargs = {
+        "params": {"workspace_id": workspace},
+        "headers": headers,
+    }
+    if json_payload is not None:
+        request_kwargs["json"] = json_payload
+
+    timeout = aiohttp.ClientTimeout(total=30)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.request(method, url, **request_kwargs) as response:
+                response_text = await response.text()
+                try:
+                    payload = json.loads(response_text)
+                except (TypeError, ValueError):
+                    payload = None
+
+                if response.status >= 400:
+                    detail = _response_message(
+                        payload,
+                        f"HTTP {response.status} from Cookie API.",
+                    )
+                    raise CookieAPIError(
+                        f"Cookie API group request failed: {detail}"
+                    )
+
+                if isinstance(payload, dict) and payload.get("success") is False:
+                    detail = _response_message(
+                        payload,
+                        "Cookie API rejected the group request.",
+                    )
+                    raise CookieAPIError(
+                        f"Cookie API group request failed: {detail}"
+                    )
+
+                return payload
+    except CookieAPIError:
+        raise
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        raise CookieAPIError(
+            f"Could not reach Cookie API: {type(e).__name__}."
+        ) from e
+
+
+def _normalize_join_request(item: Any) -> Optional[dict]:
+    if not isinstance(item, dict):
+        return None
+
+    requester = item.get("requester")
+    if not isinstance(requester, dict):
+        requester = item.get("user") if isinstance(item.get("user"), dict) else {}
+
+    raw_user_id = (
+        requester.get("userId")
+        or requester.get("user_id")
+        or item.get("userId")
+        or item.get("user_id")
+        or item.get("id")
+    )
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        return None
+
+    username = (
+        requester.get("username")
+        or item.get("username")
+        or f"User-{user_id}"
+    )
+    display_name = (
+        requester.get("displayName")
+        or requester.get("display_name")
+        or username
+    )
+    created = (
+        item.get("created")
+        or item.get("created_at")
+        or item.get("requested_at")
+    )
+    return {
+        "user_id": user_id,
+        "username": str(username)[:80],
+        "display_name": str(display_name)[:80],
+        "created_at": str(created) if created else None,
+        "has_verified_badge": bool(
+            requester.get("hasVerifiedBadge")
+            or requester.get("has_verified_badge")
+        ),
+    }
+
+
+async def list_group_join_requests(
+    workspace_id: Optional[int] = None,
+) -> list[dict]:
+    payload = await _group_request(
+        "GET",
+        workspace_id,
+    )
+    if isinstance(payload, dict):
+        raw_requests = payload.get("requests", [])
+    elif isinstance(payload, list):
+        raw_requests = payload
+    else:
+        raw_requests = []
+
+    if not isinstance(raw_requests, list):
+        raise CookieAPIError("Cookie API returned an invalid request list.")
+
+    normalized = []
+    for item in raw_requests:
+        request = _normalize_join_request(item)
+        if request is not None:
+            normalized.append(request)
+    return normalized
+
+
+async def accept_group_join_request(
+    user_id: int,
+    workspace_id: Optional[int] = None,
+    rank_position: Optional[int] = None,
+) -> Any:
+    payload = {"user_id": int(user_id)}
+    if rank_position is not None:
+        payload["rank_position"] = int(rank_position)
+    return await _group_request(
+        "POST",
+        workspace_id,
+        json_payload=payload,
+    )
+
+
+async def deny_group_join_request(
+    user_id: int,
+    workspace_id: Optional[int] = None,
+) -> Any:
+    return await _group_request(
+        "DELETE",
+        workspace_id,
+        json_payload={"user_id": int(user_id)},
+    )
