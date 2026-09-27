@@ -65,6 +65,45 @@ def _response_message(payload: Any, fallback: str) -> str:
     return fallback
 
 
+COOKIE_ENDPOINT_NOT_FOUND_CODE = 101307
+
+ENDPOINT_NOT_FOUND_HINT = (
+    'Cookie API replied "Endpoint not found" (code 101307). The Roblox Group '
+    "Manager routes are live, but this API key is not allowed to use them. "
+    "Open the Cookie API dashboard, edit the API key used by this bot, and "
+    "enable the Roblox Group Manager endpoints in its endpoint permissions."
+)
+
+
+def _is_endpoint_not_found(payload: Any) -> bool:
+    """Detect Cookie API's 101307 response for a key-blocked endpoint."""
+    if not isinstance(payload, dict):
+        return False
+
+    candidates: list[Any] = []
+    errors = payload.get("errors")
+    if isinstance(errors, list):
+        candidates.extend(errors)
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        candidates.extend(messages)
+    candidates.append(payload)
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("code") == COOKIE_ENDPOINT_NOT_FOUND_CODE:
+            return True
+        message = candidate.get("message")
+        if (
+            isinstance(message, str)
+            and "endpoint not found" in message.lower()
+        ):
+            return True
+
+    return False
+
+
 async def create_transcript_url(
     channel_id: int,
     name: str,
@@ -195,6 +234,8 @@ async def _group_request(
                     payload = None
 
                 if response.status >= 400:
+                    if _is_endpoint_not_found(payload):
+                        raise CookieAPIError(ENDPOINT_NOT_FOUND_HINT)
                     detail = _response_message(
                         payload,
                         f"HTTP {response.status} from Cookie API.",
