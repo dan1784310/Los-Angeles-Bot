@@ -68,6 +68,9 @@ def _response_message(payload: Any, fallback: str) -> str:
 
 COOKIE_ENDPOINT_NOT_FOUND_CODE = 101307
 
+# A pure, side-effect-free endpoint used only to diagnose key scope.
+COOKIE_PROBE_PATH = "/api/discord/permission-decoder"
+
 
 def _key_fingerprint() -> str:
     """A short, non-reversible hint so a mismatched key can be spotted.
@@ -90,16 +93,57 @@ def _workspace_fingerprint() -> str:
     return workspace or "COOKIE_WORKSPACE_ID is not set"
 
 
-def _endpoint_not_found_hint() -> str:
+async def _probe_key_scope() -> str:
+    """Test the same key against a harmless non-group endpoint.
+
+    ``permission-decoder`` is a pure GET with no side effects, so it is safe
+    to call from a diagnostic. It tells us whether a 101307 means "this key
+    is endpoint-restricted" or "this key is broken/blocked entirely".
+    """
+    url = f"{COOKIE_API_BASE_URL}{COOKIE_PROBE_PATH}"
+    headers = {
+        "Authorization": _get_api_key(),
+        "Accept": "application/json",
+    }
+    timeout = aiohttp.ClientTimeout(total=20)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                url,
+                params={"permissions": "0"},
+                headers=headers,
+            ) as response:
+                await response.read()
+                if response.status < 400:
+                    return (
+                        "Check: this same key reached a non-group endpoint "
+                        f"successfully (HTTP {response.status}), so the key is "
+                        "valid and working. Only the Roblox Group Manager "
+                        "endpoints are unavailable to it."
+                    )
+                if response.status in (401, 403):
+                    return (
+                        "Check: this same key was rejected on a non-group "
+                        f"endpoint too (HTTP {response.status}), so the key is "
+                        "invalid or blocked entirely, not just for groups."
+                    )
+                return (
+                    "Check: a non-group endpoint returned HTTP "
+                    f"{response.status} for this same key."
+                )
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        return f"Check: could not reach Cookie API ({type(e).__name__})."
+
+
+def _endpoint_not_found_hint(diagnostic: str) -> str:
     return (
         'Cookie API replied "Endpoint not found" (code 101307) using '
         f"{_key_fingerprint()} on workspace {_workspace_fingerprint()}. "
-        "The Roblox Group Manager routes exist, so this normally means the "
-        "key the bot is running with is NOT the key that has those "
-        "endpoints enabled, or that key still has them switched off. "
-        "Compare the fingerprint above against the key you tested "
-        "locally, then update COOKIE_API_KEY in your host's environment "
-        "and restart."
+        f"{diagnostic} "
+        "The Roblox Group Manager routes do exist, so either this key has "
+        "them switched off in the Cookie API dashboard, or the bot is not "
+        "running the key you think it is. Compare the fingerprint against "
+        "your key, then redeploy so the new value is actually loaded."
     )
 
 
@@ -263,7 +307,10 @@ async def _group_request(
 
                 if response.status >= 400:
                     if _is_endpoint_not_found(payload):
-                        raise CookieAPIError(_endpoint_not_found_hint())
+                        diagnostic = await _probe_key_scope()
+                        raise CookieAPIError(
+                            _endpoint_not_found_hint(diagnostic)
+                        )
                     detail = _response_message(
                         payload,
                         f"HTTP {response.status} from Cookie API.",
