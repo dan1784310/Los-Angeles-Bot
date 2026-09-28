@@ -42,6 +42,10 @@ from report_main import setup as setup_reports
 # Initialize collections that are needed in event handlers
 afk_collection = mod_db.db["afk_status"]
 
+# Printing every message floods the host log and costs real throughput in a
+# busy server. Opt in only while debugging.
+DEBUG_MESSAGES = os.getenv("DEBUG_MESSAGES", "").strip().lower() in ("1", "true", "yes")
+
 
 # ============================================================
 # COMMAND ROLE PERMISSIONS
@@ -163,52 +167,77 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    print(f"[MESSAGE DEBUG] Author: {message.author}, Content: {message.content}")
-    
+    if DEBUG_MESSAGES:
+        print(f"[MESSAGE DEBUG] Author: {message.author}, Content: {message.content}")
+
+    # Every PyMongo call below is blocking, and on_message runs for every
+    # human message in a busy server. Doing them inline froze the event loop
+    # and left Discord interactions unacknowledged until they timed out.
+    # check_loop's 5s sweep had the same problem.
+
     # Check if user is AFK and remove status
     if message.guild and isinstance(message.author, discord.Member):
         query = {"guild_id": message.guild.id, "user_id": message.author.id}
-        afk_data = afk_collection.find_one(query)
+        afk_data = await asyncio.to_thread(afk_collection.find_one, query)
         if afk_data:
             original_nick = afk_data.get("original_nick", message.author.name)
-            afk_collection.delete_one(query)
-            
+            await asyncio.to_thread(afk_collection.delete_one, query)
+
             try:
                 await message.author.edit(nick=original_nick, reason="User is back online")
             except Exception:
                 pass
-            
+
             view = discord.ui.LayoutView(timeout=None)
             container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
             container.add_item(discord.ui.TextDisplay("✅ You are back online, AFK status removed."))
             view.add_item(container)
-            
+
             try:
                 await message.channel.send(view=view, delete_after=5, reference=message)
             except Exception:
                 pass
-    
-    # Check if message mentions any AFK users
+
+    # Check if message mentions any AFK users.
+    # One query for all mentions instead of one per mentioned user.
     if message.guild and message.mentions:
-        for mentioned_user in message.mentions:
-            if mentioned_user.bot:
-                continue
-                
-            query = {"guild_id": message.guild.id, "user_id": mentioned_user.id}
-            afk_data = afk_collection.find_one(query)
-            if afk_data:
-                reason = afk_data.get("reason", "AFK")
-                
-                view = discord.ui.LayoutView(timeout=None)
-                container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
-                container.add_item(discord.ui.TextDisplay(f"👋 The user is currently **{reason}**."))
-                view.add_item(container)
-                
-                try:
-                    await message.channel.send(view=view, delete_after=10, reference=message)
-                except Exception:
-                    pass
-    
+        mention_ids = [m.id for m in message.mentions if not m.bot]
+        if mention_ids:
+            try:
+                afk_rows = await asyncio.to_thread(
+                    lambda: list(
+                        afk_collection.find(
+                            {
+                                "guild_id": message.guild.id,
+                                "user_id": {"$in": mention_ids},
+                            }
+                        )
+                    )
+                )
+            except Exception as e:
+                print(f"[AFK] Could not read AFK records: {e}")
+                afk_rows = []
+
+            by_user = {row.get("user_id"): row for row in afk_rows}
+
+            for mentioned_user in message.mentions:
+                if mentioned_user.bot:
+                    continue
+
+                afk_data = by_user.get(mentioned_user.id)
+                if afk_data:
+                    reason = afk_data.get("reason", "AFK")
+
+                    view = discord.ui.LayoutView(timeout=None)
+                    container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+                    container.add_item(discord.ui.TextDisplay(f"👋 The user is currently **{reason}**."))
+                    view.add_item(container)
+
+                    try:
+                        await message.channel.send(view=view, delete_after=10, reference=message)
+                    except Exception:
+                        pass
+
     await bot.process_commands(message)
 
 @bot.command()
@@ -644,7 +673,12 @@ class ZTPSystem(commands.Cog):
 
         expiry = time.time() + seconds
         query = {"guild_id": interaction.guild.id, "user_id": member.id}
-        ztp_collection.update_one(query, {"$set": {"expiry": expiry}}, upsert=True)
+        await asyncio.to_thread(
+            ztp_collection.update_one,
+            query,
+            {"$set": {"expiry": expiry}},
+            upsert=True,
+        )
 
         await interaction.response.send_message(f"<:checkmark:1541253462413549669> Successfully gave {member.mention} the ZTP role for **{duration}** (Expires <t:{int(expiry)}:R>).", ephemeral=True)
 
@@ -670,7 +704,9 @@ class ZTPSystem(commands.Cog):
             return
 
         data = []
-        docs = list(ztp_collection.find({"guild_id": interaction.guild.id}))
+        docs = await asyncio.to_thread(
+            lambda: list(ztp_collection.find({"guild_id": interaction.guild.id}))
+        )
         for doc in docs:
             user_id = doc["user_id"]
             expiry = doc["expiry"]
@@ -684,7 +720,10 @@ class ZTPSystem(commands.Cog):
             if role in member.roles:
                 data.append((member, expiry))
             else:
-                ztp_collection.delete_one({"guild_id": interaction.guild.id, "user_id": user_id})
+                await asyncio.to_thread(
+                    ztp_collection.delete_one,
+                    {"guild_id": interaction.guild.id, "user_id": user_id},
+                )
 
         view = ZTPPaginationView(interaction.guild, data)
         await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
@@ -1741,14 +1780,15 @@ class GeneralCommands(commands.Cog):
         query = {"guild_id": interaction.guild.id, "user_id": member.id}
         
         original_nick = member.nick or member.name
-        existing = afk_collection.find_one(query)
+        existing = await asyncio.to_thread(afk_collection.find_one, query)
         if existing:
             original_nick = existing.get("original_nick", original_nick)
 
-        afk_collection.update_one(
+        await asyncio.to_thread(
+            afk_collection.update_one,
             query,
             {"$set": {"reason": reason, "original_nick": original_nick}},
-            upsert=True
+            upsert=True,
         )
 
         new_nick = f"[AFK] {original_nick}"
@@ -3680,7 +3720,8 @@ async def set_llc(ctx: commands.Context):
     channel_name = ctx.channel.name
 
     try:
-        db.settings.update_one(
+        await asyncio.to_thread(
+            db.settings.update_one,
             {"_id": "llc_channel"},
             {"$set": {"channel_id": ctx.channel.id}},
             upsert=True,
@@ -3715,7 +3756,9 @@ async def send_llc_log(
 
     if not channel_id:
         try:
-            doc = db.settings.find_one({"_id": "llc_channel"})
+            doc = await asyncio.to_thread(
+                db.settings.find_one, {"_id": "llc_channel"}
+            )
             if doc:
                 channel_id = doc.get("channel_id")
                 target_llc_channel_id = channel_id
