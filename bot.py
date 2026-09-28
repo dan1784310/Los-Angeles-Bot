@@ -1,25 +1,17 @@
 import asyncio
 import datetime
-import io
-import logging
-import math
 import os
-from collections import deque
 import random
 import re
-import secrets
-import sys
 import threading
 import time
 import traceback
 from typing import Optional
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from flask import Flask, request
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from config import TOKEN, ERLC_SERVER_KEY, MELONLY_API_TOKEN
 from erlc_api import ERLCClient, ERLCAPIError
@@ -35,8 +27,6 @@ from moderation_main import setup as setup_moderation
 from moderation_database import db as mod_db
 from role_management import setup as setup_role_management
 from roleplay_log import setup as setup_roleplay_log
-from invite_main import setup as setup_invites
-from report_main import setup as setup_reports
 
 # ============================================================
 # DATABASE COLLECTIONS
@@ -44,10 +34,6 @@ from report_main import setup as setup_reports
 
 # Initialize collections that are needed in event handlers
 afk_collection = mod_db.db["afk_status"]
-
-# Printing every message floods the host log and costs real throughput in a
-# busy server. Opt in only while debugging.
-DEBUG_MESSAGES = os.getenv("DEBUG_MESSAGES", "").strip().lower() in ("1", "true", "yes")
 
 
 # ============================================================
@@ -144,10 +130,16 @@ def has_role_or_higher_prefix(command_name: str):
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.presences = True
-intents.invites = True
+# Disable presences to reduce connection load and prevent hanging
+intents.presences = False
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+# Simplified bot setup with minimal timeouts
+bot = commands.Bot(
+    command_prefix="!", 
+    intents=intents,
+    max_messages=None,
+    heartbeat_timeout=30  # Reduced from default
+)
 
 
 @bot.event
@@ -155,77 +147,52 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    if DEBUG_MESSAGES:
-        print(f"[MESSAGE DEBUG] Author: {message.author}, Content: {message.content}")
-
-    # Every PyMongo call below is blocking, and on_message runs for every
-    # human message in a busy server. Doing them inline froze the event loop
-    # and left Discord interactions unacknowledged until they timed out.
-    # check_loop's 5s sweep had the same problem.
-
+    print(f"[MESSAGE DEBUG] Author: {message.author}, Content: {message.content}")
+    
     # Check if user is AFK and remove status
     if message.guild and isinstance(message.author, discord.Member):
         query = {"guild_id": message.guild.id, "user_id": message.author.id}
-        afk_data = await asyncio.to_thread(afk_collection.find_one, query)
+        afk_data = afk_collection.find_one(query)
         if afk_data:
             original_nick = afk_data.get("original_nick", message.author.name)
-            await asyncio.to_thread(afk_collection.delete_one, query)
-
+            afk_collection.delete_one(query)
+            
             try:
                 await message.author.edit(nick=original_nick, reason="User is back online")
             except Exception:
                 pass
-
+            
             view = discord.ui.LayoutView(timeout=None)
             container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
             container.add_item(discord.ui.TextDisplay("✅ You are back online, AFK status removed."))
             view.add_item(container)
-
+            
             try:
                 await message.channel.send(view=view, delete_after=5, reference=message)
             except Exception:
                 pass
-
-    # Check if message mentions any AFK users.
-    # One query for all mentions instead of one per mentioned user.
+    
+    # Check if message mentions any AFK users
     if message.guild and message.mentions:
-        mention_ids = [m.id for m in message.mentions if not m.bot]
-        if mention_ids:
-            try:
-                afk_rows = await asyncio.to_thread(
-                    lambda: list(
-                        afk_collection.find(
-                            {
-                                "guild_id": message.guild.id,
-                                "user_id": {"$in": mention_ids},
-                            }
-                        )
-                    )
-                )
-            except Exception as e:
-                print(f"[AFK] Could not read AFK records: {e}")
-                afk_rows = []
-
-            by_user = {row.get("user_id"): row for row in afk_rows}
-
-            for mentioned_user in message.mentions:
-                if mentioned_user.bot:
-                    continue
-
-                afk_data = by_user.get(mentioned_user.id)
-                if afk_data:
-                    reason = afk_data.get("reason", "AFK")
-
-                    view = discord.ui.LayoutView(timeout=None)
-                    container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
-                    container.add_item(discord.ui.TextDisplay(f"👋 The user is currently **{reason}**."))
-                    view.add_item(container)
-
-                    try:
-                        await message.channel.send(view=view, delete_after=10, reference=message)
-                    except Exception:
-                        pass
-
+        for mentioned_user in message.mentions:
+            if mentioned_user.bot:
+                continue
+                
+            query = {"guild_id": message.guild.id, "user_id": mentioned_user.id}
+            afk_data = afk_collection.find_one(query)
+            if afk_data:
+                reason = afk_data.get("reason", "AFK")
+                
+                view = discord.ui.LayoutView(timeout=None)
+                container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+                container.add_item(discord.ui.TextDisplay(f"👋 The user is currently **{reason}**."))
+                view.add_item(container)
+                
+                try:
+                    await message.channel.send(view=view, delete_after=10, reference=message)
+                except Exception:
+                    pass
+    
     await bot.process_commands(message)
 
 @bot.command()
@@ -234,195 +201,23 @@ async def test(ctx: commands.Context):
     await ctx.send("✅ Prefix commands are working!")
 
 
-# ============================================================
-# DISCORD RATE LIMIT PROTECTION
-# ============================================================
-#
-# Discord enforces a *global* limit of roughly 50 requests/second per token.
-# Tripping it returns HTTP 429 with error code 0 ("exceeding global rate
-# limits") and blocks every route at once, which is why unrelated commands
-# suddenly start failing. Bursts of out-of-band traffic are the usual trigger.
-#
-# Everything burst-prone is funnelled through guarded_send, which serialises
-# requests, enforces a minimum gap, honours the retry_after Discord asks for,
-# and opens a circuit breaker after a global 429 so the rest of the bot backs
-# off instead of piling onto an already-blocked token.
-
-MIN_SEND_GAP = 0.2
-MAX_PENDING_SENDS = 200
-
-_send_lock: Optional[asyncio.Lock] = None
-_pending_sends = 0
-_last_send_at = 0.0
-_global_cooldown_until = 0.0
-
-
-def _ensure_send_lock() -> asyncio.Lock:
-    global _send_lock
-    if _send_lock is None:
-        _send_lock = asyncio.Lock()
-    return _send_lock
-
-
-def _retry_after_from(error: BaseException, default: float) -> float:
-    """Read the wait time Discord asked for out of a 429 error."""
-    value = getattr(error, "retry_after", None)
-    if isinstance(value, (int, float)) and value >= 0:
-        return float(value)
-
-    response = getattr(error, "response", None)
-    headers = getattr(response, "headers", None) or {}
-    for header in ("Retry-After", "retry-after"):
-        raw = headers.get(header)
-        if raw:
-            try:
-                return max(0.0, float(raw))
-            except (TypeError, ValueError):
-                continue
-
-    return default
-
-
-def _global_rate_limit_headers(error: BaseException) -> bool:
-    """Sync check: Discord flags global 429s with X-RateLimit-Global.
-
-    Safe to call from synchronous code. Avoids touching the response body,
-    because discord.py exposes an aiohttp ClientResponse whose .json() is a
-    coroutine - calling it without awaiting leaks a RuntimeWarning and
-    silently does nothing.
-    """
-    response = getattr(error, "response", None)
-    if response is None:
-        return False
-
-    headers = getattr(response, "headers", None) or {}
-    return str(headers.get("X-RateLimit-Global", "")).lower() == "true"
-
-
-async def _is_global_rate_limit(error: BaseException) -> bool:
-    """Header check plus the response body's "global" flag."""
-    if _global_rate_limit_headers(error):
-        return True
-
-    response = getattr(error, "response", None)
-    if response is None:
-        return False
-
-    try:
-        body = await response.json()
-    except Exception:
-        return False
-
-    return bool(isinstance(body, dict) and body.get("global"))
-
-
-def open_global_cooldown(error: BaseException) -> None:
-    """Stop every outbound send until the token is unblocked again."""
-    global _global_cooldown_until
-    wait = max(1.0, _retry_after_from(error, 5.0))
-    until = time.time() + wait
-    if until > _global_cooldown_until:
-        _global_cooldown_until = until
-    print(
-        f"[Rate Limit] Discord returned a global 429. Backing off all sends "
-        f"for {wait:.1f}s. Code 0 blocks every route, not just one bucket."
-    )
-
-
-def is_globally_rate_limited() -> bool:
-    return _global_cooldown_until - time.time() > 0
-
-
-async def _respect_cooldown() -> None:
-    remaining = _global_cooldown_until - time.time()
-    if remaining > 0:
-        print(
-            f"[Rate Limit] Cooling down for {remaining:.1f}s before sending."
-        )
-        await asyncio.sleep(remaining)
-
-
-async def guarded_send(destination, *, attempts: int = 4, **kwargs):
-    """Send with global rate limit protection. Returns None if dropped."""
-    global _pending_sends, _last_send_at
-    lock = _ensure_send_lock()
-
-    async with lock:
-        if _pending_sends >= MAX_PENDING_SENDS:
-            print(
-                f"[Rate Limit] Dropped a send - {_pending_sends} already "
-                "queued (inbound flood or a very busy command log)."
-            )
-            return None
-        _pending_sends += 1
-
-    try:
-        for attempt in range(1, attempts + 1):
-            await _respect_cooldown()
-            try:
-                async with lock:
-                    gap = time.time() - _last_send_at
-                    if gap < MIN_SEND_GAP:
-                        await asyncio.sleep(MIN_SEND_GAP - gap)
-                    _last_send_at = time.time()
-
-                return await destination.send(**kwargs)
-
-            except discord.HTTPException as e:
-                if e.status != 429:
-                    raise
-
-                if await _is_global_rate_limit(e):
-                    open_global_cooldown(e)
-
-                if attempt >= attempts:
-                    print(
-                        f"[Rate Limit] Giving up on a send after "
-                        f"{attempts} attempts."
-                    )
-                    return None
-
-                wait = max(MIN_SEND_GAP, _retry_after_from(e, 1.0))
-                await asyncio.sleep(wait * attempt)
-
-        return None
-    finally:
-        async with lock:
-            _pending_sends -= 1
-
-
 @bot.tree.error
 async def on_app_command_error(
     interaction: discord.Interaction,
     error: app_commands.AppCommandError,
 ):
+    print(f"[ERROR] App Command Error: {error}")
+    print(f"[ERROR] Error type: {type(error).__name__}")
+    print(f"[ERROR] Interaction user: {interaction.user}")
+    print(f"[ERROR] Interaction command: {interaction.command}")
+    
     if isinstance(error, app_commands.CheckFailure):
-        msg = "❌ You do not have the required role or higher to use this command."
+        msg = "You do not have the required role or higher to use this command."
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
         else:
             await interaction.response.send_message(msg, ephemeral=True)
     else:
-        cause = getattr(error, "__cause__", None) or error
-        if (
-            isinstance(cause, discord.HTTPException)
-            and cause.status == 429
-        ):
-            if await _is_global_rate_limit(cause):
-                open_global_cooldown(cause)
-                print(
-                    "[Rate Limit] A command was rejected by Discord's global "
-                    "rate limit. Nothing is wrong with the command; the token "
-                    "is temporarily blocked. See the [Rate Limit] lines above "
-                    "for what is flooding the API."
-                )
-            else:
-                print(
-                    "[Rate Limit] A command hit a per-route rate limit "
-                    f"(retry after {getattr(cause, 'retry_after', '?')}s)."
-                )
-            return
-
         print(f"[ERROR] App Command Error: {error}")
         traceback.print_exception(type(error), error, error.__traceback__)
 
@@ -453,26 +248,7 @@ text_setups = {}
 ZTP_ROLE_ID = 1527377838536265908
 ZTP_COMMAND_ROLE_ID = 1527050918804062469
 
-# Caps how much one expiry sweep will pull, so a large backlog cannot turn
-# into one long blocking pass.
-ZTP_SCAN_LIMIT = 200
-
 ztp_collection = mod_db.db["ztp_timers"]
-
-
-async def ensure_ztp_indexes() -> None:
-    """Index the field the expiry sweep filters on.
-
-    Without this, the query runs a full collection scan every sweep.
-    """
-    try:
-        await asyncio.to_thread(
-            ztp_collection.create_index,
-            "expiry",
-            name="ztp_expiry_idx",
-        )
-    except Exception as e:
-        print(f"[ZTP] Could not create the expiry index: {e}")
 
 def parse_duration(duration_str: str) -> Optional[int]:
     match = re.match(r"^(\d+)([smhdw])$", duration_str.lower().strip())
@@ -565,43 +341,24 @@ class ZTPSystem(commands.Cog):
     @tasks.loop(seconds=5)
     async def check_loop(self):
         now = time.time()
-
-        try:
-            # PyMongo is blocking. Calling it straight from an async task
-            # freezes the whole event loop, so no interaction can be
-            # acknowledged and every command fails with "The application did
-            # not respond". If Mongo is slow or unreachable, server selection
-            # alone can block for ~30s, and this ran every 5s.
-            expired_docs = await asyncio.to_thread(
-                lambda: list(
-                    ztp_collection
-                    .find({"expiry": {"$lte": now}})
-                    .limit(ZTP_SCAN_LIMIT)
-                )
-            )
-        except Exception as e:
-            print(f"[ZTP Error] Could not read expired timers: {e}")
-            return
+        expired_docs = list(ztp_collection.find({"expiry": {"$lte": now}}))
 
         for doc in expired_docs:
             guild_id = doc["guild_id"]
             user_id = doc["user_id"]
-
+            
+            ztp_collection.delete_one({"guild_id": guild_id, "user_id": user_id})
+            
             guild = self.bot.get_guild(guild_id)
             if not guild:
-                await asyncio.to_thread(
-                    ztp_collection.delete_one,
-                    {"guild_id": guild_id, "user_id": user_id},
-                )
                 continue
-
             member = guild.get_member(user_id)
             if not member:
                 try:
                     member = await guild.fetch_member(user_id)
                 except Exception:
                     continue
-
+            
             role = guild.get_role(ZTP_ROLE_ID)
             if not role:
                 try:
@@ -615,14 +372,6 @@ class ZTPSystem(commands.Cog):
                     print(f"[ZTP] Automatically removed role from {member} in {guild.name}")
                 except Exception as e:
                     print(f"[ZTP Error] Failed to remove role from {member}: {e}")
-
-            try:
-                await asyncio.to_thread(
-                    ztp_collection.delete_one,
-                    {"guild_id": guild_id, "user_id": user_id},
-                )
-            except Exception as e:
-                print(f"[ZTP Error] Could not clear timer: {e}")
 
     @check_loop.before_loop
     async def before_check_loop(self):
@@ -661,12 +410,7 @@ class ZTPSystem(commands.Cog):
 
         expiry = time.time() + seconds
         query = {"guild_id": interaction.guild.id, "user_id": member.id}
-        await asyncio.to_thread(
-            ztp_collection.update_one,
-            query,
-            {"$set": {"expiry": expiry}},
-            upsert=True,
-        )
+        ztp_collection.update_one(query, {"$set": {"expiry": expiry}}, upsert=True)
 
         await interaction.response.send_message(f"<:checkmark:1541253462413549669> Successfully gave {member.mention} the ZTP role for **{duration}** (Expires <t:{int(expiry)}:R>).", ephemeral=True)
 
@@ -692,9 +436,7 @@ class ZTPSystem(commands.Cog):
             return
 
         data = []
-        docs = await asyncio.to_thread(
-            lambda: list(ztp_collection.find({"guild_id": interaction.guild.id}))
-        )
+        docs = list(ztp_collection.find({"guild_id": interaction.guild.id}))
         for doc in docs:
             user_id = doc["user_id"]
             expiry = doc["expiry"]
@@ -708,10 +450,7 @@ class ZTPSystem(commands.Cog):
             if role in member.roles:
                 data.append((member, expiry))
             else:
-                await asyncio.to_thread(
-                    ztp_collection.delete_one,
-                    {"guild_id": interaction.guild.id, "user_id": user_id},
-                )
+                ztp_collection.delete_one({"guild_id": interaction.guild.id, "user_id": user_id})
 
         view = ZTPPaginationView(interaction.guild, data)
         await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
@@ -721,784 +460,9 @@ class ZTPSystem(commands.Cog):
 # GENERAL UTILITY COMMANDS (Components V2 / Everyone)
 # ============================================================
 
-# These small content commands intentionally live in bot.py so the bot does
-# not need a separate module for every lightweight slash command.
-MEME_FALLBACKS = (
-    ("Distracted Boyfriend", "https://i.imgflip.com/1ur9b0.jpg"),
-    ("Drake Hotline Bling", "https://i.imgflip.com/30b1gx.jpg"),
-    ("This Is Fine", "https://i.imgflip.com/wxica.jpg"),
-    ("Change My Mind", "https://i.imgflip.com/24y43o.jpg"),
-    ("Left Exit 12 Off Ramp", "https://i.imgflip.com/3lmzyx.jpg"),
-    ("Two Buttons", "https://i.imgflip.com/1g8my4.jpg"),
-)
-
-JOKES = (
-    "Why do programmers prefer dark mode? Because light attracts bugs.",
-    "I would tell you a UDP joke, but you might not get it.",
-    "There are 10 kinds of people in the world: those who understand binary and those who do not.",
-    "Why did the scarecrow win an award? Because he was outstanding in his field.",
-    "I only know 25 letters of the alphabet. I don't know y.",
-    "What do you call a fish with no eyes? A fsh.",
-    "Why can't you trust an atom? Because they make up everything.",
-    "I used to hate facial hair, but then it grew on me.",
-    "What did the bottle say to the other bottle? You look capa.",
-    "Why did the math book look sad? It had too many problems.",
-    "I told my wife she was drawing her eyebrows too high. She looked surprised.",
-    "What do you call a fake noodle? An impasta.",
-)
-
-FACTS = (
-    "Octopuses have three hearts and blue blood.",
-    "A group of flamingos is called a flamboyance.",
-    "Honey found in ancient Egyptian tombs is still edible after thousands of years.",
-    "Bananas are berries, but strawberries are not true berries.",
-    "The shortest war in recorded history lasted only 38 minutes.",
-    "A day on Venus is longer than a year on Venus.",
-    "There are more possible iterations of a shuffled deck than there are atoms on Earth.",
-    "The first computer programmer was Ada Lovelace.",
-    "A bolt of lightning can be hotter than the surface of the Sun.",
-    "Wombat droppings are cube-shaped.",
-    "The Eiffel Tower grows several centimeters taller in hot weather.",
-    "Oxford University is older than the Aztec Empire.",
-)
-
-QUOTES = (
-    ("The best way out is always through.", "Thomas Edison"),
-    ("It always seems impossible until it is done.", "Nelson Mandela"),
-    ("The future belongs to those who believe in the beauty of their dreams.", "Eleanor Roosevelt"),
-    ("Success is not final, failure is not fatal: it is the courage to continue that counts.", "Winston Churchill"),
-    ("The only way to do great work is to love what you do.", "Steve Jobs"),
-    ("Simplicity is the ultimate sophistication.", "Leonardo da Vinci"),
-    ("What we think, we become.", "Buddha"),
-    ("The journey of a thousand miles begins with one step.", "Lao Tzu"),
-)
-
-ROASTS = (
-    "{name}, your comeback is still in beta and the beta is closed.",
-    "{name}, you are proof that confidence and competence are separate subscriptions.",
-    "{name}, your ideas arrived after the meeting and left before the meeting.",
-    "{name}, if effort had a hit rate, you would be a rounding error.",
-    "{name}, your personality is what happens when a Wi-Fi signal searches for a personality.",
-    "{name}, you are a masterclass in being confidently wrong.",
-    "{name}, your thought process has a paywall and a 404 error.",
-    "{name}, you bring a resume full of participation trophies and a cover letter written by someone else.",
-    "{name}, you have achieved a rare feat: being the loudest silent person in every conversation.",
-    "{name}, your brain has a loading screen with no progress bar.",
-    "{name}, you are the human version of a terms-of-service agreement nobody reads.",
-    "{name}, even your mistakes have a better excuse than your plans have a plan.",
-)
-
-COMPLIMENTS = (
-    "{name}, you have excellent taste and even better vibes.",
-    "{name}, you make every conversation feel easier.",
-    "{name}, your kindness is something people genuinely notice.",
-    "{name}, you bring a calm, confident energy to the room.",
-    "{name}, you are thoughtful, capable, and a joy to be around.",
-    "{name}, your ideas are always worth hearing.",
-    "{name}, you have a great balance of warmth and wisdom.",
-    "{name}, you make hard days feel a little lighter.",
-    "{name}, your attention to detail is genuinely impressive.",
-    "{name}, you have a natural gift for making people feel included.",
-    "{name}, you are doing better than you give yourself credit for.",
-    "{name}, your smile is a genuinely good thing to see.",
-)
-
-RPS_CHOICE_KEYS = ("rock", "paper", "scissors")
-RPS_CHOICES = {
-    "rock": ("🪨", "Rock"),
-    "paper": ("✋", "Paper"),
-    "scissors": ("✌️", "Scissors"),
-}
-
-SHIP_TIERS = (
-    (0, 25, "No Ship", "broken", "💔", (244, 63, 94)),
-    (26, 50, "Getting Together", "bandaged", "❤️‍🩹", (249, 115, 22)),
-    (51, 75, "Shipped", "normal", "❤️", (236, 72, 153)),
-    (76, 100, "Perfect Ship!", "perfect", "✨💖✨", (245, 183, 66)),
-)
-SHIP_CARD_WIDTH = 1400
-SHIP_CARD_HEIGHT = 800
-SHIP_AVATAR_SIZE = 250
-SHIP_CARD_BG = (17, 22, 48, 238)
-SHIP_CARD_BORDER = (255, 255, 255, 30)
-SHIP_TEXT = (245, 247, 255, 255)
-SHIP_MUTED = (166, 176, 211, 255)
-SHIP_DARK = (8, 11, 28, 255)
-SHIP_WHITE = (255, 255, 255, 255)
-
-
-def _ship_font(size: int, bold: bool = False):
-    """Load a clean modern sans-serif font when one is available."""
-    if bold:
-        candidates = (
-            "C:/Windows/Fonts/segoeuib.ttf",
-            "C:/Windows/Fonts/arialbd.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        )
-    else:
-        candidates = (
-            "C:/Windows/Fonts/segoeui.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        )
-
-    for path in candidates:
-        try:
-            return ImageFont.truetype(path, size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
-
-
-def _rgba(color: tuple[int, int, int], alpha: int = 255):
-    return (*color, alpha)
-
-
-def _fit_text(
-    draw: ImageDraw.ImageDraw,
-    text: str,
-    font,
-    max_width: int,
-) -> str:
-    text = str(text)
-    if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
-        return text
-
-    shortened = text
-    while shortened and draw.textbbox((0, 0), shortened, font=font)[2] > max_width:
-        shortened = shortened[:-1]
-    return f"{shortened.rstrip()}..." if shortened else "..."
-
-
-def _center_text(
-    draw: ImageDraw.ImageDraw,
-    center: tuple[int, int],
-    text: str,
-    font,
-    fill,
-    stroke_width: int = 0,
-    stroke_fill=None,
-) -> None:
-    bbox = draw.textbbox(
-        (0, 0),
-        text,
-        font=font,
-        stroke_width=stroke_width,
-    )
-    width = bbox[2] - bbox[0]
-    height = bbox[3] - bbox[1]
-    x = center[0] - width / 2 - bbox[0]
-    y = center[1] - height / 2 - bbox[1]
-    draw.text(
-        (x, y),
-        text,
-        font=font,
-        fill=fill,
-        stroke_width=stroke_width,
-        stroke_fill=stroke_fill,
-    )
-
-
-def _draw_pill(
-    draw: ImageDraw.ImageDraw,
-    center: tuple[int, int],
-    text: str,
-    font,
-    accent: tuple[int, int, int],
-) -> None:
-    bbox = draw.textbbox((0, 0), text, font=font)
-    width = bbox[2] - bbox[0] + 52
-    height = bbox[3] - bbox[1] + 24
-    left = center[0] - width / 2
-    top = center[1] - height / 2
-    draw.rounded_rectangle(
-        (left, top, left + width, top + height),
-        radius=height / 2,
-        fill=_rgba(accent, 48),
-        outline=_rgba(accent, 220),
-        width=2,
-    )
-    _center_text(draw, center, text, font, SHIP_TEXT)
-
-
-def _ship_name(user: discord.User) -> str:
-    name = (
-        getattr(user, "display_name", None)
-        or getattr(user, "name", None)
-        or "Unknown user"
-    )
-    clean_name = " ".join(str(name).split())[:80]
-    return clean_name or "Unknown user"
-
-
-def _ship_avatar_url(user: discord.User) -> str:
-    avatar = getattr(user, "display_avatar", None)
-    if avatar is not None and avatar.url:
-        return avatar.url
-    fallback_avatar = getattr(user, "avatar", None)
-    if fallback_avatar is not None and fallback_avatar.url:
-        return fallback_avatar.url
-    return "https://cdn.discordapp.com/embed/avatars/0.png"
-
-
-def _get_ship_tier(percentage: int):
-    percentage = max(0, min(100, int(percentage)))
-    return next(
-        tier
-        for tier in SHIP_TIERS
-        if tier[0] <= percentage <= tier[1]
-    )
-
-
-def _ship_fallback_avatar(display_name: str, user_id: int) -> Image.Image:
-    colors = (
-        (244, 63, 94),
-        (79, 70, 229),
-        (16, 185, 129),
-        (139, 92, 246),
-        (249, 115, 22),
-        (14, 165, 233),
-    )
-    color = colors[sum(str(user_id).encode("utf-8")) % len(colors)]
-    image = Image.new("RGBA", (SHIP_AVATAR_SIZE, SHIP_AVATAR_SIZE), _rgba(color))
-    draw = ImageDraw.Draw(image)
-    words = [word for word in re.split(r"\s+", display_name) if word]
-    initials = "".join(word[0] for word in words[:2]).upper() or "?"
-    _center_text(
-        draw,
-        (SHIP_AVATAR_SIZE // 2, SHIP_AVATAR_SIZE // 2),
-        initials,
-        _ship_font(82, bold=True),
-        SHIP_WHITE,
-    )
-    return image
-
-
-async def _fetch_ship_avatar(
-    user: discord.User,
-    session: aiohttp.ClientSession,
-) -> Image.Image:
-    try:
-        async with session.get(_ship_avatar_url(user)) as response:
-            response.raise_for_status()
-            avatar_bytes = await response.read()
-        if len(avatar_bytes) > 8_000_000:
-            raise ValueError("Avatar response was unexpectedly large.")
-
-        with Image.open(io.BytesIO(avatar_bytes)) as source:
-            avatar = ImageOps.exif_transpose(source).convert("RGBA")
-        resampling = getattr(Image, "Resampling", Image).LANCZOS
-        return ImageOps.fit(
-            avatar,
-            (SHIP_AVATAR_SIZE, SHIP_AVATAR_SIZE),
-            method=resampling,
-        )
-    except Exception as e:
-        print(f"[SHIP] Could not download avatar for {user}: {e}")
-        return _ship_fallback_avatar(
-            getattr(user, "display_name", None) or getattr(user, "name", "?"),
-            getattr(user, "id", 0),
-        )
-
-
-class ShipCardRenderer:
-    """Render a polished, modern ship card as an inline PNG."""
-
-    WIDTH = SHIP_CARD_WIDTH
-    HEIGHT = SHIP_CARD_HEIGHT
-    AVATAR_RADIUS = SHIP_AVATAR_SIZE // 2
-    LEFT_AVATAR_CENTER = (300, 430)
-    RIGHT_AVATAR_CENTER = (1100, 430)
-    HEART_CENTER = (700, 435)
-
-    def __init__(
-        self,
-        user1: discord.User,
-        user2: discord.User,
-        avatar1: Image.Image,
-        avatar2: Image.Image,
-        percentage: int,
-    ):
-        self.user1 = user1
-        self.user2 = user2
-        self.avatar1 = avatar1
-        self.avatar2 = avatar2
-        self.percentage = max(0, min(100, int(percentage)))
-        self.tier = _get_ship_tier(self.percentage)
-        self.status, self.style, self.emoji, self.accent = self.tier[2:]
-
-    @classmethod
-    def _heart_points(
-        cls,
-        center: tuple[int, int],
-        width: int,
-        height: int,
-    ) -> list[tuple[int, int]]:
-        raw_points = []
-        for index in range(361):
-            angle = (math.pi * 2 * index) / 360
-            x = 16 * math.sin(angle) ** 3
-            y = (
-                13 * math.cos(angle)
-                - 5 * math.cos(2 * angle)
-                - 2 * math.cos(3 * angle)
-                - math.cos(4 * angle)
-            )
-            raw_points.append((x, y))
-
-        min_y = min(point[1] for point in raw_points)
-        max_y = max(point[1] for point in raw_points)
-        return [
-            (
-                int(center[0] + ((x + 16) / 32 - 0.5) * width),
-                int(center[1] + height / 2 - ((y - min_y) / (max_y - min_y)) * height),
-            )
-            for x, y in raw_points
-        ]
-
-    def _draw_background(self, canvas: Image.Image) -> None:
-        draw = ImageDraw.Draw(canvas)
-        top = (8, 12, 32)
-        bottom = (31, 18, 57)
-        for y in range(self.HEIGHT):
-            ratio = y / (self.HEIGHT - 1)
-            color = tuple(
-                int(top[index] * (1 - ratio) + bottom[index] * ratio)
-                for index in range(3)
-            )
-            draw.line((0, y, self.WIDTH, y), fill=_rgba(color))
-
-        for box, color, blur in (
-            ((-180, 40, 520, 650), (113, 62, 210), 80),
-            ((850, -100, 1550, 560), (236, 55, 137), 95),
-            ((420, 520, 1020, 980), (38, 93, 205), 90),
-        ):
-            glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-            glow_draw = ImageDraw.Draw(glow)
-            glow_draw.ellipse(box, fill=_rgba(color, 70))
-            canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(blur)))
-
-    def _draw_glass_card(self, canvas: Image.Image) -> None:
-        shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        shadow_draw = ImageDraw.Draw(shadow)
-        shadow_draw.rounded_rectangle(
-            (74, 73, self.WIDTH - 54, self.HEIGHT - 48),
-            radius=38,
-            fill=(0, 0, 0, 150),
-        )
-        canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(28)))
-
-        card = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        card_draw = ImageDraw.Draw(card)
-        card_draw.rounded_rectangle(
-            (58, 52, self.WIDTH - 58, self.HEIGHT - 55),
-            radius=38,
-            fill=SHIP_CARD_BG,
-            outline=SHIP_CARD_BORDER,
-            width=2,
-        )
-        card_draw.rounded_rectangle(
-            (88, 83, self.WIDTH - 88, 89),
-            radius=3,
-            fill=_rgba(self.accent, 210),
-        )
-        canvas.alpha_composite(card)
-
-    def _draw_connector(self, canvas: Image.Image) -> None:
-        draw = ImageDraw.Draw(canvas)
-        line_color = _rgba(self.accent, 90)
-        draw.line(
-            (self.LEFT_AVATAR_CENTER[0] + 145, 430, 520, 430),
-            fill=line_color,
-            width=2,
-        )
-        draw.line(
-            (880, 430, self.RIGHT_AVATAR_CENTER[0] - 145, 430),
-            fill=line_color,
-            width=2,
-        )
-        for x in (520, 880):
-            draw.ellipse((x - 4, 426, x + 4, 434), fill=_rgba(self.accent, 180))
-
-    def _draw_user(
-        self,
-        canvas: Image.Image,
-        user: discord.User,
-        avatar: Image.Image,
-        center: tuple[int, int],
-        label: str,
-    ) -> None:
-        draw = ImageDraw.Draw(canvas)
-        name = _fit_text(draw, _ship_name(user), _ship_font(29, bold=True), 290)
-        _center_text(draw, (center[0], 222), name, _ship_font(29, bold=True), SHIP_TEXT)
-        _center_text(draw, (center[0], 190), label, _ship_font(15, bold=True), SHIP_MUTED)
-
-        glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        glow_draw = ImageDraw.Draw(glow)
-        glow_draw.ellipse(
-            (
-                center[0] - self.AVATAR_RADIUS - 12,
-                center[1] - self.AVATAR_RADIUS - 12,
-                center[0] + self.AVATAR_RADIUS + 12,
-                center[1] + self.AVATAR_RADIUS + 12,
-            ),
-            fill=_rgba(self.accent, 90),
-        )
-        canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(22)))
-
-        avatar = avatar.convert("RGBA").resize(
-            (SHIP_AVATAR_SIZE, SHIP_AVATAR_SIZE),
-            getattr(Image, "Resampling", Image).LANCZOS,
-        )
-        mask = Image.new("L", avatar.size, 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, SHIP_AVATAR_SIZE, SHIP_AVATAR_SIZE), fill=255)
-        avatar.putalpha(mask)
-        canvas.alpha_composite(
-            avatar,
-            (center[0] - self.AVATAR_RADIUS, center[1] - self.AVATAR_RADIUS),
-        )
-        draw.ellipse(
-            (
-                center[0] - self.AVATAR_RADIUS,
-                center[1] - self.AVATAR_RADIUS,
-                center[0] + self.AVATAR_RADIUS,
-                center[1] + self.AVATAR_RADIUS,
-            ),
-            outline=_rgba(self.accent, 235),
-            width=5,
-        )
-
-    def _draw_sparkles(self, draw: ImageDraw.ImageDraw) -> None:
-        sparkle_color = _rgba((255, 221, 126), 235)
-        for x, y, radius in ((505, 326, 8), (895, 325, 7), (492, 548, 6), (910, 556, 9)):
-            draw.line((x - radius, y, x + radius, y), fill=sparkle_color, width=3)
-            draw.line((x, y - radius, x, y + radius), fill=sparkle_color, width=3)
-
-    def _draw_heart(self, canvas: Image.Image) -> None:
-        points = self._heart_points(self.HEART_CENTER, 355, 295)
-        if self.style == "perfect":
-            glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-            glow_draw = ImageDraw.Draw(glow)
-            glow_draw.polygon(points, fill=_rgba(self.accent, 100))
-            glow_draw.line(points + [points[0]], fill=_rgba((255, 220, 130), 210), width=20)
-            canvas.alpha_composite(glow.filter(ImageFilter.GaussianBlur(25)))
-
-        draw = ImageDraw.Draw(canvas)
-        if self.style == "broken":
-            fill = (116, 37, 73, 255)
-            outline = (255, 126, 163, 255)
-        elif self.style == "bandaged":
-            fill = (222, 65, 106, 255)
-            outline = (255, 137, 172, 255)
-        elif self.style == "perfect":
-            fill = (231, 57, 132, 255)
-            outline = (255, 224, 147, 255)
-        else:
-            fill = (211, 52, 103, 255)
-            outline = (255, 133, 170, 255)
-
-        draw.polygon(points, fill=fill)
-        draw.line(points + [points[0]], fill=outline, width=7, joint="curve")
-
-        if self.style == "broken":
-            crack = [(700, 300), (684, 350), (714, 390), (691, 438), (712, 505), (695, 585)]
-            draw.line(crack, fill=SHIP_DARK, width=14, joint="curve")
-            draw.line((698, 408, 657, 440), fill=SHIP_DARK, width=8)
-            draw.line((704, 445, 746, 478), fill=SHIP_DARK, width=8)
-        elif self.style == "bandaged":
-            draw.line((585, 492, 815, 380), fill=(245, 221, 173, 255), width=34)
-            draw.line((585, 492, 815, 380), fill=(196, 153, 91, 255), width=4)
-            for x, y in ((635, 461), (700, 430), (765, 399)):
-                draw.line((x - 15, y + 7, x + 15, y - 7), fill=(196, 153, 91, 255), width=4)
-        elif self.style == "perfect":
-            self._draw_sparkles(draw)
-        else:
-            draw.arc(
-                (590, 335, 760, 500),
-                start=205,
-                end=285,
-                fill=(255, 190, 215, 150),
-                width=5,
-            )
-
-        _draw_pill(
-            draw,
-            (700, 278),
-            self.status.upper(),
-            _ship_font(19, bold=True),
-            self.accent,
-        )
-        _center_text(
-            draw,
-            (700, 348),
-            "MATCH SCORE",
-            _ship_font(16, bold=True),
-            (255, 255, 255, 190),
-        )
-        _center_text(
-            draw,
-            (700, 437),
-            f"{self.percentage}%",
-            _ship_font(78, bold=True),
-            SHIP_WHITE,
-            stroke_width=2,
-            stroke_fill=_rgba(self.accent, 180),
-        )
-
-    def _draw_header_footer(self, canvas: Image.Image) -> None:
-        draw = ImageDraw.Draw(canvas)
-        _center_text(
-            draw,
-            (700, 112),
-            "SHIP COMPATIBILITY",
-            _ship_font(22, bold=True),
-            SHIP_MUTED,
-        )
-        draw.line((575, 142, 825, 142), fill=_rgba(self.accent, 100), width=2)
-        _center_text(
-            draw,
-            (700, 724),
-            "RANDOM SHIP RESULT",
-            _ship_font(15, bold=True),
-            _rgba(self.accent, 190),
-        )
-
-    def render(self) -> io.BytesIO:
-        canvas = Image.new("RGBA", (self.WIDTH, self.HEIGHT), (0, 0, 0, 255))
-        self._draw_background(canvas)
-        self._draw_glass_card(canvas)
-        self._draw_connector(canvas)
-        self._draw_user(canvas, self.user1, self.avatar1, self.LEFT_AVATAR_CENTER, "PLAYER ONE")
-        self._draw_user(canvas, self.user2, self.avatar2, self.RIGHT_AVATAR_CENTER, "PLAYER TWO")
-        self._draw_heart(canvas)
-        self._draw_header_footer(canvas)
-
-        buffer = io.BytesIO()
-        canvas.save(buffer, format="PNG", optimize=True)
-        buffer.seek(0)
-        return buffer
-
-
-def build_ship_embed(
-    user1: discord.User,
-    user2: discord.User,
-    percentage: int,
-) -> discord.Embed:
-    """Build a classic embed fallback if image delivery fails."""
-    percentage = max(0, min(100, int(percentage)))
-    status, _, emoji, accent = _get_ship_tier(percentage)[2:]
-    embed = discord.Embed(
-        title=f"{_ship_name(user1)} + {_ship_name(user2)}",
-        description=f"{emoji}  **{percentage}%**\n**{status}**",
-        color=discord.Color.from_rgb(*accent),
-    )
-    embed.set_author(name=_ship_name(user1), icon_url=_ship_avatar_url(user1))
-    embed.set_thumbnail(url=_ship_avatar_url(user2))
-    return embed
-
-
-class RPSView(discord.ui.View):
-    """A small single-player rock-paper-scissors game against the bot."""
-
-    def __init__(self, player_id: int, player_name: str):
-        super().__init__(timeout=300)
-        self.player_id = player_id
-        self.player_name = player_name[:80]
-        self.played = False
-        self.user_choice: Optional[str] = None
-        self.bot_choice: Optional[str] = None
-        self.result: Optional[str] = None
-        self.result_color = discord.Color.from_rgb(88, 101, 242)
-        self._show_choice_buttons()
-
-    def _show_choice_buttons(self) -> None:
-        self.clear_items()
-        for choice, (emoji, label) in RPS_CHOICES.items():
-            button = discord.ui.Button(
-                label=f"{emoji} {label}",
-                style=discord.ButtonStyle.secondary,
-                custom_id=f"rps_{choice}",
-            )
-            button.callback = self._choice_callback(choice)
-            self.add_item(button)
-
-    def _show_play_again(self) -> None:
-        self.clear_items()
-        button = discord.ui.Button(
-            label="Play Again",
-            style=discord.ButtonStyle.success,
-            custom_id="rps_play_again",
-        )
-        button.callback = self._handle_play_again
-        self.add_item(button)
-
-    def _choice_callback(self, choice: str):
-        async def callback(interaction: discord.Interaction) -> None:
-            await self._play(interaction, choice)
-
-        return callback
-
-    def build_embed(self) -> discord.Embed:
-        embed = discord.Embed(
-            title="Rock, Paper, Scissors",
-            color=self.result_color,
-        )
-        if not self.played:
-            embed.description = (
-                "Choose **Rock**, **Paper**, or **Scissors** to play a round."
-            )
-            embed.set_footer(text=f"Only {self.player_name} can play this round.")
-            return embed
-
-        user_emoji, user_label = RPS_CHOICES[self.user_choice]
-        bot_emoji, bot_label = RPS_CHOICES[self.bot_choice]
-        embed.description = (
-            f"You chose {user_emoji} **{user_label}**\n"
-            f"I chose {bot_emoji} **{bot_label}**\n\n"
-            f"**{self.result}**"
-        )
-        embed.set_footer(text="This round is complete.")
-        return embed
-
-    async def _play(
-        self,
-        interaction: discord.Interaction,
-        user_choice: str,
-    ) -> None:
-        if interaction.user.id != self.player_id:
-            await interaction.response.send_message(
-                "This rock-paper-scissors game belongs to someone else.",
-                ephemeral=True,
-            )
-            return
-
-        if self.played:
-            await interaction.response.send_message(
-                "This round has already been played.",
-                ephemeral=True,
-            )
-            return
-
-        self.played = True
-        self.user_choice = user_choice
-        # SystemRandom-backed selection keeps each choice equally likely.
-        self.bot_choice = secrets.choice(RPS_CHOICE_KEYS)
-
-        if self.user_choice == self.bot_choice:
-            self.result = "It's a tie!"
-            self.result_color = discord.Color.from_rgb(245, 158, 11)
-        elif (self.user_choice, self.bot_choice) in {
-            ("rock", "scissors"),
-            ("paper", "rock"),
-            ("scissors", "paper"),
-        }:
-            self.result = "You win!"
-            self.result_color = discord.Color.from_rgb(34, 197, 94)
-        else:
-            self.result = "You lose!"
-            self.result_color = discord.Color.from_rgb(239, 68, 68)
-
-        self._show_play_again()
-
-        await interaction.response.edit_message(
-            embed=self.build_embed(),
-            view=self,
-        )
-
-    async def _handle_play_again(
-        self,
-        interaction: discord.Interaction,
-    ) -> None:
-        if interaction.user.id != self.player_id:
-            await interaction.response.send_message(
-                "This rock-paper-scissors game belongs to someone else.",
-                ephemeral=True,
-            )
-            return
-
-        self.played = False
-        self.user_choice = None
-        self.bot_choice = None
-        self.result = None
-        self.result_color = discord.Color.from_rgb(88, 101, 242)
-        self._show_choice_buttons()
-        await interaction.response.edit_message(
-            embed=self.build_embed(),
-            view=self,
-        )
-
-
 class GeneralCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.started_at = discord.utils.utcnow()
-
-    @commands.command(
-        name="ping",
-        help="Shows the bot's current latency.",
-    )
-    async def ping(self, ctx: commands.Context):
-        latency_ms = round(self.bot.latency * 1000)
-        await ctx.reply(f"🏓 **Pong!** `{latency_ms} ms`")
-
-    @app_commands.command(
-        name="bot_info",
-        description="Shows information about the bot.",
-    )
-    async def show_bot_info(self, interaction: discord.Interaction):
-        uptime = discord.utils.utcnow() - self.started_at
-        total_seconds = max(0, int(uptime.total_seconds()))
-        days, remaining = divmod(total_seconds, 86400)
-        hours, remaining = divmod(remaining, 3600)
-        minutes, seconds = divmod(remaining, 60)
-        uptime_parts = []
-        if days:
-            uptime_parts.append(f"{days}d")
-        if hours or days:
-            uptime_parts.append(f"{hours}h")
-        if minutes or hours or days:
-            uptime_parts.append(f"{minutes}m")
-        uptime_parts.append(f"{seconds}s")
-        uptime_text = " ".join(uptime_parts)
-
-        bot_user = self.bot.user
-        embed = discord.Embed(
-            title="Bot Information",
-            color=discord.Color.from_rgb(37, 37, 41),
-        )
-        if bot_user:
-            embed.set_author(
-                name=bot_user.display_name,
-                icon_url=bot_user.display_avatar.url,
-            )
-            embed.set_thumbnail(url=bot_user.display_avatar.url)
-
-        embed.add_field(
-            name="Latency",
-            value=f"{round(self.bot.latency * 1000)} ms",
-            inline=True,
-        )
-        embed.add_field(name="Uptime", value=uptime_text, inline=True)
-        embed.add_field(
-            name="Servers",
-            value=str(len(self.bot.guilds)),
-            inline=True,
-        )
-        embed.add_field(
-            name="Cached Members",
-            value=str(sum(guild.member_count for guild in self.bot.guilds)),
-            inline=True,
-        )
-        embed.add_field(
-            name="Discord.py",
-            value=discord.__version__,
-            inline=True,
-        )
-        embed.add_field(name="Prefix", value="`!`", inline=True)
-        embed.set_footer(
-            text=f"Requested by {interaction.user.display_name}",
-        )
-        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="membercount", description="Shows the server member count.")
     async def membercount(self, interaction: discord.Interaction):
@@ -1554,15 +518,14 @@ class GeneralCommands(commands.Cog):
         query = {"guild_id": interaction.guild.id, "user_id": member.id}
         
         original_nick = member.nick or member.name
-        existing = await asyncio.to_thread(afk_collection.find_one, query)
+        existing = afk_collection.find_one(query)
         if existing:
             original_nick = existing.get("original_nick", original_nick)
 
-        await asyncio.to_thread(
-            afk_collection.update_one,
+        afk_collection.update_one(
             query,
             {"$set": {"reason": reason, "original_nick": original_nick}},
-            upsert=True,
+            upsert=True
         )
 
         new_nick = f"[AFK] {original_nick}"
@@ -1605,210 +568,6 @@ class GeneralCommands(commands.Cog):
 
         await interaction.response.send_message(view=view)
 
-    @app_commands.command(
-        name="meme",
-        description="Sends a random meme.",
-    )
-    async def meme(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-
-        meme_name, meme_url = random.choice(MEME_FALLBACKS)
-        try:
-            timeout = aiohttp.ClientTimeout(total=8)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    "https://api.imgflip.com/get_memes",
-                    headers={"User-Agent": "Arizona-State-Management-Bot/1.0"},
-                ) as response:
-                    response.raise_for_status()
-                    payload = await response.json(content_type=None)
-
-            memes = []
-            if isinstance(payload, dict):
-                data = payload.get("data", {})
-                if isinstance(data, dict):
-                    raw_memes = data.get("memes", [])
-                    if isinstance(raw_memes, list):
-                        memes = raw_memes
-
-            candidates = []
-            for item in memes:
-                if not isinstance(item, dict):
-                    continue
-                name = item.get("name") or "Random Meme"
-                url = item.get("url")
-                if not url and item.get("id"):
-                    url = f"https://i.imgflip.com/{item['id']}.jpg"
-                if isinstance(url, str) and url.startswith(("http://", "https://")):
-                    candidates.append((str(name)[:256], url))
-
-            if candidates:
-                meme_name, meme_url = random.choice(candidates)
-        except Exception as e:
-            # A local meme keeps the command useful during a temporary API
-            # outage instead of making the slash command fail.
-            print(f"[MEME] Imgflip request failed; using fallback meme: {e}")
-
-        embed = discord.Embed(
-            title=f"Random Meme: {meme_name}"[:256],
-            color=discord.Color.from_rgb(88, 101, 242),
-        )
-        embed.set_image(url=meme_url)
-        embed.set_footer(text="Random meme")
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(
-        name="joke",
-        description="Sends a random joke.",
-    )
-    async def joke(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="Random Joke",
-            description=random.choice(JOKES),
-            color=discord.Color.from_rgb(245, 158, 11),
-        )
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(
-        name="fact",
-        description="Sends an interesting fact.",
-    )
-    async def fact(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="Did You Know?",
-            description=random.choice(FACTS),
-            color=discord.Color.from_rgb(14, 165, 233),
-        )
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(
-        name="quote",
-        description="Sends a random quote.",
-    )
-    async def quote(self, interaction: discord.Interaction):
-        quote_text, author = random.choice(QUOTES)
-        embed = discord.Embed(
-            title="Random Quote",
-            description=f"> {quote_text}\n>\n> — **{author}**",
-            color=discord.Color.from_rgb(168, 85, 247),
-        )
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(
-        name="roast",
-        description="Generates a savage roast for a member.",
-    )
-    @app_commands.describe(member="The member to roast (optional).")
-    async def roast(
-        self,
-        interaction: discord.Interaction,
-        member: Optional[discord.Member] = None,
-    ):
-        target = member or interaction.user
-        roast_text = random.choice(ROASTS).format(
-            name=target.mention,
-        )
-        embed = discord.Embed(
-            title="Roast",
-            description=roast_text,
-            color=discord.Color.from_rgb(239, 68, 68),
-        )
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(
-        name="compliment",
-        description="Generates a compliment for a member.",
-    )
-    @app_commands.describe(member="The member to compliment (optional).")
-    async def compliment(
-        self,
-        interaction: discord.Interaction,
-        member: Optional[discord.Member] = None,
-    ):
-        target = member or interaction.user
-        compliment_text = random.choice(COMPLIMENTS).format(
-            name=target.mention,
-        )
-        embed = discord.Embed(
-            title="A Compliment",
-            description=compliment_text,
-            color=discord.Color.from_rgb(236, 72, 153),
-        )
-        await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(
-        name="rps",
-        description="Play rock-paper-scissors against the bot.",
-    )
-    async def rps(self, interaction: discord.Interaction):
-        view = RPSView(
-            player_id=interaction.user.id,
-            player_name=interaction.user.display_name,
-        )
-        await interaction.response.send_message(
-            embed=view.build_embed(),
-            view=view,
-            ephemeral=True,
-        )
-
-    @app_commands.command(
-        name="ship",
-        description="Creates a ship card for two users.",
-    )
-    @app_commands.describe(
-        user1="The first user in the ship.",
-        user2="The second user in the ship.",
-    )
-    async def ship(
-        self,
-        interaction: discord.Interaction,
-        user1: discord.User,
-        user2: discord.User,
-    ):
-        if user1.id == user2.id:
-            await interaction.response.send_message(
-                "Please choose two different users for a ship.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.defer()
-
-        percentage = secrets.randbelow(101)
-        try:
-            timeout = aiohttp.ClientTimeout(total=12)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                avatar1, avatar2 = await asyncio.gather(
-                    _fetch_ship_avatar(user1, session),
-                    _fetch_ship_avatar(user2, session),
-                )
-
-            card = ShipCardRenderer(
-                user1=user1,
-                user2=user2,
-                avatar1=avatar1,
-                avatar2=avatar2,
-                percentage=percentage,
-            )
-            image = await asyncio.to_thread(card.render)
-            embed = discord.Embed()
-            embed.set_image(url="attachment://ship.png")
-            await interaction.followup.send(
-                embed=embed,
-                file=discord.File(image, filename="ship.png"),
-            )
-        except Exception as e:
-            print(f"[SHIP] Could not create ship card: {e}")
-            try:
-                await interaction.followup.send(
-                    embed=build_ship_embed(user1, user2, percentage)
-                )
-            except Exception:
-                await interaction.followup.send(
-                    "I could not create the ship card right now. Please try again.",
-                    ephemeral=True,
-                )
-
     @app_commands.command(name="rules", description="Displays server rules location.")
     async def rules(self, interaction: discord.Interaction):
         if not interaction.guild:
@@ -1825,6 +584,7 @@ class GeneralCommands(commands.Cog):
     @app_commands.command(name="sync-commands", description="Manually sync Discord commands (debug only)")
     async def sync_commands(self, interaction: discord.Interaction):
         """Manually sync commands to help debug sync issues."""
+        print(f"[COMMAND] sync-commands called by {interaction.user}")
         await interaction.response.defer(ephemeral=True)
         
         try:
@@ -1955,23 +715,9 @@ async def on_ready():
         except Exception as e:
             print(f"[Startup] Roleplay log error: {e}")
 
-        try:
-            await setup_invites(bot)
-            print("[Startup] Invite tracking system loaded.")
-        except Exception as e:
-            print(f"[Startup] Invite tracking system error: {e}")
-
-        try:
-            await setup_reports(bot)
-            print("[Startup] Interactive report system loaded.")
-        except Exception as e:
-            print(f"[Startup] Interactive report system error: {e}")
-
         # ----------------------------------------------------
         # COGS
         # ----------------------------------------------------
-        await ensure_ztp_indexes()
-
         try:
             if not bot.get_cog("ZTPSystem"):
                 await bot.add_cog(ZTPSystem(bot))
@@ -2006,6 +752,22 @@ async def on_ready():
         try:
             synced = await bot.tree.sync()
             print(f"[Startup] Synced {len(synced)} application command(s).")
+        except discord.HTTPException as e:
+            if e.status == 429:
+                retry_after = getattr(e, "retry_after", 60)
+                print(f"[Startup] Command sync rate-limited. Discord requested {retry_after}s wait.")
+                print(f"[Startup] Commands will sync on next restart if needed.")
+            else:
+                print(f"[Startup] Command sync error: {e}")
+                traceback.print_exc()
+        except discord.HTTPException as e:
+            if e.status == 429:
+                retry_after = getattr(e, "retry_after", 60)
+                print(f"[Startup] Command sync rate-limited. Discord requested {retry_after}s wait.")
+                print(f"[Startup] Commands will sync on next restart if needed.")
+            else:
+                print(f"[Startup] Command sync error: {e}")
+                traceback.print_exc()
         except Exception as e:
             print(f"[Startup] Command sync error: {e}")
             traceback.print_exc()
@@ -2040,6 +802,17 @@ async def on_ready():
         print(f"[Discord] Could not update presence: {e}")
 
     print("[Discord] Bot is ready.")
+    print(f"[Discord] Total registered commands: {len(bot.tree.get_commands())}")
+    print(f"[Discord] Commands: {', '.join(cmd.name for cmd in bot.tree.get_commands())}")
+    
+    # Test command tree
+    try:
+        commands = bot.tree.get_commands()
+        print(f"[DEBUG] Command tree verification: {len(commands)} commands registered")
+        for cmd in commands:
+            print(f"[DEBUG] - {cmd.name} ({type(cmd).__name__})")
+    except Exception as e:
+        print(f"[DEBUG] Error verifying command tree: {e}")
 
 
 # ============================================================
@@ -2626,11 +1399,16 @@ class AnnouncementTextModal(discord.ui.Modal):
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
-    if interaction.type != discord.InteractionType.component:
-        return
+    try:
+        if interaction.type != discord.InteractionType.component:
+            return
 
-    custom_id = (interaction.data or {}).get("custom_id")
-    if not custom_id:
+        custom_id = (interaction.data or {}).get("custom_id")
+        if not custom_id:
+            return
+    except Exception as e:
+        print(f"[ERROR] Interaction handler error: {e}")
+        traceback.print_exc()
         return
 
     if custom_id.startswith("dropdown_add_"):
@@ -2857,6 +1635,7 @@ async def announce(
     enable_dropdown_info: Optional[bool] = False,
     target_channel: Optional[discord.TextChannel] = None,
 ):
+    print(f"[COMMAND] announce called by {interaction.user}")
     wants_text = add_text.value == "yes"
     is_ephemeral = (
         wants_text
@@ -3098,9 +1877,13 @@ print("[STARTUP] Command groups registered: giveaway, auto-role")
     description="View information about the server",
 )
 async def serverinfo(interaction: discord.Interaction):
+    print(f"[COMMAND] serverinfo called by {interaction.user}")
     try:
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
+            print(f"[COMMAND] serverinfo deferred successfully")
+        else:
+            print(f"[COMMAND] serverinfo response already done")
 
         guild = interaction.guild
         if not guild:
@@ -3443,8 +2226,7 @@ async def set_llc(ctx: commands.Context):
     channel_name = ctx.channel.name
 
     try:
-        await asyncio.to_thread(
-            db.settings.update_one,
+        db.settings.update_one(
             {"_id": "llc_channel"},
             {"$set": {"channel_id": ctx.channel.id}},
             upsert=True,
@@ -3479,9 +2261,7 @@ async def send_llc_log(
 
     if not channel_id:
         try:
-            doc = await asyncio.to_thread(
-                db.settings.find_one, {"_id": "llc_channel"}
-            )
+            doc = db.settings.find_one({"_id": "llc_channel"})
             if doc:
                 channel_id = doc.get("channel_id")
                 target_llc_channel_id = channel_id
@@ -3515,7 +2295,33 @@ async def send_llc_log(
         embed.set_footer(text=f"AZRP Command Logs | {date_str}, {time_str}")
 
         # Send LLC log with Discord rate-limit handling
-        await guarded_send(target_channel, embed=embed)
+        for attempt in range(3):
+            try:
+                await target_channel.send(embed=embed)
+                break
+
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    retry_after = getattr(e, "retry_after", 5)
+
+                    print(
+                        f"[Rate Limit] Discord 429 hit while sending LLC log. "
+                        f"Retrying in {retry_after}s... "
+                        f"(attempt {attempt + 1}/3)"
+                    )
+
+                    await asyncio.sleep(retry_after)
+
+                else:
+                    print(
+                        f"[Discord Error] Could not send LLC log: {e}"
+                    )
+                    break
+
+        else:
+            print(
+                "[Discord Error] Failed to send LLC log after 3 attempts."
+            )
 
 
 # ============================================================
@@ -3646,42 +2452,9 @@ def home():
     return "Bot is running!"
 
 
-_ERLC_WEBHOOK_SECRET = (os.getenv("ERLC_WEBHOOK_SECRET") or "").strip()
-
-# The webhook URL is public, so anyone who finds it could otherwise make the
-# bot emit unlimited Discord messages, which is the fastest way to trip
-# Discord's global rate limit and take every command offline.
-_erlc_recent_events: deque = deque(maxlen=256)
-_erlc_recent_lock = threading.Lock()
-
-
-def _erlc_request_allowed() -> bool:
-    """Basic flood guard for the public webhook endpoint."""
-    now = time.time()
-    with _erlc_recent_lock:
-        while _erlc_recent_events and now - _erlc_recent_events[0] > 60:
-            _erlc_recent_events.popleft()
-        if len(_erlc_recent_events) >= 60:
-            return False
-        _erlc_recent_events.append(now)
-    return True
-
-
 @app.route("/erlc/events", methods=["POST"])
 def erlc_events():
     """Receive ER:LC webhook data without exposing the server key."""
-    if _ERLC_WEBHOOK_SECRET:
-        supplied = (
-            request.headers.get("X-ERLC-Secret")
-            or request.args.get("secret")
-            or ""
-        ).strip()
-        if not secrets.compare_digest(supplied, _ERLC_WEBHOOK_SECRET):
-            return "Unauthorized", 401
-
-    if not _erlc_request_allowed():
-        return "Rate limited", 429
-
     try:
         payload = request.get_json(silent=True) or {}
 
@@ -3751,113 +2524,11 @@ def run_web():
 # START BOT
 # ============================================================
 
-LOGIN_MAX_WAIT = 600.0
-MAX_LOGIN_RESTARTS = 5
-
-
-def restart_process(attempt: int) -> None:
-    """Re-exec the interpreter so the next login gets a fresh HTTP session.
-
-    discord.py 2.x closes the aiohttp session when a run ends and offers no
-    way to recreate it, so retrying in the same process always fails with
-    "Session is closed". Replacing the process image is the clean way to
-    retry, and it happens only after we have waited out the limit.
-    """
-    os.environ["BOT_LOGIN_ATTEMPTS"] = str(attempt)
-    print("[Discord] Re-executing for a fresh session...")
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os.execv(sys.executable, [sys.executable, *sys.argv])
-
-
-def run_bot_with_backoff() -> None:
-    """Log in, waiting out Discord rate limits instead of dying.
-
-    Letting the process exit on a login 429 is what turns a short block into
-    a permanent one. The host restarts the service immediately, every restart
-    fires another login request, and the token never gets a quiet window to
-    recover. Render's log showed exactly that: login refused, process exited
-    early, restart, refused again.
-
-    Keeping the retry loop in-process means we control the backoff, and we can
-    explain a persistent block instead of silently crash looping.
-
-    Note we cannot simply call bot.run() again here. Once a run fails, discord.py
-    has already closed the bot's aiohttp session and 2.x has no way to recreate
-    it, so a second run dies instantly with "Session is closed". Instead we
-    wait out the limit and then re-exec the interpreter, which gives us a
-    genuinely fresh process and session.
-    """
-    # `restarts` counts how many fresh processes we have already been
-    # through, carried across re-execs via the environment.
-    restarts = int(os.getenv("BOT_LOGIN_ATTEMPTS", "0") or 0)
-
-    print("[Discord] Logging in..." if restarts == 0
-          else f"[Discord] Retrying login (try {restarts + 1})...")
-
-    try:
-        bot.run(TOKEN)
-        return
-
-    except discord.HTTPException as e:
-        if e.status != 429:
-            print(f"[Discord Error] {e}")
-            traceback.print_exc()
-            return
-
-        if restarts >= MAX_LOGIN_RESTARTS:
-            print(
-                f"[Rate Limit] Still refused after {restarts + 1} attempts. A "
-                "global 429 this early almost always means something else is "
-                "using this bot token hard - a second Render worker, another "
-                "host, or a leaked token. Check for duplicates and reset the "
-                "token in the Discord Developer Portal. Giving up so the host "
-                "can restart us cleanly."
-            )
-            return
-
-        wait = max(5.0, _retry_after_from(e, 60.0))
-        if _global_rate_limit_headers(e):
-            # A global 429 blocks the whole token, not just one route.
-            wait = max(wait, 60.0)
-        wait = min(wait, LOGIN_MAX_WAIT)
-
-        print(
-            f"[Rate Limit] Discord refused the login and asked for {wait:.0f}s. "
-            "Waiting it out, then re-executing for a fresh session. Exiting "
-            "immediately would make the host restart us straight back into "
-            "another refused login."
-        )
-        time.sleep(wait)
-        restart_process(restarts + 1)
-
-    except discord.LoginFailure as e:
-        print(
-            f"[Discord] Login rejected as invalid: {e}. "
-            "Check the TOKEN environment variable."
-        )
-        traceback.print_exc()
-        return
-
-    except Exception as e:
-        print(f"[Fatal Error] {e}")
-        traceback.print_exc()
-        return
-
-
 if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit(
             "TOKEN environment variable is not set on Render."
         )
-
-    # Silence werkzeug so Render's log is not drowned in access lines. The
-    # bot itself does no HTTP work at all - every GET/POST/HEAD in the log
-    # is either Render's health check or the Discord gateway, neither of
-    # which is affected by this.
-    werkzeug_logger = logging.getLogger("werkzeug")
-    werkzeug_logger.setLevel(logging.WARNING)
-    logging.getLogger("discord").setLevel(logging.WARNING)
 
     threading.Thread(
         target=run_web,
@@ -3873,4 +2544,34 @@ if __name__ == "__main__":
             "[ERLC] WARNING: ERLC_SERVER_KEY is not configured."
         )
 
-    run_bot_with_backoff()
+    try:
+        print("[Discord] Logging in...")
+        print(f"[Discord] Bot heartbeat timeout: {bot.heartbeat_timeout}s")
+        print(f"[Discord] Guild ready timeout: {bot.guild_ready_timeout}s")
+        
+        # Run the bot with simple call first
+        bot.run(TOKEN)
+
+    except discord.HTTPException as e:
+        if e.status == 429:
+            retry_after = getattr(e, "retry_after", 60)
+
+            print(
+                f"[Rate Limit] Discord API returned 429 during connection. "
+                f"Discord requested a {retry_after} second wait."
+            )
+
+            # Do not attempt another login from inside bot.py.
+            # Render/discord.py should handle the connection lifecycle.
+            print(
+                "[Discord] Process will stop instead of repeatedly "
+                "reconnecting and increasing the rate limit."
+            )
+
+        else:
+            print(f"[Discord Error] {e}")
+            traceback.print_exc()
+
+    except Exception as e:
+        print(f"[Fatal Error] {e}")
+        traceback.print_exc()
