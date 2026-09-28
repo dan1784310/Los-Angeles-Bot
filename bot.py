@@ -3886,6 +3886,79 @@ def run_web():
 # START BOT
 # ============================================================
 
+LOGIN_MAX_WAIT = 600.0
+
+
+def run_bot_with_backoff() -> None:
+    """Log in, waiting out Discord rate limits instead of dying.
+
+    Letting the process exit on a login 429 is what turns a short block into
+    a permanent one. The host restarts the service immediately, every restart
+    fires another login request, and the token never gets a quiet window to
+    recover. Render's log showed exactly that: login refused, process exited
+    early, restart, refused again.
+
+    Keeping the retry loop in-process means we control the backoff, and we can
+    explain a persistent block instead of silently crash looping.
+    """
+    attempt = 0
+
+    while True:
+        attempt += 1
+
+        if attempt == 1:
+            print("[Discord] Logging in...")
+        else:
+            print(f"[Discord] Retrying login (attempt {attempt})...")
+
+        try:
+            bot.run(TOKEN)
+            return
+
+        except discord.HTTPException as e:
+            if e.status != 429:
+                print(f"[Discord Error] {e}")
+                traceback.print_exc()
+                return
+
+            wait = max(5.0, _retry_after_from(e, 60.0))
+            if _is_global_rate_limit(e):
+                # A global 429 blocks the whole token, not one route.
+                wait = max(wait, 60.0)
+
+            wait = min(wait * min(attempt, 5), LOGIN_MAX_WAIT)
+
+            if attempt >= 5:
+                print(
+                    f"[Rate Limit] Still refused after {attempt} attempts. "
+                    "A global 429 this early usually means something ELSE is "
+                    "using this bot token hard - a second Render worker, an "
+                    "old deploy, a leftover process, or a leaked token. "
+                    "Check for duplicates, and reset the token in the Discord "
+                    "Developer Portal if you do not recognise the traffic."
+                )
+
+            print(
+                f"[Rate Limit] Discord refused the login and asked for "
+                f"{wait:.0f}s. Sleeping instead of exiting, so the host does "
+                "not restart us into another refused login."
+            )
+            time.sleep(wait)
+
+        except discord.LoginFailure as e:
+            print(
+                f"[Discord] Login rejected as invalid: {e}. "
+                "Check the TOKEN environment variable."
+            )
+            traceback.print_exc()
+            return
+
+        except Exception as e:
+            print(f"[Fatal Error] {e}")
+            traceback.print_exc()
+            return
+
+
 if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit(
@@ -3906,30 +3979,4 @@ if __name__ == "__main__":
             "[ERLC] WARNING: ERLC_SERVER_KEY is not configured."
         )
 
-    try:
-        print("[Discord] Logging in...")
-        bot.run(TOKEN)
-
-    except discord.HTTPException as e:
-        if e.status == 429:
-            retry_after = getattr(e, "retry_after", 60)
-
-            print(
-                f"[Rate Limit] Discord API returned 429 during connection. "
-                f"Discord requested a {retry_after} second wait."
-            )
-
-            # Do not attempt another login from inside bot.py.
-            # Render/discord.py should handle the connection lifecycle.
-            print(
-                "[Discord] Process will stop instead of repeatedly "
-                "reconnecting and increasing the rate limit."
-            )
-
-        else:
-            print(f"[Discord Error] {e}")
-            traceback.print_exc()
-
-    except Exception as e:
-        print(f"[Fatal Error] {e}")
-        traceback.print_exc()
+    run_bot_with_backoff()
