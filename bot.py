@@ -8,6 +8,7 @@ from collections import deque
 import random
 import re
 import secrets
+import sys
 import threading
 import time
 import traceback
@@ -3751,6 +3752,22 @@ def run_web():
 # ============================================================
 
 LOGIN_MAX_WAIT = 600.0
+MAX_LOGIN_RESTARTS = 5
+
+
+def restart_process(attempt: int) -> None:
+    """Re-exec the interpreter so the next login gets a fresh HTTP session.
+
+    discord.py 2.x closes the aiohttp session when a run ends and offers no
+    way to recreate it, so retrying in the same process always fails with
+    "Session is closed". Replacing the process image is the clean way to
+    retry, and it happens only after we have waited out the limit.
+    """
+    os.environ["BOT_LOGIN_ATTEMPTS"] = str(attempt)
+    print("[Discord] Re-executing for a fresh session...")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 def run_bot_with_backoff() -> None:
@@ -3764,63 +3781,68 @@ def run_bot_with_backoff() -> None:
 
     Keeping the retry loop in-process means we control the backoff, and we can
     explain a persistent block instead of silently crash looping.
+
+    Note we cannot simply call bot.run() again here. Once a run fails, discord.py
+    has already closed the bot's aiohttp session and 2.x has no way to recreate
+    it, so a second run dies instantly with "Session is closed". Instead we
+    wait out the limit and then re-exec the interpreter, which gives us a
+    genuinely fresh process and session.
     """
-    attempt = 0
+    # `restarts` counts how many fresh processes we have already been
+    # through, carried across re-execs via the environment.
+    restarts = int(os.getenv("BOT_LOGIN_ATTEMPTS", "0") or 0)
 
-    while True:
-        attempt += 1
+    print("[Discord] Logging in..." if restarts == 0
+          else f"[Discord] Retrying login (try {restarts + 1})...")
 
-        if attempt == 1:
-            print("[Discord] Logging in...")
-        else:
-            print(f"[Discord] Retrying login (attempt {attempt})...")
+    try:
+        bot.run(TOKEN)
+        return
 
-        try:
-            bot.run(TOKEN)
-            return
-
-        except discord.HTTPException as e:
-            if e.status != 429:
-                print(f"[Discord Error] {e}")
-                traceback.print_exc()
-                return
-
-            wait = max(5.0, _retry_after_from(e, 60.0))
-            if _global_rate_limit_headers(e):
-                # A global 429 blocks the whole token, not one route.
-                wait = max(wait, 60.0)
-
-            wait = min(wait * min(attempt, 5), LOGIN_MAX_WAIT)
-
-            if attempt >= 5:
-                print(
-                    f"[Rate Limit] Still refused after {attempt} attempts. "
-                    "A global 429 this early usually means something ELSE is "
-                    "using this bot token hard - a second Render worker, an "
-                    "old deploy, a leftover process, or a leaked token. "
-                    "Check for duplicates, and reset the token in the Discord "
-                    "Developer Portal if you do not recognise the traffic."
-                )
-
-            print(
-                f"[Rate Limit] Discord refused the login and asked for "
-                f"{wait:.0f}s. Sleeping instead of exiting, so the host does "
-                "not restart us into another refused login."
-            )
-            time.sleep(wait)
-
-        except discord.LoginFailure as e:
-            print(
-                f"[Discord] Login rejected as invalid: {e}. "
-                "Check the TOKEN environment variable."
-            )
+    except discord.HTTPException as e:
+        if e.status != 429:
+            print(f"[Discord Error] {e}")
             traceback.print_exc()
             return
 
-        except Exception as e:
-            print(f"[Fatal Error] {e}")
-            traceback.print_exc()
+        if restarts >= MAX_LOGIN_RESTARTS:
+            print(
+                f"[Rate Limit] Still refused after {restarts + 1} attempts. A "
+                "global 429 this early almost always means something else is "
+                "using this bot token hard - a second Render worker, another "
+                "host, or a leaked token. Check for duplicates and reset the "
+                "token in the Discord Developer Portal. Giving up so the host "
+                "can restart us cleanly."
+            )
             return
+
+        wait = max(5.0, _retry_after_from(e, 60.0))
+        if _global_rate_limit_headers(e):
+            # A global 429 blocks the whole token, not just one route.
+            wait = max(wait, 60.0)
+        wait = min(wait, LOGIN_MAX_WAIT)
+
+        print(
+            f"[Rate Limit] Discord refused the login and asked for {wait:.0f}s. "
+            "Waiting it out, then re-executing for a fresh session. Exiting "
+            "immediately would make the host restart us straight back into "
+            "another refused login."
+        )
+        time.sleep(wait)
+        restart_process(restarts + 1)
+
+    except discord.LoginFailure as e:
+        print(
+            f"[Discord] Login rejected as invalid: {e}. "
+            "Check the TOKEN environment variable."
+        )
+        traceback.print_exc()
+        return
+
+    except Exception as e:
+        print(f"[Fatal Error] {e}")
+        traceback.print_exc()
+        return
 
 
 if __name__ == "__main__":

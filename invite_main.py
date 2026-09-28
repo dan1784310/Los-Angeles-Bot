@@ -3,9 +3,16 @@ Invite Tracking Module
 Tracks who invited whom into the server, recovers historical joins for
 current members on first startup, and exposes /invites and
 /invite-leaderboard commands.
+
+The historical backfill pages through every member of the server, which is
+hundreds of Discord API calls in a burst. Running that automatically on
+every deploy is what pushed the bot into Discord's *global* rate limit, so
+it is now opt-in via INVITE_BACKFILL_ON_STARTUP=1 and is rate limited and
+capped when it does run.
 """
 
 import asyncio
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +23,21 @@ from discord.ext import commands
 from invite_database import db
 
 MEMBER_SEARCH_PAGE_SIZE = 100
+
+# Seconds to wait between member-search pages. Discord member search is
+# expensive and shares the global budget, so this is deliberately slow.
+BACKFILL_PAGE_DELAY = 2.0
+
+# Hard cap on pages per guild per run, so one boot can never fire an
+# unbounded number of requests.
+BACKFILL_MAX_PAGES = 50
+
+BACKFILL_ON_STARTUP = (
+    os.getenv("INVITE_BACKFILL_ON_STARTUP", "")
+    .strip()
+    .lower()
+    in ("1", "true", "yes")
+)
 MEMBER_SEARCH_SORT_NEWEST = 1
 
 # ============================================================
@@ -138,8 +160,19 @@ class InviteSystem(commands.Cog):
         self._schedule_historical_backfill()
 
     def _schedule_historical_backfill(self) -> None:
+        # Paging through every member is a large burst of Discord API calls.
+        # Doing that automatically on each deploy is what tripped the global
+        # rate limit and took every command offline, so it is opt-in now.
+        if not BACKFILL_ON_STARTUP:
+            print(
+                "[INVITE] Historical backfill is disabled. Set "
+                "INVITE_BACKFILL_ON_STARTUP=1 to run it once by hand."
+            )
+            return
+
         if self.backfill_task and not self.backfill_task.done():
             return
+
         self.backfill_task = asyncio.create_task(
             self.backfill_existing_history(),
             name="discord-invite-history-backfill",
@@ -371,16 +404,26 @@ class InviteSystem(commands.Cog):
         seen_cursors = set()
         processed_members = 0
         imported_records = 0
+        pages_fetched = 0
 
         print(
             f"[INVITE] Recovering historical joins for guild {guild.id}..."
         )
 
         while True:
+            if pages_fetched >= BACKFILL_MAX_PAGES:
+                print(
+                    f"[INVITE] Backfill hit the {BACKFILL_MAX_PAGES}-page "
+                    f"cap for guild {guild.id} after {processed_members} "
+                    "members. Re-run it later to continue where it stopped."
+                )
+                break
+
             if after is not None:
                 payload["after"] = after
 
             data = await self._fetch_member_search_page(guild.id, payload)
+            pages_fetched += 1
             members = data.get("members") or []
             records = [
                 record
@@ -447,7 +490,7 @@ class InviteSystem(commands.Cog):
             after = next_cursor
 
             # Avoid bursts when recovering a large member list.
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(BACKFILL_PAGE_DELAY)
 
         marked_complete = await asyncio.to_thread(
             db.mark_backfill_complete,
