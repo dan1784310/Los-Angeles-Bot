@@ -3,6 +3,9 @@ Moderation Main Module
 Contains all moderation commands with permission checks and logging.
 """
 
+import asyncio
+import time
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -13,6 +16,25 @@ from moderation_database import db
 
 # Configuration - Set the role ID that can use moderation commands
 MODERATION_ROLE_ID = 1527053931304321130  # Change this to your desired role ID
+
+# Listeners like on_member_update fire constantly in an active server. If one
+# of them raises, printing every single error can emit hundreds of lines per
+# second, which floods the host log and starves the event loop until commands
+# stop responding. Report each distinct error once per window instead.
+_ERROR_LOG_INTERVAL = 60.0
+_last_listener_error: dict[str, float] = {}
+
+
+def log_listener_error(context: str, error: BaseException) -> None:
+    """Print a listener error at most once per interval per context."""
+    now = time.time()
+    last = _last_listener_error.get(context, 0.0)
+
+    if now - last < _ERROR_LOG_INTERVAL:
+        return
+
+    _last_listener_error[context] = now
+    print(f"[MOD LOGS] Error {context}: {error!r}")
 
 
 def has_moderation_role(user: discord.Member) -> bool:
@@ -203,11 +225,18 @@ class ModerationSystem(commands.Cog):
                     # Log the ban
                     moderator_id = entry.user.id if entry.user else guild.me.id
                     reason = entry.reason or "No reason provided"
-                    db.add_modlog(guild.id, user.id, moderator_id, "BAN", reason)
+                    await asyncio.to_thread(
+                        db.add_modlog,
+                        guild.id,
+                        user.id,
+                        moderator_id,
+                        "BAN",
+                        reason,
+                    )
                     break
         except Exception as e:
-            print(f"[MOD LOGS] Error logging manual ban: {e}")
-    
+            log_listener_error("logging manual ban", e)
+
     @commands.Cog.listener()
     async def on_member_unban(self, guild: discord.Guild, user: discord.User):
         """Log manual unbans to moderation database."""
@@ -215,10 +244,17 @@ class ModerationSystem(commands.Cog):
             async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.unban):
                 if entry.target.id == user.id:
                     moderator_id = entry.user.id if entry.user else guild.me.id
-                    db.add_modlog(guild.id, user.id, moderator_id, "UNBAN", None)
+                    await asyncio.to_thread(
+                        db.add_modlog,
+                        guild.id,
+                        user.id,
+                        moderator_id,
+                        "UNBAN",
+                        None,
+                    )
                     break
         except Exception as e:
-            print(f"[MOD LOGS] Error logging manual unban: {e}")
+            log_listener_error("logging manual unban", e)
     
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
@@ -231,19 +267,40 @@ class ModerationSystem(commands.Cog):
                         changes = entry.changes.before.get('nick') if entry.changes else None
                         if changes is not None:
                             moderator_id = entry.user.id if entry.user else after.guild.me.id
-                            db.add_modlog(after.guild.id, after.id, moderator_id, "NICKNAME", f"Changed to: {after.nick}")
+                            await asyncio.to_thread(
+                                db.add_modlog,
+                                after.guild.id,
+                                after.id,
+                                moderator_id,
+                                "NICKNAME",
+                                f"Changed to: {after.nick}",
+                            )
                             break
-            
-            # Check for timeout change
-            if before.timed_out != after.timed_out:
-                if after.timed_out:
+
+            # Check for timeout change.
+            # discord.py 2.x exposes this as `timed_out_until` (a datetime or
+            # None). There is no `timed_out` attribute - that one belongs to
+            # py-cord - and touching it raised AttributeError on every single
+            # member update, which spammed the log hundreds of times a second.
+            before_timeout = getattr(before, "timed_out_until", None)
+            after_timeout = getattr(after, "timed_out_until", None)
+
+            if before_timeout != after_timeout:
+                if after_timeout is not None:
                     # User was timed out
                     async for entry in after.guild.audit_logs(limit=5, action=discord.AuditLogAction.member_update):
                         if entry.target.id == after.id:
                             if entry.changes and 'communication_disabled_until' in entry.changes.after:
                                 moderator_id = entry.user.id if entry.user else after.guild.me.id
                                 reason = entry.reason or "No reason provided"
-                                db.add_modlog(after.guild.id, after.id, moderator_id, "TIMEOUT", reason)
+                                await asyncio.to_thread(
+                                    db.add_modlog,
+                                    after.guild.id,
+                                    after.id,
+                                    moderator_id,
+                                    "TIMEOUT",
+                                    reason,
+                                )
                                 break
                 else:
                     # User timeout was removed
@@ -251,10 +308,17 @@ class ModerationSystem(commands.Cog):
                         if entry.target.id == after.id:
                             if entry.changes and 'communication_disabled_until' in entry.changes.before:
                                 moderator_id = entry.user.id if entry.user else after.guild.me.id
-                                db.add_modlog(after.guild.id, after.id, moderator_id, "UNTIMEOUT", None)
+                                await asyncio.to_thread(
+                                    db.add_modlog,
+                                    after.guild.id,
+                                    after.id,
+                                    moderator_id,
+                                    "UNTIMEOUT",
+                                    None,
+                                )
                                 break
         except Exception as e:
-            print(f"[MOD LOGS] Error logging manual member update: {e}")
+            log_listener_error("logging manual member update", e)
     
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
@@ -267,7 +331,14 @@ class ModerationSystem(commands.Cog):
                         if entry.target.id == member.id:
                             if entry.changes and 'mute' in entry.changes.after:
                                 moderator_id = entry.user.id if entry.user else member.guild.me.id
-                                db.add_modlog(member.guild.id, member.id, moderator_id, "MUTE", None)
+                                await asyncio.to_thread(
+                                    db.add_modlog,
+                                    member.guild.id,
+                                    member.id,
+                                    moderator_id,
+                                    "MUTE",
+                                    None,
+                                )
                                 break
                 else:
                     # User was unmuted
@@ -275,10 +346,17 @@ class ModerationSystem(commands.Cog):
                         if entry.target.id == member.id:
                             if entry.changes and 'mute' in entry.changes.before:
                                 moderator_id = entry.user.id if entry.user else member.guild.me.id
-                                db.add_modlog(member.guild.id, member.id, moderator_id, "UNMUTE", None)
+                                await asyncio.to_thread(
+                                    db.add_modlog,
+                                    member.guild.id,
+                                    member.id,
+                                    moderator_id,
+                                    "UNMUTE",
+                                    None,
+                                )
                                 break
         except Exception as e:
-            print(f"[MOD LOGS] Error logging manual voice state update: {e}")
+            log_listener_error("logging manual voice state update", e)
     
     def _parse_duration(self, duration_str: str) -> timedelta:
         """Parse duration string like '1s', '1m', '1h', '1d', '1w'."""
@@ -314,7 +392,14 @@ class ModerationSystem(commands.Cog):
         
         try:
             await user.kick(reason=reason)
-            db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "KICK", reason)
+            await asyncio.to_thread(
+                db.add_modlog,
+                interaction.guild.id,
+                user.id,
+                interaction.user.id,
+                "KICK",
+                reason,
+            )
             await interaction.followup.send(f"✅ Successfully kicked {user.mention}!", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to kick user: {e}", ephemeral=True)
@@ -340,7 +425,15 @@ class ModerationSystem(commands.Cog):
             td = self._parse_duration(duration)
             until = discord.utils.utcnow() + td
             await user.timeout(until, reason=reason)
-            db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "TIMEOUT", reason, f"Duration: {duration}")
+            await asyncio.to_thread(
+                db.add_modlog,
+                interaction.guild.id,
+                user.id,
+                interaction.user.id,
+                "TIMEOUT",
+                reason,
+                f"Duration: {duration}",
+            )
             await interaction.followup.send(f"✅ Successfully timed out {user.mention} for {duration}!", ephemeral=True)
         except ValueError:
             await interaction.followup.send("❌ Invalid duration format. Use formats like: 10s, 10m, 2h, 3d, 1w", ephemeral=True)
@@ -366,7 +459,14 @@ class ModerationSystem(commands.Cog):
         
         try:
             await user.timeout(None, reason="Timeout removed")
-            db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "UNTIMEOUT", None)
+            await asyncio.to_thread(
+                db.add_modlog,
+                interaction.guild.id,
+                user.id,
+                interaction.user.id,
+                "UNTIMEOUT",
+                None,
+            )
             await interaction.followup.send(f"✅ Successfully removed timeout from {user.mention}!", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to remove timeout: {e}", ephemeral=True)
@@ -386,8 +486,14 @@ class ModerationSystem(commands.Cog):
         
         try:
             db.add_warning(interaction.guild.id, user.id, interaction.user.id, reason)
-            db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "WARN", reason)
-            
+            await asyncio.to_thread(
+                db.add_modlog,
+                interaction.guild.id,
+                user.id,
+                interaction.user.id,
+                "WARN",
+                reason,
+            )
             # Send warning message to the user
             warn_message = f"{user.mention}, you have been warned for the following reason: {reason}"
             
@@ -526,7 +632,14 @@ class ModerationSystem(commands.Cog):
         
         try:
             await user.edit(nick=name)
-            db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "NICKNAME", f"Changed to: {name}")
+            await asyncio.to_thread(
+                db.add_modlog,
+                interaction.guild.id,
+                user.id,
+                interaction.user.id,
+                "NICKNAME",
+                f"Changed to: {name}",
+            )
             await interaction.followup.send(f"✅ Successfully changed {user.mention}'s nickname to {name}!", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to change nickname: {e}", ephemeral=True)
@@ -576,7 +689,14 @@ class ModerationSystem(commands.Cog):
         
         try:
             await user.edit(mute=True)
-            db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "MUTE", None)
+            await asyncio.to_thread(
+                db.add_modlog,
+                interaction.guild.id,
+                user.id,
+                interaction.user.id,
+                "MUTE",
+                None,
+            )
             await interaction.followup.send(f"✅ Successfully muted {user.mention}!", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to mute user: {e}", ephemeral=True)
@@ -600,7 +720,14 @@ class ModerationSystem(commands.Cog):
         
         try:
             await user.edit(mute=False)
-            db.add_modlog(interaction.guild.id, user.id, interaction.user.id, "UNMUTE", None)
+            await asyncio.to_thread(
+                db.add_modlog,
+                interaction.guild.id,
+                user.id,
+                interaction.user.id,
+                "UNMUTE",
+                None,
+            )
             await interaction.followup.send(f"✅ Successfully unmuted {user.mention}!", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to unmute user: {e}", ephemeral=True)
