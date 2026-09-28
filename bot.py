@@ -217,6 +217,145 @@ async def test(ctx: commands.Context):
     await ctx.send("✅ Prefix commands are working!")
 
 
+# ============================================================
+# DISCORD RATE LIMIT PROTECTION
+# ============================================================
+#
+# Discord enforces a *global* limit of roughly 50 requests/second per token.
+# Tripping it returns HTTP 429 with error code 0 ("exceeding global rate
+# limits") and blocks every route at once, which is why unrelated commands
+# suddenly start failing. Bursts of out-of-band traffic are the usual trigger.
+#
+# Everything burst-prone is funnelled through guarded_send, which serialises
+# requests, enforces a minimum gap, honours the retry_after Discord asks for,
+# and opens a circuit breaker after a global 429 so the rest of the bot backs
+# off instead of piling onto an already-blocked token.
+
+MIN_SEND_GAP = 0.2
+MAX_PENDING_SENDS = 200
+
+_send_lock: Optional[asyncio.Lock] = None
+_pending_sends = 0
+_last_send_at = 0.0
+_global_cooldown_until = 0.0
+
+
+def _ensure_send_lock() -> asyncio.Lock:
+    global _send_lock
+    if _send_lock is None:
+        _send_lock = asyncio.Lock()
+    return _send_lock
+
+
+def _retry_after_from(error: BaseException, default: float) -> float:
+    """Read the wait time Discord asked for out of a 429 error."""
+    value = getattr(error, "retry_after", None)
+    if isinstance(value, (int, float)) and value >= 0:
+        return float(value)
+
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    for header in ("Retry-After", "retry-after"):
+        raw = headers.get(header)
+        if raw:
+            try:
+                return max(0.0, float(raw))
+            except (TypeError, ValueError):
+                continue
+
+    return default
+
+
+def _is_global_rate_limit(error: BaseException) -> bool:
+    response = getattr(error, "response", None)
+    if response is None:
+        return False
+
+    headers = getattr(response, "headers", None) or {}
+    if str(headers.get("X-RateLimit-Global", "")).lower() == "true":
+        return True
+
+    try:
+        return bool(response.json().get("global"))
+    except Exception:
+        return False
+
+
+def open_global_cooldown(error: BaseException) -> None:
+    """Stop every outbound send until the token is unblocked again."""
+    global _global_cooldown_until
+    wait = max(1.0, _retry_after_from(error, 5.0))
+    until = time.time() + wait
+    if until > _global_cooldown_until:
+        _global_cooldown_until = until
+    print(
+        f"[Rate Limit] Discord returned a global 429. Backing off all sends "
+        f"for {wait:.1f}s. Code 0 blocks every route, not just one bucket."
+    )
+
+
+def is_globally_rate_limited() -> bool:
+    return _global_cooldown_until - time.time() > 0
+
+
+async def _respect_cooldown() -> None:
+    remaining = _global_cooldown_until - time.time()
+    if remaining > 0:
+        print(
+            f"[Rate Limit] Cooling down for {remaining:.1f}s before sending."
+        )
+        await asyncio.sleep(remaining)
+
+
+async def guarded_send(destination, *, attempts: int = 4, **kwargs):
+    """Send with global rate limit protection. Returns None if dropped."""
+    global _pending_sends, _last_send_at
+    lock = _ensure_send_lock()
+
+    async with lock:
+        if _pending_sends >= MAX_PENDING_SENDS:
+            print(
+                f"[Rate Limit] Dropped a send - {_pending_sends} already "
+                "queued (inbound flood or a very busy command log)."
+            )
+            return None
+        _pending_sends += 1
+
+    try:
+        for attempt in range(1, attempts + 1):
+            await _respect_cooldown()
+            try:
+                async with lock:
+                    gap = time.time() - _last_send_at
+                    if gap < MIN_SEND_GAP:
+                        await asyncio.sleep(MIN_SEND_GAP - gap)
+                    _last_send_at = time.time()
+
+                return await destination.send(**kwargs)
+
+            except discord.HTTPException as e:
+                if e.status != 429:
+                    raise
+
+                if _is_global_rate_limit(e):
+                    open_global_cooldown(e)
+
+                if attempt >= attempts:
+                    print(
+                        f"[Rate Limit] Giving up on a send after "
+                        f"{attempts} attempts."
+                    )
+                    return None
+
+                wait = max(MIN_SEND_GAP, _retry_after_from(e, 1.0))
+                await asyncio.sleep(wait * attempt)
+
+        return None
+    finally:
+        async with lock:
+            _pending_sends -= 1
+
+
 @bot.tree.error
 async def on_app_command_error(
     interaction: discord.Interaction,
@@ -229,6 +368,26 @@ async def on_app_command_error(
         else:
             await interaction.response.send_message(msg, ephemeral=True)
     else:
+        cause = getattr(error, "__cause__", None) or error
+        if (
+            isinstance(cause, discord.HTTPException)
+            and cause.status == 429
+        ):
+            if _is_global_rate_limit(cause):
+                open_global_cooldown(cause)
+                print(
+                    "[Rate Limit] A command was rejected by Discord's global "
+                    "rate limit. Nothing is wrong with the command; the token "
+                    "is temporarily blocked. See the [Rate Limit] lines above "
+                    "for what is flooding the API."
+                )
+            else:
+                print(
+                    "[Rate Limit] A command hit a per-route rate limit "
+                    f"(retry after {getattr(cause, 'retry_after', '?')}s)."
+                )
+            return
+
         print(f"[ERROR] App Command Error: {error}")
         traceback.print_exception(type(error), error, error.__traceback__)
 
@@ -3524,33 +3683,7 @@ async def send_llc_log(
         embed.set_footer(text=f"AZRP Command Logs | {date_str}, {time_str}")
 
         # Send LLC log with Discord rate-limit handling
-        for attempt in range(3):
-            try:
-                await target_channel.send(embed=embed)
-                break
-
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    retry_after = getattr(e, "retry_after", 5)
-
-                    print(
-                        f"[Rate Limit] Discord 429 hit while sending LLC log. "
-                        f"Retrying in {retry_after}s... "
-                        f"(attempt {attempt + 1}/3)"
-                    )
-
-                    await asyncio.sleep(retry_after)
-
-                else:
-                    print(
-                        f"[Discord Error] Could not send LLC log: {e}"
-                    )
-                    break
-
-        else:
-            print(
-                "[Discord Error] Failed to send LLC log after 3 attempts."
-            )
+        await guarded_send(target_channel, embed=embed)
 
 
 # ============================================================
