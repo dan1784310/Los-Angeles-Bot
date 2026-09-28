@@ -9,6 +9,7 @@ from discord.ext import commands
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 import asyncio
+import traceback
 
 from moderation_database import db as mod_db
 
@@ -508,9 +509,16 @@ class InfractionSystem(commands.Cog):
         user: Optional[discord.Member] = None,
         infractions_type: Optional[str] = None
     ):
-        # Check permissions
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message("❌ This can only be used in a server.", ephemeral=True)
+        print(f"[COMMAND] infractions view called by {interaction.user}")
+        
+        try:
+            # Check permissions
+            if not interaction.guild or not isinstance(interaction.user, discord.Member):
+                await interaction.response.send_message("❌ This can only be used in a server.", ephemeral=True)
+                return
+        except Exception as e:
+            print(f"[ERROR] Permission check error: {e}")
+            traceback.print_exc()
             return
         
         required_role = interaction.guild.get_role(INFRACTIONS_VIEW_ROLE_ID)
@@ -522,11 +530,13 @@ class InfractionSystem(commands.Cog):
         target_user = user if user else interaction.user
         
         await interaction.response.defer(ephemeral=True)
+        print(f"[COMMAND] infractions view deferred successfully")
         
         try:
             # Get modlogs from database
             guild_id = interaction.guild.id
             user_id = target_user.id
+            print(f"[COMMAND] Fetching modlogs for guild {guild_id}, user {user_id}")
             
             # Fetch modlogs
             modlogs = mod_db.get_modlogs(guild_id, user_id, limit=100)
@@ -609,6 +619,8 @@ class InfractionSystem(commands.Cog):
             
         except Exception as e:
             print(f"Error viewing infractions: {e}")
+            print(f"[ERROR] Error retrieving infractions: {e}")
+            traceback.print_exc()
             await interaction.followup.send(f"❌ Error retrieving infractions: {e}", ephemeral=True)
     
     def _parse_expiration(self, expiration_str: str) -> float:
