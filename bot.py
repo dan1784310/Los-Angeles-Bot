@@ -1,8 +1,10 @@
 import asyncio
 import datetime
+import logging
 import os
 import random
 import re
+import sys
 import threading
 import time
 import traceback
@@ -34,6 +36,12 @@ from roleplay_log import setup as setup_roleplay_log
 
 # Initialize collections that are needed in event handlers
 afk_collection = mod_db.db["afk_status"]
+
+# Printing every message floods the host log and costs real throughput in a
+# busy server. Opt in only while debugging.
+DEBUG_MESSAGES = (
+    os.getenv("DEBUG_MESSAGES", "").strip().lower() in ("1", "true", "yes")
+)
 
 
 # ============================================================
@@ -135,10 +143,9 @@ intents.presences = False
 
 # Simplified bot setup with minimal timeouts
 bot = commands.Bot(
-    command_prefix="!", 
+    command_prefix="!",
     intents=intents,
     max_messages=None,
-    heartbeat_timeout=30  # Reduced from default
 )
 
 
@@ -147,52 +154,78 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    print(f"[MESSAGE DEBUG] Author: {message.author}, Content: {message.content}")
-    
+    if DEBUG_MESSAGES:
+        print(f"[MESSAGE DEBUG] Author: {message.author}, Content: {message.content}")
+
+    # Every PyMongo call in this handler is blocking, and on_message runs for
+    # every human message. Doing them inline freezes the event loop, so no
+    # interaction gets acknowledged inside Discord's 3 second window and
+    # every command reports "The application did not respond". They are
+    # pushed onto a worker thread instead.
+
     # Check if user is AFK and remove status
     if message.guild and isinstance(message.author, discord.Member):
         query = {"guild_id": message.guild.id, "user_id": message.author.id}
-        afk_data = afk_collection.find_one(query)
+        afk_data = await asyncio.to_thread(afk_collection.find_one, query)
         if afk_data:
             original_nick = afk_data.get("original_nick", message.author.name)
-            afk_collection.delete_one(query)
-            
+            await asyncio.to_thread(afk_collection.delete_one, query)
+
             try:
                 await message.author.edit(nick=original_nick, reason="User is back online")
             except Exception:
                 pass
-            
+
             view = discord.ui.LayoutView(timeout=None)
             container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
             container.add_item(discord.ui.TextDisplay("✅ You are back online, AFK status removed."))
             view.add_item(container)
-            
+
             try:
                 await message.channel.send(view=view, delete_after=5, reference=message)
             except Exception:
                 pass
-    
-    # Check if message mentions any AFK users
+
+    # Check if message mentions any AFK users.
+    # One query for all mentions rather than one per mentioned user.
     if message.guild and message.mentions:
-        for mentioned_user in message.mentions:
-            if mentioned_user.bot:
-                continue
-                
-            query = {"guild_id": message.guild.id, "user_id": mentioned_user.id}
-            afk_data = afk_collection.find_one(query)
-            if afk_data:
-                reason = afk_data.get("reason", "AFK")
-                
-                view = discord.ui.LayoutView(timeout=None)
-                container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
-                container.add_item(discord.ui.TextDisplay(f"👋 The user is currently **{reason}**."))
-                view.add_item(container)
-                
-                try:
-                    await message.channel.send(view=view, delete_after=10, reference=message)
-                except Exception:
-                    pass
-    
+        mention_ids = [m.id for m in message.mentions if not m.bot]
+        if mention_ids:
+            try:
+                afk_rows = await asyncio.to_thread(
+                    lambda: list(
+                        afk_collection.find(
+                            {
+                                "guild_id": message.guild.id,
+                                "user_id": {"$in": mention_ids},
+                            }
+                        )
+                    )
+                )
+            except Exception as e:
+                print(f"[AFK] Could not read AFK records: {e}")
+                afk_rows = []
+
+            by_user = {row.get("user_id"): row for row in afk_rows}
+
+            for mentioned_user in message.mentions:
+                if mentioned_user.bot:
+                    continue
+
+                afk_data = by_user.get(mentioned_user.id)
+                if afk_data:
+                    reason = afk_data.get("reason", "AFK")
+
+                    view = discord.ui.LayoutView(timeout=None)
+                    container = discord.ui.Container(accent_colour=discord.Color.from_rgb(37, 37, 41))
+                    container.add_item(discord.ui.TextDisplay(f"👋 The user is currently **{reason}**."))
+                    view.add_item(container)
+
+                    try:
+                        await message.channel.send(view=view, delete_after=10, reference=message)
+                    except Exception:
+                        pass
+
     await bot.process_commands(message)
 
 @bot.command()
@@ -249,6 +282,25 @@ ZTP_ROLE_ID = 1527377838536265908
 ZTP_COMMAND_ROLE_ID = 1527050918804062469
 
 ztp_collection = mod_db.db["ztp_timers"]
+
+# Caps how much one expiry sweep pulls, so a large backlog cannot turn into
+# one long blocking pass.
+ZTP_SCAN_LIMIT = 200
+
+
+async def ensure_ztp_indexes() -> None:
+    """Index the field the 5 second expiry sweep filters on.
+
+    Without this the sweep is a full collection scan every 5 seconds.
+    """
+    try:
+        await asyncio.to_thread(
+            ztp_collection.create_index,
+            "expiry",
+            name="ztp_expiry_idx",
+        )
+    except Exception as e:
+        print(f"[ZTP] Could not create the expiry index: {e}")
 
 def parse_duration(duration_str: str) -> Optional[int]:
     match = re.match(r"^(\d+)([smhdw])$", duration_str.lower().strip())
@@ -341,24 +393,42 @@ class ZTPSystem(commands.Cog):
     @tasks.loop(seconds=5)
     async def check_loop(self):
         now = time.time()
-        expired_docs = list(ztp_collection.find({"expiry": {"$lte": now}}))
+
+        # PyMongo is blocking. Running it directly from this task freezes the
+        # whole event loop every 5 seconds, which is enough to make Discord
+        # interactions miss their 3 second acknowledgement window. On a slow
+        # or unreachable database the freeze can last far longer.
+        try:
+            expired_docs = await asyncio.to_thread(
+                lambda: list(
+                    ztp_collection
+                    .find({"expiry": {"$lte": now}})
+                    .limit(ZTP_SCAN_LIMIT)
+                )
+            )
+        except Exception as e:
+            print(f"[ZTP Error] Could not read expired timers: {e}")
+            return
 
         for doc in expired_docs:
             guild_id = doc["guild_id"]
             user_id = doc["user_id"]
-            
-            ztp_collection.delete_one({"guild_id": guild_id, "user_id": user_id})
-            
+
             guild = self.bot.get_guild(guild_id)
             if not guild:
+                await asyncio.to_thread(
+                    ztp_collection.delete_one,
+                    {"guild_id": guild_id, "user_id": user_id},
+                )
                 continue
+
             member = guild.get_member(user_id)
             if not member:
                 try:
                     member = await guild.fetch_member(user_id)
                 except Exception:
                     continue
-            
+
             role = guild.get_role(ZTP_ROLE_ID)
             if not role:
                 try:
@@ -372,6 +442,17 @@ class ZTPSystem(commands.Cog):
                     print(f"[ZTP] Automatically removed role from {member} in {guild.name}")
                 except Exception as e:
                     print(f"[ZTP Error] Failed to remove role from {member}: {e}")
+
+            # Deleted after processing, not before. Clearing it up front meant
+            # a failed fetch silently lost the timer and the role was never
+            # removed.
+            try:
+                await asyncio.to_thread(
+                    ztp_collection.delete_one,
+                    {"guild_id": guild_id, "user_id": user_id},
+                )
+            except Exception as e:
+                print(f"[ZTP Error] Could not clear timer: {e}")
 
     @check_loop.before_loop
     async def before_check_loop(self):
@@ -410,7 +491,12 @@ class ZTPSystem(commands.Cog):
 
         expiry = time.time() + seconds
         query = {"guild_id": interaction.guild.id, "user_id": member.id}
-        ztp_collection.update_one(query, {"$set": {"expiry": expiry}}, upsert=True)
+        await asyncio.to_thread(
+            ztp_collection.update_one,
+            query,
+            {"$set": {"expiry": expiry}},
+            upsert=True,
+        )
 
         await interaction.response.send_message(f"<:checkmark:1541253462413549669> Successfully gave {member.mention} the ZTP role for **{duration}** (Expires <t:{int(expiry)}:R>).", ephemeral=True)
 
@@ -436,7 +522,9 @@ class ZTPSystem(commands.Cog):
             return
 
         data = []
-        docs = list(ztp_collection.find({"guild_id": interaction.guild.id}))
+        docs = await asyncio.to_thread(
+            lambda: list(ztp_collection.find({"guild_id": interaction.guild.id}))
+        )
         for doc in docs:
             user_id = doc["user_id"]
             expiry = doc["expiry"]
@@ -450,7 +538,10 @@ class ZTPSystem(commands.Cog):
             if role in member.roles:
                 data.append((member, expiry))
             else:
-                ztp_collection.delete_one({"guild_id": interaction.guild.id, "user_id": user_id})
+                await asyncio.to_thread(
+                    ztp_collection.delete_one,
+                    {"guild_id": interaction.guild.id, "user_id": user_id},
+                )
 
         view = ZTPPaginationView(interaction.guild, data)
         await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
@@ -518,14 +609,15 @@ class GeneralCommands(commands.Cog):
         query = {"guild_id": interaction.guild.id, "user_id": member.id}
         
         original_nick = member.nick or member.name
-        existing = afk_collection.find_one(query)
+        existing = await asyncio.to_thread(afk_collection.find_one, query)
         if existing:
             original_nick = existing.get("original_nick", original_nick)
 
-        afk_collection.update_one(
+        await asyncio.to_thread(
+            afk_collection.update_one,
             query,
             {"$set": {"reason": reason, "original_nick": original_nick}},
-            upsert=True
+            upsert=True,
         )
 
         new_nick = f"[AFK] {original_nick}"
@@ -718,6 +810,8 @@ async def on_ready():
         # ----------------------------------------------------
         # COGS
         # ----------------------------------------------------
+        await ensure_ztp_indexes()
+
         try:
             if not bot.get_cog("ZTPSystem"):
                 await bot.add_cog(ZTPSystem(bot))
@@ -2226,7 +2320,8 @@ async def set_llc(ctx: commands.Context):
     channel_name = ctx.channel.name
 
     try:
-        db.settings.update_one(
+        await asyncio.to_thread(
+            db.settings.update_one,
             {"_id": "llc_channel"},
             {"$set": {"channel_id": ctx.channel.id}},
             upsert=True,
@@ -2261,7 +2356,9 @@ async def send_llc_log(
 
     if not channel_id:
         try:
-            doc = db.settings.find_one({"_id": "llc_channel"})
+            doc = await asyncio.to_thread(
+                db.settings.find_one, {"_id": "llc_channel"}
+            )
             if doc:
                 channel_id = doc.get("channel_id")
                 target_llc_channel_id = channel_id
@@ -2452,9 +2549,43 @@ def home():
     return "Bot is running!"
 
 
+_ERLC_WEBHOOK_SECRET = (os.getenv("ERLC_WEBHOOK_SECRET") or "").strip()
+
+# The webhook URL is public, so without a guard anyone who finds it could
+# make the bot emit unlimited Discord messages, which is the quickest route
+# to a Discord global rate limit and every command offline.
+_erlc_recent_hits: list[float] = []
+_erlc_hits_lock = threading.Lock()
+ERLC_HITS_PER_MINUTE = 60
+
+
+def _erlc_request_allowed() -> bool:
+    """Basic flood guard for the public webhook endpoint."""
+    now = time.time()
+    with _erlc_hits_lock:
+        while _erlc_recent_hits and now - _erlc_recent_hits[0] > 60:
+            _erlc_recent_hits.pop(0)
+        if len(_erlc_recent_hits) >= ERLC_HITS_PER_MINUTE:
+            return False
+        _erlc_recent_hits.append(now)
+    return True
+
+
 @app.route("/erlc/events", methods=["POST"])
 def erlc_events():
     """Receive ER:LC webhook data without exposing the server key."""
+    if _ERLC_WEBHOOK_SECRET:
+        supplied = (
+            request.headers.get("X-ERLC-Secret")
+            or request.args.get("secret")
+            or ""
+        ).strip()
+        if supplied != _ERLC_WEBHOOK_SECRET:
+            return "Unauthorized", 401
+
+    if not _erlc_request_allowed():
+        return "Rate limited", 429
+
     try:
         payload = request.get_json(silent=True) or {}
 
@@ -2524,11 +2655,84 @@ def run_web():
 # START BOT
 # ============================================================
 
+LOGIN_MAX_WAIT = 600.0
+MAX_LOGIN_RESTARTS = 5
+
+
+def run_bot_with_backoff() -> None:
+    """Log in, waiting out a 429 instead of dying and being restarted into it.
+
+    Letting the process exit on a login 429 is what turns a short block into a
+    permanent one: the host restarts immediately, the retry lands while the
+    token is still blocked, and the loop repeats forever.
+
+    We hold the process open during the wait - Flask keeps answering health
+    checks the whole time - and then re-exec the interpreter. Re-exec is
+    required rather than a second bot.run() call because discord.py 2.x closes
+    the aiohttp session when a run ends and provides no way to recreate it.
+    """
+    restarts = int(os.getenv("BOT_LOGIN_ATTEMPTS", "0") or 0)
+
+    try:
+        print("[Discord] Logging in..." if restarts == 0
+              else f"[Discord] Retrying login (try {restarts + 1})...")
+        bot.run(TOKEN)
+        return
+
+    except discord.HTTPException as e:
+        if e.status != 429:
+            print(f"[Discord Error] {e}")
+            traceback.print_exc()
+            return
+
+        if restarts >= MAX_LOGIN_RESTARTS:
+            print(
+                f"[Rate Limit] Still refused after {restarts + 1} attempts. A "
+                "global 429 this early almost always means something else is "
+                "using this bot token hard - a second Render worker, another "
+                "host, or a leaked token. Check for duplicates and reset the "
+                "token in the Discord Developer Portal. Giving up so the host "
+                "can restart us cleanly."
+            )
+            return
+
+        wait = max(5.0, float(getattr(e, "retry_after", 60) or 60))
+        wait = min(wait, LOGIN_MAX_WAIT)
+
+        print(
+            f"[Rate Limit] Discord refused the login and asked for "
+            f"{wait:.0f}s. Holding the process open and waiting, instead of "
+            "exiting straight back into another refused login."
+        )
+        time.sleep(wait)
+
+        os.environ["BOT_LOGIN_ATTEMPTS"] = str(restarts + 1)
+        print("[Discord] Re-executing for a fresh session...")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.execv(sys.executable, [sys.executable, *sys.argv])
+
+    except discord.LoginFailure as e:
+        print(
+            f"[Discord] Login rejected as invalid: {e}. "
+            "Check the TOKEN environment variable."
+        )
+        traceback.print_exc()
+
+    except Exception as e:
+        print(f"[Fatal Error] {e}")
+        traceback.print_exc()
+
+
 if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit(
             "TOKEN environment variable is not set on Render."
         )
+
+    # Silence werkzeug so Render's log is not drowned in access lines. Those
+    # GET/HEAD entries are Render's own health checks, not bot traffic.
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
     threading.Thread(
         target=run_web,
@@ -2544,34 +2748,4 @@ if __name__ == "__main__":
             "[ERLC] WARNING: ERLC_SERVER_KEY is not configured."
         )
 
-    try:
-        print("[Discord] Logging in...")
-        print(f"[Discord] Bot heartbeat timeout: {bot.heartbeat_timeout}s")
-        print(f"[Discord] Guild ready timeout: {bot.guild_ready_timeout}s")
-        
-        # Run the bot with simple call first
-        bot.run(TOKEN)
-
-    except discord.HTTPException as e:
-        if e.status == 429:
-            retry_after = getattr(e, "retry_after", 60)
-
-            print(
-                f"[Rate Limit] Discord API returned 429 during connection. "
-                f"Discord requested a {retry_after} second wait."
-            )
-
-            # Do not attempt another login from inside bot.py.
-            # Render/discord.py should handle the connection lifecycle.
-            print(
-                "[Discord] Process will stop instead of repeatedly "
-                "reconnecting and increasing the rate limit."
-            )
-
-        else:
-            print(f"[Discord Error] {e}")
-            traceback.print_exc()
-
-    except Exception as e:
-        print(f"[Fatal Error] {e}")
-        traceback.print_exc()
+    run_bot_with_backoff()
