@@ -266,19 +266,37 @@ def _retry_after_from(error: BaseException, default: float) -> float:
     return default
 
 
-def _is_global_rate_limit(error: BaseException) -> bool:
+def _global_rate_limit_headers(error: BaseException) -> bool:
+    """Sync check: Discord flags global 429s with X-RateLimit-Global.
+
+    Safe to call from synchronous code. Avoids touching the response body,
+    because discord.py exposes an aiohttp ClientResponse whose .json() is a
+    coroutine - calling it without awaiting leaks a RuntimeWarning and
+    silently does nothing.
+    """
     response = getattr(error, "response", None)
     if response is None:
         return False
 
     headers = getattr(response, "headers", None) or {}
-    if str(headers.get("X-RateLimit-Global", "")).lower() == "true":
+    return str(headers.get("X-RateLimit-Global", "")).lower() == "true"
+
+
+async def _is_global_rate_limit(error: BaseException) -> bool:
+    """Header check plus the response body's "global" flag."""
+    if _global_rate_limit_headers(error):
         return True
 
+    response = getattr(error, "response", None)
+    if response is None:
+        return False
+
     try:
-        return bool(response.json().get("global"))
+        body = await response.json()
     except Exception:
         return False
+
+    return bool(isinstance(body, dict) and body.get("global"))
 
 
 def open_global_cooldown(error: BaseException) -> None:
@@ -337,7 +355,7 @@ async def guarded_send(destination, *, attempts: int = 4, **kwargs):
                 if e.status != 429:
                     raise
 
-                if _is_global_rate_limit(e):
+                if await _is_global_rate_limit(e):
                     open_global_cooldown(e)
 
                 if attempt >= attempts:
@@ -373,7 +391,7 @@ async def on_app_command_error(
             isinstance(cause, discord.HTTPException)
             and cause.status == 429
         ):
-            if _is_global_rate_limit(cause):
+            if await _is_global_rate_limit(cause):
                 open_global_cooldown(cause)
                 print(
                     "[Rate Limit] A command was rejected by Discord's global "
@@ -418,7 +436,26 @@ text_setups = {}
 ZTP_ROLE_ID = 1527377838536265908
 ZTP_COMMAND_ROLE_ID = 1527050918804062469
 
+# Caps how much one expiry sweep will pull, so a large backlog cannot turn
+# into one long blocking pass.
+ZTP_SCAN_LIMIT = 200
+
 ztp_collection = mod_db.db["ztp_timers"]
+
+
+async def ensure_ztp_indexes() -> None:
+    """Index the field the expiry sweep filters on.
+
+    Without this, the query runs a full collection scan every sweep.
+    """
+    try:
+        await asyncio.to_thread(
+            ztp_collection.create_index,
+            "expiry",
+            name="ztp_expiry_idx",
+        )
+    except Exception as e:
+        print(f"[ZTP] Could not create the expiry index: {e}")
 
 def parse_duration(duration_str: str) -> Optional[int]:
     match = re.match(r"^(\d+)([smhdw])$", duration_str.lower().strip())
@@ -511,24 +548,43 @@ class ZTPSystem(commands.Cog):
     @tasks.loop(seconds=5)
     async def check_loop(self):
         now = time.time()
-        expired_docs = list(ztp_collection.find({"expiry": {"$lte": now}}))
+
+        try:
+            # PyMongo is blocking. Calling it straight from an async task
+            # freezes the whole event loop, so no interaction can be
+            # acknowledged and every command fails with "The application did
+            # not respond". If Mongo is slow or unreachable, server selection
+            # alone can block for ~30s, and this ran every 5s.
+            expired_docs = await asyncio.to_thread(
+                lambda: list(
+                    ztp_collection
+                    .find({"expiry": {"$lte": now}})
+                    .limit(ZTP_SCAN_LIMIT)
+                )
+            )
+        except Exception as e:
+            print(f"[ZTP Error] Could not read expired timers: {e}")
+            return
 
         for doc in expired_docs:
             guild_id = doc["guild_id"]
             user_id = doc["user_id"]
-            
-            ztp_collection.delete_one({"guild_id": guild_id, "user_id": user_id})
-            
+
             guild = self.bot.get_guild(guild_id)
             if not guild:
+                await asyncio.to_thread(
+                    ztp_collection.delete_one,
+                    {"guild_id": guild_id, "user_id": user_id},
+                )
                 continue
+
             member = guild.get_member(user_id)
             if not member:
                 try:
                     member = await guild.fetch_member(user_id)
                 except Exception:
                     continue
-            
+
             role = guild.get_role(ZTP_ROLE_ID)
             if not role:
                 try:
@@ -542,6 +598,14 @@ class ZTPSystem(commands.Cog):
                     print(f"[ZTP] Automatically removed role from {member} in {guild.name}")
                 except Exception as e:
                     print(f"[ZTP Error] Failed to remove role from {member}: {e}")
+
+            try:
+                await asyncio.to_thread(
+                    ztp_collection.delete_one,
+                    {"guild_id": guild_id, "user_id": user_id},
+                )
+            except Exception as e:
+                print(f"[ZTP Error] Could not clear timer: {e}")
 
     @check_loop.before_loop
     async def before_check_loop(self):
@@ -2143,6 +2207,8 @@ async def on_ready():
         # ----------------------------------------------------
         # COGS
         # ----------------------------------------------------
+        await ensure_ztp_indexes()
+
         try:
             if not bot.get_cog("ZTPSystem"):
                 await bot.add_cog(ZTPSystem(bot))
@@ -3922,7 +3988,7 @@ def run_bot_with_backoff() -> None:
                 return
 
             wait = max(5.0, _retry_after_from(e, 60.0))
-            if _is_global_rate_limit(e):
+            if _global_rate_limit_headers(e):
                 # A global 429 blocks the whole token, not one route.
                 wait = max(wait, 60.0)
 
