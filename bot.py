@@ -1846,6 +1846,35 @@ feedback_group = app_commands.Group(
     description="Feedback commands",
 )
 
+# Feedback is submitted as N/10 but shown as stars out of five, so one star is
+# worth two points. These are the server's own emoji; if the shortcodes ever
+# stop rendering, replace them with the full <:name:id> form.
+RATING_FULL_STAR = ":goldstar:"
+RATING_HALF_STAR = ":halfstar:"
+RATING_EMPTY_STAR = ":emptystar:"
+RATING_MAX_STARS = 5
+
+
+def rating_to_stars(rating_value: str) -> str:
+    """Turn a '5/10' rating into five stars, e.g. 5/10 is 2 full, 1 half, 2 empty."""
+    try:
+        score = int(str(rating_value).split("/")[0])
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return str(rating_value)
+
+    score = max(0, min(score, 10))
+
+    full, remainder = divmod(score, 2)
+    half = 1 if remainder else 0
+    empty = RATING_MAX_STARS - full - half
+
+    return " ".join(
+        ([RATING_FULL_STAR] * full)
+        + ([RATING_HALF_STAR] * half)
+        + ([RATING_EMPTY_STAR] * empty)
+    )
+
+
 
 @feedback_group.command(
     name="give",
@@ -1903,7 +1932,7 @@ async def feedback_give(
             f"### Feedback from {interaction.user.display_name}\n\n"
             f"• **Staff Member:** {staff.mention}\n"
             f"• **Submitted By:** {interaction.user.mention}\n"
-            f"• **Rating:** {rating.value}"
+            f"• **Rating:** {rating_to_stars(rating.value)}"
         )
 
         section = discord.ui.Section(
