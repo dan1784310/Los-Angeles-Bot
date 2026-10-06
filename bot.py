@@ -1849,9 +1849,9 @@ feedback_group = app_commands.Group(
 # Feedback is submitted as N/10 but shown as stars out of five, so one star is
 # worth two points. These are the server's own emoji; if the shortcodes ever
 # stop rendering, replace them with the full <:name:id> form.
-RATING_FULL_STAR = ":goldstar:"
-RATING_HALF_STAR = ":halfstar:"
-RATING_EMPTY_STAR = ":emptystar:"
+RATING_FULL_STAR = "<:goldstar:1557076753321562275>"
+RATING_HALF_STAR = "<:halfstar:1557077160718504018>"
+RATING_EMPTY_STAR = "<:emptystar:1557077341837066280>"
 RATING_MAX_STARS = 5
 
 
