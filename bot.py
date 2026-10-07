@@ -29,6 +29,7 @@ from moderation_main import setup as setup_moderation
 from moderation_database import db as mod_db
 from role_management import setup as setup_role_management
 from roleplay_log import setup as setup_roleplay_log
+from media_cog import setup as setup_media
 
 # ============================================================
 # DATABASE COLLECTIONS
@@ -806,6 +807,13 @@ async def on_ready():
             print("[Startup] Roleplay logging loaded.")
         except Exception as e:
             print(f"[Startup] Roleplay log error: {e}")
+
+        try:
+            if not bot.get_cog("MediaCog"):
+                await setup_media(bot)
+                print("[Startup] Media QC workflow loaded.")
+        except Exception as e:
+            print(f"[Startup] Media QC error: {e}")
 
         # ----------------------------------------------------
         # COGS
