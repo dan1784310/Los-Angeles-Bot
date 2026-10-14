@@ -50,6 +50,49 @@ class GiveawaySystem(commands.Cog):
         self.bot = bot
         self.active_timers = {}  # giveaway_id -> task
 
+    async def cog_load(self) -> None:
+        """Re-arm countdown timers for giveaways still marked active.
+
+        Timers only ever existed in memory. Any restart - a deploy, a crash,
+        or the host spinning the instance down when idle - silently disarmed
+        every running giveaway: the card kept counting past its deadline and
+        never ended, because nothing was left to call _end_giveaway. Rebuild
+        them from the database, and immediately end anything already overdue.
+        """
+        try:
+            active = await asyncio.to_thread(db.get_active_giveaways)
+        except Exception as e:
+            print(f"[GIVEAWAY] Could not load active giveaways: {e}")
+            return
+
+        now = datetime.now().timestamp()
+        restored = overdue = 0
+
+        for giveaway in active or []:
+            giveaway_id = giveaway.get("giveaway_id")
+            end_timestamp = giveaway.get("end_timestamp")
+
+            if not giveaway_id or not end_timestamp:
+                continue
+            if giveaway_id in self.active_timers:
+                continue
+
+            try:
+                self._start_giveaway_timer(giveaway_id, float(end_timestamp))
+            except Exception as e:
+                print(f"[GIVEAWAY] Could not restore {giveaway_id}: {e}")
+                continue
+
+            restored += 1
+            if float(end_timestamp) <= now:
+                overdue += 1
+
+        if restored:
+            print(
+                f"[GIVEAWAY] Restored {restored} active timer(s)"
+                + (f", {overdue} already overdue." if overdue else ".")
+            )
+
     async def _get_or_fetch_channel(self, channel_id: int) -> Optional[discord.TextChannel]:
         """Safely fetch channel from cache or API."""
         channel = self.bot.get_channel(channel_id)
