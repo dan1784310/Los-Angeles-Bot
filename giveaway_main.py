@@ -50,49 +50,6 @@ class GiveawaySystem(commands.Cog):
         self.bot = bot
         self.active_timers = {}  # giveaway_id -> task
 
-    async def cog_load(self) -> None:
-        """Re-arm countdown timers for giveaways still marked active.
-
-        Timers only ever existed in memory. Any restart - a deploy, a crash,
-        or the host spinning the instance down when idle - silently disarmed
-        every running giveaway: the card kept counting past its deadline and
-        never ended, because nothing was left to call _end_giveaway. Rebuild
-        them from the database, and immediately end anything already overdue.
-        """
-        try:
-            active = await asyncio.to_thread(db.get_active_giveaways)
-        except Exception as e:
-            print(f"[GIVEAWAY] Could not load active giveaways: {e}")
-            return
-
-        now = datetime.now().timestamp()
-        restored = overdue = 0
-
-        for giveaway in active or []:
-            giveaway_id = giveaway.get("giveaway_id")
-            end_timestamp = giveaway.get("end_timestamp")
-
-            if not giveaway_id or not end_timestamp:
-                continue
-            if giveaway_id in self.active_timers:
-                continue
-
-            try:
-                self._start_giveaway_timer(giveaway_id, float(end_timestamp))
-            except Exception as e:
-                print(f"[GIVEAWAY] Could not restore {giveaway_id}: {e}")
-                continue
-
-            restored += 1
-            if float(end_timestamp) <= now:
-                overdue += 1
-
-        if restored:
-            print(
-                f"[GIVEAWAY] Restored {restored} active timer(s)"
-                + (f", {overdue} already overdue." if overdue else ".")
-            )
-
     async def _get_or_fetch_channel(self, channel_id: int) -> Optional[discord.TextChannel]:
         """Safely fetch channel from cache or API."""
         channel = self.bot.get_channel(channel_id)
@@ -756,37 +713,81 @@ class GiveawaySystem(commands.Cog):
         giveaway = db.get_giveaway(giveaway_id)
         if not giveaway or giveaway['status'] == 'ended':
             return
-        
-        db.update_giveaway_status(giveaway_id, 'ended')
-        if giveaway_id in self.active_timers:
-            del self.active_timers[giveaway_id]
-        
+
         participants = db.get_participants(giveaway_id)
         channel = await self._get_or_fetch_channel(giveaway['channel_id'])
         if not channel:
+            # Do NOT mark this ended. Leaving it active means on_ready will
+            # pick it up and try again rather than stranding it forever.
+            print(
+                f"[GIVEAWAY] Channel {giveaway['channel_id']} is unreachable, "
+                f"leaving giveaway {giveaway_id} active to retry."
+            )
             return
-        
+
         try:
             message = await channel.fetch_message(giveaway['message_id'])
         except discord.NotFound:
-            return
-        
+            # The card was deleted, so there is nothing left to update. Still
+            # record the winners and announce them.
+            message = None
+
+        winners: List[int] = []
+
         if not participants:
-            await self._update_giveaway_message_no_winners(message)
-            return
-        
-        rigged_id = db.get_rigged_winner(giveaway_id)
-        if rigged_id and rigged_id in participants:
-            winners = [rigged_id]
-            db.clear_rigged_winner(giveaway_id)
+            rigged_id = db.get_rigged_winner(giveaway_id)
+            if rigged_id:
+                db.clear_rigged_winner(giveaway_id)
         else:
-            winners = random.sample(participants, min(giveaway['winners_amount'], len(participants)))
-        
+            rigged_id = db.get_rigged_winner(giveaway_id)
+            if rigged_id and rigged_id in participants:
+                winners = [rigged_id]
+                db.clear_rigged_winner(giveaway_id)
+            else:
+                winners = random.sample(
+                    participants,
+                    min(giveaway['winners_amount'], len(participants)),
+                )
+
         for w in winners:
             db.add_winner(giveaway_id, w)
-        
-        await self._update_giveaway_message_with_winners(message, giveaway, winners)
-        await self._send_giveaway_announcement(channel, giveaway, winners, len(participants))
+
+        # Update the card first. If this fails we return without marking the
+        # giveaway ended, so the next restart retries it.
+        if message is not None:
+            try:
+                if winners:
+                    await self._update_giveaway_message_with_winners(
+                        message, giveaway, winners
+                    )
+                else:
+                    await self._update_giveaway_message_no_winners(message)
+            except discord.HTTPException as e:
+                print(
+                    f"[GIVEAWAY] Could not update the card for {giveaway_id}: "
+                    f"{e}. It stays active and will retry."
+                )
+                return
+
+        if winners:
+            try:
+                await self._send_giveaway_announcement(
+                    channel, giveaway, winners, len(participants)
+                )
+            except discord.HTTPException as e:
+                print(
+                    f"[GIVEAWAY] Could not announce the winners for "
+                    f"{giveaway_id}: {e}. It stays active and will retry."
+                )
+                return
+
+        # Mark ended only once the card and the announcement are both done.
+        # Marking it first was why a giveaway could be recorded as finished
+        # while showing no result and announcing nobody: on_ready then skips
+        # anything not marked active, so it never got another attempt.
+        db.update_giveaway_status(giveaway_id, 'ended')
+        if giveaway_id in self.active_timers:
+            del self.active_timers[giveaway_id]
 
     async def _update_giveaway_message_with_winners(self, message: discord.Message, giveaway: dict, winners: List[int]):
         winner_mentions = [f"<@{w_id}>" for w_id in winners]
@@ -830,19 +831,41 @@ class GiveawaySystem(commands.Cog):
     async def on_ready(self):
         print("[GIVEAWAY STARTUP] Restoring giveaways from database...")
         all_giveaways = db.get_all_giveaways()
+        now = datetime.now().timestamp()
+        armed = overdue = failed = 0
+
         for giveaway in all_giveaways:
-            giveaway_id = giveaway['giveaway_id']
-            end_timestamp = giveaway['end_timestamp']
-            
-            # Restores full message state including participants count from SQLite
-            await self._rebuild_giveaway_message(giveaway)
-            
-            if giveaway['status'] == 'active':
-                if datetime.now().timestamp() < end_timestamp:
+            # Each giveaway is independent. Without this guard a single failure
+            # aborts the whole loop and every giveaway after it is left with no
+            # countdown at all.
+            try:
+                giveaway_id = giveaway['giveaway_id']
+                end_timestamp = giveaway['end_timestamp']
+
+                # Restores full message state including participant count
+                await self._rebuild_giveaway_message(giveaway)
+
+                if giveaway['status'] != 'active':
+                    continue
+
+                if now < end_timestamp:
                     self._start_giveaway_timer(giveaway_id, end_timestamp)
+                    armed += 1
                 else:
                     asyncio.create_task(self._end_giveaway(giveaway_id))
-        print("[GIVEAWAY STARTUP] Restored successfully.")
+                    overdue += 1
+
+            except Exception as e:
+                failed += 1
+                print(
+                    f"[GIVEAWAY STARTUP] Could not restore "
+                    f"{giveaway.get('giveaway_id')}: {e}"
+                )
+
+        print(
+            f"[GIVEAWAY STARTUP] Restored successfully. "
+            f"{armed} armed, {overdue} overdue, {failed} failed."
+        )
 
 
 async def setup(bot: commands.Bot):
