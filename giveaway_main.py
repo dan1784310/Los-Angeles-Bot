@@ -5,7 +5,7 @@ Contains the main giveaway system cog with all commands and functionality.
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from typing import Optional, List, Dict, Any
 import asyncio
 import random
@@ -692,6 +692,61 @@ class GiveawaySystem(commands.Cog):
         view.add_item(container)
         await interaction.response.send_message(view=view, ephemeral=True)
 
+    # How often the watchdog re-checks the database for overdue giveaways.
+    GIVEAWAY_WATCHDOG_INTERVAL = 30
+
+    @tasks.loop(seconds=GIVEAWAY_WATCHDOG_INTERVAL)
+    async def giveaway_watchdog(self):
+        """End giveaways whose countdown task never fired.
+
+        Relying on one long asyncio.sleep per giveaway is fragile. If the host
+        freezes the process - Render suspends idle free-tier instances - or the
+        event loop stalls, that sleep can be arbitrarily late or lost, and the
+        giveaway then sits past its deadline until something restarts the bot.
+        This sweeps the database on a short interval instead, so an overdue
+        giveaway always ends within one sweep, and any missing countdown is
+        re-armed.
+        """
+        try:
+            active = await asyncio.to_thread(db.get_active_giveaways)
+        except Exception as e:
+            print(f"[GIVEAWAY] Watchdog could not read giveaways: {e}")
+            return
+
+        now = datetime.now().timestamp()
+
+        for giveaway in active or []:
+            giveaway_id = giveaway.get("giveaway_id")
+            end_timestamp = giveaway.get("end_timestamp")
+
+            if not giveaway_id or not end_timestamp:
+                continue
+
+            try:
+                due = float(end_timestamp)
+            except (TypeError, ValueError):
+                continue
+
+            if due > now:
+                # Not due yet, but re-arm if its countdown went missing.
+                if giveaway_id not in self.active_timers:
+                    self._start_giveaway_timer(giveaway_id, due)
+                continue
+
+            # Overdue: drop any stale countdown and end it now.
+            if giveaway_id in self.active_timers:
+                self.active_timers[giveaway_id].cancel()
+                del self.active_timers[giveaway_id]
+
+            try:
+                await self._end_giveaway(giveaway_id)
+            except Exception as e:
+                print(f"[GIVEAWAY] Watchdog could not end {giveaway_id}: {e}")
+
+    @giveaway_watchdog.before_loop
+    async def before_giveaway_watchdog(self):
+        await self.bot.wait_until_ready()
+
     def _start_giveaway_timer(self, giveaway_id: str, end_timestamp: float):
         delay = end_timestamp - datetime.now().timestamp()
         if delay <= 0:
@@ -874,6 +929,15 @@ class GiveawaySystem(commands.Cog):
             f"[GIVEAWAY STARTUP] Restored successfully. "
             f"{armed} armed, {overdue} overdue, {failed} failed."
         )
+
+        # Belt and braces: the per-giveaway sleeps handle the normal case, and
+        # this catches anything they miss, so nothing depends on a single long
+        # sleep surviving the process being frozen or restarted.
+        if not self.giveaway_watchdog.is_running():
+            self.giveaway_watchdog.start()
+
+    def cog_unload(self):
+        self.giveaway_watchdog.cancel()
 
 
 async def setup(bot: commands.Bot):
