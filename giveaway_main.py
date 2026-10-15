@@ -827,8 +827,16 @@ class GiveawaySystem(commands.Cog):
         view.add_item(container)
         await channel.send(view=view)
 
-    @commands.Cog.listener()
-    async def on_ready(self):
+    async def cog_load(self) -> None:
+        """Restore giveaway countdowns.
+
+        This must live in cog_load, not an on_ready listener. bot.py adds
+        this cog from inside its own on_ready, and discord.py schedules
+        cog listeners from the list that exists when the ready event is
+        dispatched. A cog registered during that dispatch is added after the
+        loop has already run, so its on_ready never fires on startup. cog_load
+        is awaited by add_cog, so it always runs exactly once per process.
+        """
         print("[GIVEAWAY STARTUP] Restoring giveaways from database...")
         all_giveaways = db.get_all_giveaways()
         now = datetime.now().timestamp()
