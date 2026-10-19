@@ -12,6 +12,7 @@ import traceback
 from typing import Optional
 
 import discord
+from discord.utils import MISSING
 from discord import app_commands
 from discord.ext import commands, tasks
 from flask import Flask, request
@@ -2762,8 +2763,9 @@ def run_web():
 # START BOT
 # ============================================================
 
-LOGIN_MAX_WAIT = 600.0
-MAX_LOGIN_RESTARTS = 5
+LOGIN_MAX_WAIT = 2700.0
+MAX_LOGIN_RESTARTS = 2
+MIN_RETRY_WAIT = 300.0
 
 
 def run_bot_with_backoff() -> None:
@@ -2774,61 +2776,64 @@ def run_bot_with_backoff() -> None:
     token is still blocked, and the loop repeats forever.
 
     We hold the process open during the wait - Flask keeps answering health
-    checks the whole time - and then re-exec the interpreter. Re-exec is
-    required rather than a second bot.run() call because discord.py 2.x closes
-    the aiohttp session when a run ends and provides no way to recreate it.
+    checks the whole time - and retry in this same process.
+
+    We must NOT re-exec the interpreter to get a fresh session. The listening
+    socket survives exec, so the new image finds port 10000 already bound and
+    Flask dies with "Address already in use", which breaks the health check
+    and makes the host restart us again. Instead, clearing
+    bot.http.connector makes discord.py build a fresh connector and session
+    for the next attempt inside this process.
     """
-    restarts = int(os.getenv("BOT_LOGIN_ATTEMPTS", "0") or 0)
+    attempt = 0
 
-    try:
-        print("[Discord] Logging in..." if restarts == 0
-              else f"[Discord] Retrying login (try {restarts + 1})...")
-        bot.run(TOKEN)
-        return
+    while True:
+        try:
+            print("[Discord] Logging in..." if attempt == 0
+                  else f"[Discord] Retrying login (try {attempt + 1})...")
+            bot.run(TOKEN)
+            return
 
-    except discord.HTTPException as e:
-        if e.status != 429:
-            print(f"[Discord Error] {e}")
+        except discord.HTTPException as e:
+            if e.status != 429:
+                print(f"[Discord Error] {e}")
+                traceback.print_exc()
+                return
+
+            attempt += 1
+
+            requested = max(5.0, float(getattr(e, "retry_after", 60) or 60))
+            floor = min(MIN_RETRY_WAIT * (2 ** min(attempt - 1, 4)),
+                        LOGIN_MAX_WAIT)
+            wait = min(max(requested, floor), LOGIN_MAX_WAIT)
+
+            print(
+                f"[Rate Limit] Discord refused the login (asked for "
+                f"{requested:.0f}s). Waiting {wait:.0f}s and retrying in "
+                "place. Staying alive is deliberate: exiting would make the "
+                "host restart us straight back into the same block, and "
+                "re-execing would leak the listening port."
+            )
+            time.sleep(wait)
+
+            # discord.py reuses self.http.connector across logins, and after a
+            # failed run that connector belongs to the event loop that just
+            # closed. The next attempt would die instantly with "Session is
+            # closed", so clear it and let a fresh one be built.
+            bot.http.connector = MISSING
+
+        except discord.LoginFailure as e:
+            print(
+                f"[Discord] Login rejected as invalid: {e}. "
+                "Check the TOKEN environment variable."
+            )
             traceback.print_exc()
             return
 
-        if restarts >= MAX_LOGIN_RESTARTS:
-            print(
-                f"[Rate Limit] Still refused after {restarts + 1} attempts. A "
-                "global 429 this early almost always means something else is "
-                "using this bot token hard - a second Render worker, another "
-                "host, or a leaked token. Check for duplicates and reset the "
-                "token in the Discord Developer Portal. Giving up so the host "
-                "can restart us cleanly."
-            )
+        except Exception as e:
+            print(f"[Fatal Error] {e}")
+            traceback.print_exc()
             return
-
-        wait = max(5.0, float(getattr(e, "retry_after", 60) or 60))
-        wait = min(wait, LOGIN_MAX_WAIT)
-
-        print(
-            f"[Rate Limit] Discord refused the login and asked for "
-            f"{wait:.0f}s. Holding the process open and waiting, instead of "
-            "exiting straight back into another refused login."
-        )
-        time.sleep(wait)
-
-        os.environ["BOT_LOGIN_ATTEMPTS"] = str(restarts + 1)
-        print("[Discord] Re-executing for a fresh session...")
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os.execv(sys.executable, [sys.executable, *sys.argv])
-
-    except discord.LoginFailure as e:
-        print(
-            f"[Discord] Login rejected as invalid: {e}. "
-            "Check the TOKEN environment variable."
-        )
-        traceback.print_exc()
-
-    except Exception as e:
-        print(f"[Fatal Error] {e}")
-        traceback.print_exc()
 
 
 if __name__ == "__main__":
