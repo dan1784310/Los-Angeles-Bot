@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import json
 import logging
 import os
 import random
@@ -729,6 +730,29 @@ _erlc_poll_started = False
 # ============================================================
 # READY EVENT
 # ============================================================
+
+@bot.event
+async def on_disconnect():
+    """Explain a gateway drop instead of leaving it silent.
+
+    Close code 4004 is Discord's 'invalid session' - it means another
+    instance is already using this bot token. Running two copies of the same
+    token makes them fight over the single gateway session, and the resulting
+    reconnect storm is enough for Cloudflare to ban the host's IP from
+    discord.com entirely (error 1015).
+    """
+    code = getattr(bot, "close_code", None)
+    if code == 4004:
+        print(
+            "[Discord] Gateway closed with code 4004 (invalid session). "
+            "Another instance is already using this bot token. Only run ONE "
+            "copy of the bot at a time - a second copy on your PC while the "
+            "hosted one is running will get the host's IP banned by "
+            "Cloudflare."
+        )
+    else:
+        print(f"[Discord] Disconnected from the gateway (close code {code}).")
+
 
 @bot.event
 async def on_ready():
@@ -2679,6 +2703,52 @@ def erlc_status():
         "configured": bool(ERLC_SERVER_KEY),
         "webhook_endpoint": "/erlc/events",
     }
+
+
+@app.route("/diag/discord")
+def diag_discord():
+    """One-shot Discord reachability check, run from THIS host.
+
+    Makes exactly a single request with no retries, so it cannot itself
+    trigger a rate limit. A 429 with an HTML body means Cloudflare has banned
+    this host's IP from discord.com (error 1015) and no amount of retrying
+    will help until the ban expires. A JSON 429 is Discord's own rate limit.
+    """
+    import aiohttp as _aiohttp
+
+    url = "https://discord.com/api/v10/users/@me"
+
+    async def probe():
+        timeout = _aiohttp.ClientTimeout(total=30)
+        async with _aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                url,
+                headers={"Authorization": f"Bot {TOKEN}"},
+            ) as response:
+                body = await response.text()
+                result = {
+                    "status": response.status,
+                    "retry_after": response.headers.get("Retry-After"),
+                    "cloudflare": "cloudflare" in response.headers.get(
+                        "server", ""
+                    ).lower(),
+                }
+                if response.status == 200:
+                    try:
+                        data = json.loads(body)
+                        result["bot"] = data.get("username")
+                    except (TypeError, ValueError):
+                        pass
+                else:
+                    result["body"] = body[:200]
+                return result
+
+    try:
+        result = asyncio.run(probe())
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}, 502
+
+    return result, (200 if result.get("status") == 200 else 502)
 
 
 def run_web():
