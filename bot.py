@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import re
+import socket
 import sys
 import threading
 import time
@@ -18,7 +19,7 @@ from discord.ext import commands, tasks
 from flask import Flask, request
 
 from config import TOKEN, ERLC_SERVER_KEY, MELONLY_API_TOKEN
-from erlc_api import ERLCClient, ERLCAPIError
+from erlc_api import ERLCClient, ERLCAPIError, verify_erlc_webhook
 from ticket_database import db
 from ticket_setup import TicketSetup, setup as setup_ticket_setup
 from ticket_creation import TicketCreation, setup as setup_ticket_creation
@@ -758,6 +759,11 @@ async def on_disconnect():
 @bot.event
 async def on_ready():
     global _startup_complete, _erlc_poll_started
+
+    try:
+        instrument_http_client()
+    except Exception as e:
+        print(f"[Discord] Could not start request counting: {e}")
 
     print("============================================================")
     print(f"[Discord] Logged in as {bot.user} ({bot.user.id})")
@@ -2453,34 +2459,25 @@ async def send_llc_log(
         )
         embed.set_footer(text=f"AZRP Command Logs | {date_str}, {time_str}")
 
-        # Send LLC log with Discord rate-limit handling
-        for attempt in range(3):
-            try:
-                await target_channel.send(embed=embed)
-                break
+        # Send the LLC log. Do NOT retry on a 429: retrying during a global
+        # block multiplies the request count by three exactly when the token
+        # can least afford it, and that is enough to get the host's IP
+        # banned by Cloudflare. Dropping the log is much cheaper.
+        try:
+            await target_channel.send(embed=embed)
 
-            except discord.HTTPException as e:
-                if e.status == 429:
-                    retry_after = getattr(e, "retry_after", 5)
-
-                    print(
-                        f"[Rate Limit] Discord 429 hit while sending LLC log. "
-                        f"Retrying in {retry_after}s... "
-                        f"(attempt {attempt + 1}/3)"
-                    )
-
-                    await asyncio.sleep(retry_after)
-
-                else:
+        except discord.HTTPException as e:
+            if e.status == 429:
+                print(
+                    "[Rate Limit] Discord 429 hit while sending an LLC log. "
+                    "Dropping this log instead of retrying, so we do not "
+                    "add more requests to a rate limited token."
+                )
+            else:
                     print(
                         f"[Discord Error] Could not send LLC log: {e}"
                     )
-                    break
 
-        else:
-            print(
-                "[Discord Error] Failed to send LLC log after 3 attempts."
-            )
 
 
 # ============================================================
@@ -2488,6 +2485,10 @@ async def send_llc_log(
 # ============================================================
 
 _erlc_seen_commands = set()
+# Insertion-ordered companion to the set above. A set has no order, so
+# trimming it kept a RANDOM subset rather than the newest entries, and
+# commands that got dropped were re-sent as if they were new.
+_erlc_seen_order: list = []
 _erlc_command_poll_first_run = True
 ERLC_COMMAND_POLL_INTERVAL = 30
 
@@ -2529,6 +2530,8 @@ async def poll_erlc_command_logs():
                     )
                     for log in logs
                 }
+                _erlc_seen_order.clear()
+                _erlc_seen_order.extend(_erlc_seen_commands)
 
                 _erlc_command_poll_first_run = False
 
@@ -2544,6 +2547,7 @@ async def poll_erlc_command_logs():
                         continue
 
                     _erlc_seen_commands.add(key)
+                    _erlc_seen_order.append(key)
 
                     player_field = log.get("Player") or "Unknown:0"
 
@@ -2568,11 +2572,15 @@ async def poll_erlc_command_logs():
                                 f"[ERLC] Error forwarding command log: {e}"
                             )
 
-                # Prevent the seen-command cache from growing forever
-                if len(_erlc_seen_commands) > 1000:
-                    _erlc_seen_commands = set(
-                        list(_erlc_seen_commands)[-500:]
-                    )
+                # Prevent the seen-command cache from growing forever.
+                # A set is unordered, so slicing it kept a RANDOM 500
+                # entries rather than the most recent 500. Old commands that
+                # got dropped were then seen again as new and re-sent, which
+                # multiplied Discord requests for no reason. An ordered
+                # structure keeps the newest entries instead.
+                if len(_erlc_seen_order) > 1000:
+                    _erlc_seen_order[:] = _erlc_seen_order[-500:]
+                    _erlc_seen_commands = set(_erlc_seen_order)
 
         except ERLCAPIError as e:
             print(f"[ERLC] Error polling command logs: {e}")
@@ -2648,6 +2656,12 @@ def erlc_events():
     if not _erlc_request_allowed():
         return "Rate limited", 429
 
+    # ER:LC only saves a webhook URL if the endpoint passes its validation
+    # check, and it requires the Ed25519 signature to be verified on every
+    # request. Without this the URL is rejected when you try to save it.
+    if not verify_erlc_webhook(request):
+        return jsonify({"error": "Invalid ER:LC webhook signature"}), 401
+
     try:
         payload = request.get_json(silent=True) or {}
 
@@ -2706,6 +2720,38 @@ def erlc_status():
     }
 
 
+# ============================================================
+# DISCORD REQUEST VOLUME TRACKING
+# ============================================================
+#
+# A Cloudflare 1015 ban on the host's IP can be caused by the bot's own
+# request volume, so it is worth being able to see it. Every REST call the
+# bot makes is counted, and /diag/discord reports the rate.
+
+_rest_call_times: list[float] = []
+
+
+def rest_calls_last_minute() -> int:
+    cutoff = time.time() - 60
+    while _rest_call_times and _rest_call_times[0] < cutoff:
+        _rest_call_times.pop(0)
+    return len(_rest_call_times)
+
+
+def instrument_http_client() -> None:
+    """Count Discord REST calls without changing how they are made."""
+    original = bot.http.request
+    if getattr(original, "_counted", False):
+        return
+
+    async def counting_request(route, *args, **kwargs):
+        _rest_call_times.append(time.time())
+        return await original(route, *args, **kwargs)
+
+    counting_request._counted = True
+    bot.http.request = counting_request
+
+
 @app.route("/diag/discord")
 def diag_discord():
     """One-shot Discord reachability check, run from THIS host.
@@ -2714,6 +2760,10 @@ def diag_discord():
     trigger a rate limit. A 429 with an HTML body means Cloudflare has banned
     this host's IP from discord.com (error 1015) and no amount of retrying
     will help until the ban expires. A JSON 429 is Discord's own rate limit.
+
+    Also reports this host's outbound IP and how many Discord REST calls the
+    bot has made in the last minute, so a ban can be traced to either a
+    shared address or the bot's own request volume.
     """
     import aiohttp as _aiohttp
 
@@ -2727,12 +2777,21 @@ def diag_discord():
                 headers={"Authorization": f"Bot {TOKEN}"},
             ) as response:
                 body = await response.text()
+                # Cloudflare fronts all of discord.com, so the Server header
+                # proves nothing. The real 1015 ban page is HTML containing
+                # "Access denied" and a cf-error-ip element.
+                is_ban_page = (
+                    "cf-error-ip" in body
+                    or "Error</span> <span>1015" in body
+                    or "Access denied" in body
+                )
                 result = {
                     "status": response.status,
                     "retry_after": response.headers.get("Retry-After"),
-                    "cloudflare": "cloudflare" in response.headers.get(
-                        "server", ""
-                    ).lower(),
+                    "cloudflare_ban": is_ban_page,
+                    "discord_rate_limit": (
+                        response.status == 429 and not is_ban_page
+                    ),
                 }
                 if response.status == 200:
                     try:
@@ -2742,12 +2801,22 @@ def diag_discord():
                         pass
                 else:
                     result["body"] = body[:200]
+                    # Cloudflare's ban page contains the blocked address.
+                    match = re.search(
+                        r"cf-error-ip[^>]*>([\d.]+)<", body
+                    )
+                    if match:
+                        result["blocked_ip"] = match.group(1)
                 return result
 
     try:
         result = asyncio.run(probe())
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}, 502
+
+    result["rest_calls_per_min"] = rest_calls_last_minute()
+    result["local_ip"] = socket.gethostbyname(socket.gethostname())
+    result["instance"] = socket.gethostname()
 
     return result, (200 if result.get("status") == 200 else 502)
 
