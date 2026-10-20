@@ -402,6 +402,75 @@ def build_ticket_management_view(
     return view
 
 
+def build_ticket_summary_view(
+    config_title: str,
+    issue_text: Optional[str],
+    ticket_number: int,
+    creator_mention: str,
+    category_name: str,
+    on_close: Callable,
+    on_claim: Optional[Callable] = None,
+    on_unclaim: Optional[Callable] = None,
+    claimed: bool = False,
+    claimant_mention: Optional[str] = None,
+    on_add_user: Optional[Callable] = None,
+    on_remove_user: Optional[Callable] = None,
+    on_transcript: Optional[Callable] = None,
+    accent_colour: Optional[discord.Colour] = None,
+) -> discord.ui.LayoutView:
+    """
+    Build the pinned summary message for a ticket.
+
+    This carries only the key facts - category title, inquiry, ticket number,
+    creator and category - plus the same management buttons as the original
+    ticket message. Both messages share the same ticket record, so claiming
+    from either one updates the other.
+
+    It is a Components V2 message so it renders the same as the original.
+    """
+
+    view = discord.ui.LayoutView(timeout=None)
+    container = discord.ui.Container(accent_colour=accent_colour)
+
+    top_lines = []
+    if config_title:
+        top_lines.append(f"## {config_title}")
+    container.add_item(discord.ui.TextDisplay("\n".join(top_lines)))
+
+    if issue_text:
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"**Inquiry:**\n**{issue_text}**"))
+
+    container.add_item(discord.ui.Separator())
+    info_lines = [
+        f"**Ticket Number:** #{ticket_number:04d}",
+        f"**Created By:** {creator_mention}",
+        f"**Category:** {category_name}",
+    ]
+    if claimed and claimant_mention:
+        info_lines.append(f"**Claimed By:** {claimant_mention}")
+    container.add_item(discord.ui.TextDisplay("\n".join(info_lines)))
+
+    # Same buttons as the original message, so either one can be used.
+    container.add_item(discord.ui.Separator())
+    button_row = discord.ui.ActionRow()
+    button_row.add_item(CloseTicketButton(on_close))
+    if claimed and on_unclaim:
+        button_row.add_item(UnclaimButton(on_unclaim))
+    elif on_claim:
+        button_row.add_item(ClaimTicketButton(on_claim))
+    if on_add_user:
+        button_row.add_item(AddUserButton(on_add_user))
+    if on_remove_user:
+        button_row.add_item(RemoveUserButton(on_remove_user))
+    if on_transcript:
+        button_row.add_item(TranscriptButton(on_transcript))
+    container.add_item(button_row)
+
+    view.add_item(container)
+    return view
+
+
 class CloseTicketButton(ui.Button):
     """
     Close ticket button.

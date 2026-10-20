@@ -165,7 +165,12 @@ class TicketDatabase:
             "ticket_number": ticket_number,
             "issue_text": issue_text,
             "status": "open",
-            "claimed_by": None
+            "claimed_by": None,
+            # The original ticket message and the pinned summary message.
+            # Both carry the management buttons, so both need updating when
+            # the ticket is claimed or unclaimed.
+            "welcome_message_id": None,
+            "summary_message_id": None
         })
         self.guild_settings.update_one({"guild_id": guild_id}, {"$inc": {"ticket_counter": 1}})
         return True
@@ -181,6 +186,33 @@ class TicketDatabase:
     def set_ticket_claim(self, channel_id: int, user_id: Optional[int]) -> bool:
         self.tickets.update_one({"channel_id": channel_id}, {"$set": {"claimed_by": user_id}})
         return True
+
+    def set_ticket_message_ids(self, channel_id: int,
+                                welcome_message_id: Optional[int] = None,
+                                summary_message_id: Optional[int] = None) -> bool:
+        """Record where a ticket's two messages live."""
+        fields: Dict[str, Any] = {}
+        if welcome_message_id is not None:
+            fields["welcome_message_id"] = welcome_message_id
+        if summary_message_id is not None:
+            fields["summary_message_id"] = summary_message_id
+        if not fields:
+            return False
+        self.tickets.update_one({"channel_id": channel_id}, {"$set": fields})
+        return True
+
+    def get_open_tickets_without_summary(self, limit: int = 25) -> List[Dict[str, Any]]:
+        """Open tickets that have not had their summary message posted yet."""
+        return list(self.tickets.find(
+            {
+                "status": "open",
+                "$or": [
+                    {"summary_message_id": None},
+                    {"summary_message_id": {"$exists": False}},
+                ],
+            },
+            {"_id": 0},
+        ).limit(limit))
 
     def close_ticket(self, channel_id: int) -> bool:
         self.tickets.update_one({"channel_id": channel_id}, {"$set": {"status": "closed"}})

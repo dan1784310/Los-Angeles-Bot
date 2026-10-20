@@ -4,14 +4,14 @@ Handles ticket creation from dropdown selection and channel management.
 """
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from typing import Optional, List
 import asyncio
 
 from ticket_database import db
 from ticket_views import (
     AddUserModal, RemoveUserModal, TicketIssueModal,
-    build_ticket_management_view
+    build_ticket_management_view, build_ticket_summary_view
 )
 from moderation_database import db as mod_db
 
@@ -260,6 +260,55 @@ async def create_ticket_channel(guild: discord.Guild, user: discord.Member,
     return ticket_channel
 
 
+async def post_ticket_summary(
+    channel: discord.TextChannel,
+    user: discord.Member,
+    category: dict,
+    ticket_number: int,
+    issue_text: Optional[str] = None,
+) -> Optional[discord.Message]:
+    """
+    Post the pinned summary message for a ticket.
+
+    It contains only the key facts and the same management buttons as the
+    original message, and it is pinned so it stays easy to find. Both
+    messages point at the same ticket record, so claiming from one updates
+    the other.
+    """
+    try:
+        summary_view = build_ticket_summary_view(
+            config_title=category.get('title', category['name']),
+            issue_text=issue_text,
+            ticket_number=ticket_number,
+            creator_mention=user.mention,
+            category_name=category['name'],
+            on_close=lambda i: close_ticket(i, channel.id),
+            on_claim=lambda i: claim_ticket(i, channel.id, user),
+            on_add_user=lambda i: add_user_to_ticket(i, channel.id),
+            on_remove_user=lambda i: remove_user_from_ticket(i, channel.id),
+            on_transcript=lambda i: generate_transcript(i, channel.id),
+            accent_colour=discord.Color.from_rgb(37, 37, 41),
+        )
+
+        message = await channel.send(view=summary_view)
+
+        try:
+            await message.pin()
+        except discord.HTTPException as e:
+            print(f"[TICKET] Could not pin the summary message: {e}")
+
+        try:
+            db.set_ticket_message_ids(channel.id, summary_message_id=message.id)
+        except Exception as e:
+            print(f"[TICKET] Could not store the summary message id: {e}")
+
+        return message
+
+    except Exception as e:
+        print(f"[TICKET] Could not post the summary message: {e}")
+        return None
+
+
 async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member, 
                             category: dict, ticket_number: int, issue_text: Optional[str] = None):
     """
@@ -297,7 +346,13 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
         mention_line=_build_ping_line(user.mention, category)
     )
 
-    await channel.send(view=management_view)
+    welcome_message = await channel.send(view=management_view)
+    try:
+        db.set_ticket_message_ids(channel.id, welcome_message_id=welcome_message.id)
+    except Exception as e:
+        print(f"[TICKET] Could not store the welcome message id: {e}")
+
+    return welcome_message
 
 
 async def close_ticket(interaction: discord.Interaction, channel_id: int):
@@ -381,6 +436,51 @@ async def _rebuild_management_view(interaction: discord.Interaction, channel_id:
     )
 
 
+async def _sync_management_messages(
+    interaction: discord.Interaction,
+    channel_id: int,
+    claimed: bool,
+) -> Optional[discord.ui.LayoutView]:
+    """
+    Refresh the management buttons on BOTH of a ticket's messages.
+
+    The original ticket message and the pinned summary message share the same
+    ticket record, so claiming from one has to update the other. Otherwise
+    the top message would still offer a Claim button after the ticket had
+    been claimed from the summary.
+
+    The message the interaction came from is edited through the interaction
+    response; the other one is edited directly.
+    """
+
+    new_view = await _rebuild_management_view(interaction, channel_id, claimed)
+    if new_view is None:
+        return None
+
+    ticket = db.get_ticket_by_channel(channel_id) or {}
+    welcome_id = ticket.get("welcome_message_id")
+    summary_id = ticket.get("summary_message_id")
+    clicked_id = interaction.message.id if interaction.message else None
+
+    channel = interaction.guild.get_channel(channel_id)
+    if not channel:
+        return new_view
+
+    # Every message except the one that was clicked.
+    for message_id in (welcome_id, summary_id):
+        if not message_id or message_id == clicked_id:
+            continue
+        try:
+            message = await channel.fetch_message(message_id)
+            await message.edit(view=new_view)
+        except discord.HTTPException as e:
+            print(f"[TICKET] Could not sync message {message_id}: {e}")
+        except Exception as e:
+            print(f"[TICKET] Could not sync message {message_id}: {e}")
+
+    return new_view
+
+
 async def claim_ticket(interaction: discord.Interaction, channel_id: int, creator: discord.Member):
     """
     Claim a ticket. The bot edits the public ticket message itself,
@@ -430,7 +530,7 @@ async def claim_ticket(interaction: discord.Interaction, channel_id: int, creato
         print(f"[TICKET RENAME ERROR] Failed to rename on claim: {e}")
 
     # Edit the actual public message — the button becomes Unclaim for everyone
-    new_view = await _rebuild_management_view(interaction, channel_id, claimed=True)
+    new_view = await _sync_management_messages(interaction, channel_id, claimed=True)
     if new_view:
         await interaction.response.edit_message(view=new_view)
     else:
@@ -480,7 +580,7 @@ async def unclaim_ticket(interaction: discord.Interaction, channel_id: int):
         print(f"[TICKET RENAME ERROR] Failed to rename on unclaim: {e}")
 
     # Edit the actual public message back to showing Claim
-    new_view = await _rebuild_management_view(interaction, channel_id, claimed=False)
+    new_view = await _sync_management_messages(interaction, channel_id, claimed=False)
     if new_view:
         await interaction.response.edit_message(view=new_view)
     else:
@@ -652,18 +752,93 @@ async def generate_transcript(interaction: discord.Interaction, channel_id: int)
 
 class TicketCreation(commands.Cog):
     """Cog for handling ticket creation and management."""
-    
+
+    # The pinned summary message is only posted once the ticket channel has
+    # reached this many messages, so it does not clutter a brand new ticket.
+    SUMMARY_TRIGGER_MESSAGE_COUNT = 10
+    SUMMARY_SWEEP_INTERVAL = 60
+    SUMMARY_SWEEP_LIMIT = 5
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._setup_panel_callbacks()
-    
+
     def _setup_panel_callbacks(self):
         """Setup dropdown callbacks for existing panels."""
         from ticket_panel import create_panel_from_db
         from ticket_views import TicketPanelView
-        
+
         # This will be called when panels are created/updated
         # The callback will be set dynamically when the panel is sent
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Post the pinned summary for tickets that have grown enough."""
+        if not self.summary_sweep.is_running():
+            self.summary_sweep.start()
+
+    @tasks.loop(seconds=SUMMARY_SWEEP_INTERVAL)
+    async def summary_sweep(self):
+        """Post the summary message once a ticket channel reaches the count.
+
+        Capped so this can never turn into a burst of API calls, which is
+        what gets the host's IP rate limited.
+        """
+        try:
+            tickets = await asyncio.to_thread(
+                db.get_open_tickets_without_summary, self.SUMMARY_SWEEP_LIMIT
+            )
+        except Exception as e:
+            print(f"[TICKET] Summary sweep could not read tickets: {e}")
+            return
+
+        for ticket in tickets or []:
+            try:
+                channel = self.bot.get_channel(ticket.get("channel_id"))
+                if not channel:
+                    continue
+
+                # One call to see whether the channel has grown enough.
+                count = 0
+                async for _ in channel.history(limit=self.SUMMARY_TRIGGER_MESSAGE_COUNT + 1):
+                    count += 1
+
+                if count < self.SUMMARY_TRIGGER_MESSAGE_COUNT:
+                    continue
+
+                creator = channel.guild.get_member(ticket.get("user_id"))
+                if not creator:
+                    creator = await channel.guild.fetch_member(ticket.get("user_id"))
+
+                categories = await asyncio.to_thread(
+                    db.get_ticket_categories, ticket.get("guild_id")
+                )
+                category = next(
+                    (c for c in categories if c['id'] == ticket.get('category_id')),
+                    None,
+                )
+                if not category:
+                    continue
+
+                await post_ticket_summary(
+                    channel,
+                    creator,
+                    category,
+                    ticket.get("ticket_number"),
+                    ticket.get("issue_text"),
+                )
+                print(
+                    f"[TICKET] Posted the summary message for ticket "
+                    f"#{ticket.get('ticket_number')} in {channel.name}."
+                )
+
+            except discord.HTTPException as e:
+                print(f"[TICKET] Summary sweep error: {e}")
+            except Exception as e:
+                print(f"[TICKET] Summary sweep error: {e}")
+
+    def cog_unload(self):
+        self.summary_sweep.cancel()
     
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
