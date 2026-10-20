@@ -277,7 +277,7 @@ async def post_ticket_summary(
     """
     try:
         summary_view = build_ticket_summary_view(
-            config_title=category.get('title', category['name']),
+            config_title=category.get('title') or category['name'],
             issue_text=issue_text,
             ticket_number=ticket_number,
             creator_mention=user.mention,
@@ -331,7 +331,7 @@ async def send_ticket_welcome(channel: discord.TextChannel, user: discord.Member
     accent_color = discord.Color.from_rgb(37, 37, 41)
 
     management_view = build_ticket_management_view(
-        config_title=category.get('title', category['name']),
+        config_title=category.get('title') or category['name'],
         config_description=category.get('description', ''),
         issue_text=issue_text,
         ticket_number=ticket_number,
@@ -417,7 +417,7 @@ async def _rebuild_management_view(interaction: discord.Interaction, channel_id:
     accent_color = discord.Color.from_rgb(37, 37, 41)
 
     return build_ticket_management_view(
-        config_title=category.get('title', category['name']),
+        config_title=category.get('title') or category['name'],
         config_description=category.get('description', ''),
         issue_text=ticket.get('issue_text'),
         ticket_number=ticket['ticket_number'],
@@ -771,11 +771,19 @@ class TicketCreation(commands.Cog):
         # This will be called when panels are created/updated
         # The callback will be set dynamically when the panel is sent
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        """Post the pinned summary for tickets that have grown enough."""
+    async def cog_load(self) -> None:
+        """Start the summary sweep.
+
+        This has to be cog_load, not an on_ready listener. bot.py adds this
+        cog from inside its own on_ready, and discord.py builds the list of
+        cog listeners when the ready event is dispatched. A cog registered
+        during that dispatch is added afterwards, so its on_ready never
+        fires and the sweep would never start. cog_load is awaited by
+        add_cog, so it always runs exactly once per process.
+        """
         if not self.summary_sweep.is_running():
             self.summary_sweep.start()
+            print("[TICKET] Summary message sweep started.")
 
     @tasks.loop(seconds=SUMMARY_SWEEP_INTERVAL)
     async def summary_sweep(self):
