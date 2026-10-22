@@ -1,0 +1,63 @@
+name: keep-bot-alive
+
+# Two jobs:
+#   1. ping the bot so the container is never idle
+#   2. renew the free deployment before its 4 day expiry runs out
+#
+# The free plan at bot-hosting.net says "you renew it from the panel every
+# 4 days", so unlike Render (which just sleeps and a ping wakes it) the
+# deployment may still stop if nobody renews it. This calls the same action
+# through their REST API.
+#
+# Because the exact renewal route is not documented publicly, several
+# candidate paths are tried and the first one that exists is used.
+#
+# Secrets needed (repo -> Settings -> Secrets and variables -> Actions):
+#   BOT_HEALTH_URL           full URL of the bot, e.g.
+#                            https://name.apps.bot-hosting.cloud/diag/discord
+#   BOT_HOSTING_API_KEY      API key from the bot-hosting.net account
+#   BOT_HOSTING_DEPLOYMENT_ID the deployment id
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    name: Ping and renew
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the bot
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 \
+                 "${{ secrets.BOT_HEALTH_URL }}" || echo 000)
+          echo "health check: $code"
+          if [ "$code" != "200" ]; then
+            echo "::warning::Bot health check returned $code, not 200."
+          fi
+
+      - name: Renew the deployment
+        env:
+          API_KEY: ${{ secrets.BOT_HOSTING_API_KEY }}
+          DEPLOYMENT_ID: ${{ secrets.BOT_HOSTING_DEPLOYMENT_ID }}
+        run: |
+          if [ -z "$API_KEY" ] || [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::notice::No API key or deployment id set, skipping renewal."
+            exit 0
+          fi
+
+          for path in renew extend keep-alive refresh; do
+            url="https://bot-hosting.net/api/v1/deployments/${DEPLOYMENT_ID}/${path}"
+            code=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 60 \
+                   -X POST -H "Authorization: Bearer ${API_KEY}" \
+                   -H "Content-Type: application/json" -d '{}' "$url" || echo 000)
+            echo "POST .../${path} -> $code"
+            if [ "$code" = "200" ] || [ "$code" = "201" ] || [ "$code" = "204" ]; then
+              echo "Renewed via ${path}."
+              exit 0
+            fi
+          done
+
+          echo "::warning::Could not renew. Open the panel and renew manually."
+          cat /tmp/body || true
