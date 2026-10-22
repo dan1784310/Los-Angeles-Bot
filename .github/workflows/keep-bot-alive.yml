@@ -37,7 +37,26 @@ jobs:
             echo "::warning::Bot health check returned $code, not 200."
           fi
 
-      - name: Renew the deployment
+      - name: Check the deployment is alive
+        env:
+          API_KEY: ${{ secrets.BOT_HOSTING_API_KEY }}
+          DEPLOYMENT_ID: ${{ secrets.BOT_HOSTING_DEPLOYMENT_ID }}
+        run: |
+          if [ -z "$API_KEY" ] || [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::notice::No API key set, skipping the status check."
+            exit 0
+          fi
+          code=$(curl -s -o /tmp/dep -w "%{http_code}" --max-time 60 \
+                 -H "Authorization: Bearer ${API_KEY}" \
+                 "https://bot-hosting.net/api/v1/deployments/${DEPLOYMENT_ID}" \
+                 || echo 000)
+          echo "deployment status: $code"
+          if [ "$code" != "200" ]; then
+            echo "::warning::Could not read the deployment. It may have been"
+            echo "::warning::deleted after the free plan expired."
+          fi
+
+      - name: Try to renew
         env:
           API_KEY: ${{ secrets.BOT_HOSTING_API_KEY }}
           DEPLOYMENT_ID: ${{ secrets.BOT_HOSTING_DEPLOYMENT_ID }}
@@ -47,6 +66,10 @@ jobs:
             exit 0
           fi
 
+          # The key from "Create a key for the CLI" is limited to
+          # deployments, files and env, so billing actions are likely to be
+          # refused. These attempts are harmless and will succeed if a wider
+          # key or a billing scope is used.
           for path in renew extend keep-alive refresh; do
             url="https://bot-hosting.net/api/v1/deployments/${DEPLOYMENT_ID}/${path}"
             code=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 60 \
@@ -59,5 +82,6 @@ jobs:
             fi
           done
 
-          echo "::warning::Could not renew. Open the panel and renew manually."
+          echo "::notice::Renewal is not exposed to this key's scopes."
+          echo "::notice::Renew manually: Billing page -> Renew free plan -> Renew for 4 days."
           cat /tmp/body || true
