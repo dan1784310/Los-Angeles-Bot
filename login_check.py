@@ -24,14 +24,22 @@ import sys
 
 import aiohttp
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except Exception:
+    pass
+
 URL = "https://discord.com/api/v10/users/@me"
 
 
 async def main() -> int:
     token = (os.getenv("TOKEN") or "").strip()
     if not token:
-        print("TOKEN is not set in this shell.")
-        print("  set TOKEN=your_token   then run it again")
+        print("TOKEN is not set.")
+        print("  Put it in your .env file as TOKEN=your_token")
+        print("  (this script reads .env the same way the bot does)")
         return 2
 
     print(f"Token length: {len(token)}")

@@ -1,0 +1,25 @@
+# Secrets must never end up inside the image. The platform injects them as
+# environment variables at runtime instead.
+.env
+.env.*
+!.env.example
+
+# Version control and caches
+.git
+.gitignore
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local artefacts
+login_check.py
+migrate_*.py
+*.log
+*.bak
+check_v2.py
+.vscode/
+.idea/
+
+# Hosts and container files
+Dockerfile
+.dockerignore

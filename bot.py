@@ -2738,15 +2738,69 @@ def rest_calls_last_minute() -> int:
     return len(_rest_call_times)
 
 
+_discord_cooldown_until = 0.0
+# Longest a single request will sit waiting for a cooldown to clear. Past
+# this the request goes ahead anyway, so a request never hangs for hours.
+MAX_REQUEST_COOLDOWN_WAIT = 900.0
+
+
+def _open_discord_cooldown(error: BaseException) -> None:
+    """Pause every Discord request after being rate limited.
+
+    Hitting a blocked address over and over is what turns a short block into
+    a long one. Every request the bot makes while Cloudflare has banned the
+    host counts against it, so the whole bot has to stand down until the ban
+    lifts - not just the single call that hit the wall. Without this the bot
+    kept sending up to 51 requests a minute into a ban, which is how a 37
+    minute block became a 13 hour one.
+    """
+    global _discord_cooldown_until
+
+    wait = max(5.0, float(getattr(error, "retry_after", 30) or 30))
+    until = time.time() + wait
+
+    if until > _discord_cooldown_until:
+        _discord_cooldown_until = until
+        print(
+            f"[Rate Limit] Discord is rate limiting us. Pausing every Discord "
+            f"request for {wait:.0f}s so we do not hammer a blocked address "
+            "and make the ban last longer."
+        )
+
+
+def discord_cooldown_remaining() -> float:
+    return max(0.0, _discord_cooldown_until - time.time())
+
+
+async def _respect_discord_cooldown() -> None:
+    remaining = discord_cooldown_remaining()
+    if remaining <= 0:
+        return
+
+    wait = min(remaining, MAX_REQUEST_COOLDOWN_WAIT)
+    if wait > 1:
+        print(
+            f"[Rate Limit] Waiting {wait:.0f}s before the next Discord "
+            f"request (currently paused for {remaining:.0f}s)."
+        )
+        await asyncio.sleep(wait)
+
+
 def instrument_http_client() -> None:
-    """Count Discord REST calls without changing how they are made."""
+    """Count Discord REST calls and make the whole bot back off on a 429."""
     original = bot.http.request
     if getattr(original, "_counted", False):
         return
 
     async def counting_request(route, *args, **kwargs):
         _rest_call_times.append(time.time())
-        return await original(route, *args, **kwargs)
+        await _respect_discord_cooldown()
+        try:
+            return await original(route, *args, **kwargs)
+        except discord.HTTPException as e:
+            if e.status == 429:
+                _open_discord_cooldown(e)
+            raise
 
     counting_request._counted = True
     bot.http.request = counting_request
@@ -2815,6 +2869,7 @@ def diag_discord():
         return {"error": f"{type(e).__name__}: {e}"}, 502
 
     result["rest_calls_per_min"] = rest_calls_last_minute()
+    result["cooldown_remaining"] = round(discord_cooldown_remaining(), 1)
     result["local_ip"] = socket.gethostbyname(socket.gethostname())
     result["instance"] = socket.gethostname()
 
