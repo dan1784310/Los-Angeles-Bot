@@ -6,3 +6,7 @@
 # Python
 __pycache__/
 *.py[cod]
+
+# Local scratch files
+bot.py.bak
+check_v2.py
