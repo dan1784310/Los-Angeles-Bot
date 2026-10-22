@@ -2876,10 +2876,34 @@ def diag_discord():
     return result, (200 if result.get("status") == 200 else 502)
 
 
+def resolve_web_port() -> int:
+    """Find the port the platform's proxy expects us to listen on.
+
+    Hosts name this differently:
+      bot-hosting.net  -> SERVER_PORT
+      Render          -> PORT
+    so check SERVER_PORT first, then PORT, and only then fall back to a
+    default. Getting this wrong means the proxy connects to a port nothing is
+    listening on, which the panel reports as "No response on port" and the
+    outside world sees as a timeout.
+    """
+    for var in ("SERVER_PORT", "PORT"):
+        raw = os.environ.get(var)
+        if not raw:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return 10000
+
+
 def run_web():
+    port = resolve_web_port()
+    print(f"[WEB] Serving Flask on 0.0.0.0:{port}")
     app.run(
         host="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000)),
+        port=port,
     )
 
 
