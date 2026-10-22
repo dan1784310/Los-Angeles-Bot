@@ -1,0 +1,32 @@
+name: keep-awake
+
+# Render's free tier hibernates a web service after 15 minutes without
+# inbound traffic, and the bot's Discord gateway is an outbound connection,
+# so it does not count as traffic. This job pings the service every 10
+# minutes so it stays running.
+#
+# A restart takes about a minute, so anything the bot is doing (ticket
+# timers, command logs, transcript delivery) would otherwise pause
+# whenever the server went quiet.
+#
+# This uses GitHub's free scheduled runners - no card, no cost.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping the bot service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the service
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 \
+                 "${{ secrets.BOT_HEALTH_URL }}" || echo 000)
+          echo "health check returned: $code"
+          if [ "$code" != "200" ]; then
+            echo "::warning::The bot service did not return 200. It may be"
+            echo "::warning::hibernating, deploying, or blocked by Discord."
+          fi
