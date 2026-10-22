@@ -1,4 +1,9 @@
-discord.py
+# discord.py is pinned: media_cog.py uses discord.ui.DynamicItem, which only
+# exists from 2.4 onward. Some panels also want a package literally named
+# "discord" - that one is a metapackage which simply depends on discord.py,
+# so it is listed here too and resolves to the same pinned version.
+discord.py==2.7.1
+discord
 Flask
 pymongo
 dnspython
